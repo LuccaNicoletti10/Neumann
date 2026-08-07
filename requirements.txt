@@ -1,0 +1,3 @@
+# Stdlib-only runtime (Python 3.10+).
+# Tkinter is required for the GUI and ships with most Python installs.
+# No third-party packages are required for the core engine.

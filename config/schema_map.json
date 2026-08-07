@@ -1,0 +1,208 @@
+{
+  "object_mappings": [
+    {
+      "source_type": "csv",
+      "target_object": "Person",
+      "filter_condition": null,
+      "field_mappings": [
+        {
+          "source_field": "name",
+          "target_property": "name",
+          "target_object": "Person",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "first_name",
+          "target_property": "firstName",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "last_name",
+          "target_property": "lastName",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "email",
+          "target_property": "email",
+          "target_object": "Person",
+          "transformation": "lowercase",
+          "default_value": null
+        },
+        {
+          "source_field": "phone",
+          "target_property": "phone",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "address",
+          "target_property": "address",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "ssn",
+          "target_property": "ssn",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "source_type": "extracted",
+      "target_object": "Person",
+      "filter_condition": "_record_type == 'Person'",
+      "field_mappings": [
+        {
+          "source_field": "name",
+          "target_property": "name",
+          "target_object": "Person",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "firstName",
+          "target_property": "firstName",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "lastName",
+          "target_property": "lastName",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "email",
+          "target_property": "email",
+          "target_object": "Person",
+          "transformation": "lowercase",
+          "default_value": null
+        },
+        {
+          "source_field": "phone",
+          "target_property": "phone",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "address",
+          "target_property": "address",
+          "target_object": "Person",
+          "transformation": null,
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "source_type": "extracted",
+      "target_object": "Organization",
+      "filter_condition": "_record_type == 'Organization'",
+      "field_mappings": [
+        {
+          "source_field": "name",
+          "target_property": "name",
+          "target_object": "Organization",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "type",
+          "target_property": "type",
+          "target_object": "Organization",
+          "transformation": null,
+          "default_value": "company"
+        }
+      ]
+    },
+    {
+      "source_type": "extracted",
+      "target_object": "PhoneCall",
+      "filter_condition": "_record_type == 'PhoneCall'",
+      "field_mappings": [
+        {
+          "source_field": "caller",
+          "target_property": "caller",
+          "target_object": "PhoneCall",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "receiver",
+          "target_property": "receiver",
+          "target_object": "PhoneCall",
+          "transformation": null,
+          "default_value": null
+        },
+        {
+          "source_field": "duration",
+          "target_property": "duration",
+          "target_object": "PhoneCall",
+          "transformation": "parse_int",
+          "default_value": null
+        },
+        {
+          "source_field": "timestamp",
+          "target_property": "timestamp",
+          "target_object": "PhoneCall",
+          "transformation": null,
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "source_type": "mwo",
+      "target_object": "WorkOrder",
+      "filter_condition": null,
+      "field_mappings": [
+        {
+          "source_field": "mach",
+          "target_property": "machine",
+          "target_object": "WorkOrder",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "date_received",
+          "target_property": "dateReceived",
+          "target_object": "WorkOrder",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "issue",
+          "target_property": "issue",
+          "target_object": "WorkOrder",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "info",
+          "target_property": "info",
+          "target_object": "WorkOrder",
+          "transformation": "trim",
+          "default_value": null
+        },
+        {
+          "source_field": "tech",
+          "target_property": "technicians",
+          "target_object": "WorkOrder",
+          "transformation": "trim",
+          "default_value": null
+        }
+      ]
+    }
+  ],
+  "source_schemas": {}
+}

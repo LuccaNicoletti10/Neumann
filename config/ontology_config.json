@@ -1,0 +1,257 @@
+{
+  "objects": {
+    "Person": {
+      "description": "A person or individual"
+    },
+    "Organization": {
+      "description": "An organization or company"
+    },
+    "Event": {
+      "description": "An event or occurrence"
+    },
+    "PhoneCall": {
+      "description": "A phone call event"
+    },
+    "Location": {
+      "description": "A physical location"
+    },
+    "Machine": {
+      "description": "A machine or equipment asset"
+    },
+    "WorkOrder": {
+      "description": "A maintenance work order"
+    }
+  },
+  "properties": {
+    "Person.name": {
+      "name": "name",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": true
+    },
+    "Person.firstName": {
+      "name": "firstName",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": false
+    },
+    "Person.lastName": {
+      "name": "lastName",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": false
+    },
+    "Person.email": {
+      "name": "email",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": false
+    },
+    "Person.phone": {
+      "name": "phone",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": false
+    },
+    "Person.address": {
+      "name": "address",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": false
+    },
+    "Person.ssn": {
+      "name": "ssn",
+      "parent_object": "Person",
+      "data_type": "string",
+      "required": false
+    },
+    "Organization.name": {
+      "name": "name",
+      "parent_object": "Organization",
+      "data_type": "string",
+      "required": true
+    },
+    "Organization.type": {
+      "name": "type",
+      "parent_object": "Organization",
+      "data_type": "string",
+      "required": false
+    },
+    "Organization.industry": {
+      "name": "industry",
+      "parent_object": "Organization",
+      "data_type": "string",
+      "required": false
+    },
+    "PhoneCall.duration": {
+      "name": "duration",
+      "parent_object": "PhoneCall",
+      "data_type": "number",
+      "required": false
+    },
+    "PhoneCall.timestamp": {
+      "name": "timestamp",
+      "parent_object": "PhoneCall",
+      "data_type": "datetime",
+      "required": false
+    },
+    "PhoneCall.caller": {
+      "name": "caller",
+      "parent_object": "PhoneCall",
+      "data_type": "string",
+      "required": false
+    },
+    "PhoneCall.receiver": {
+      "name": "receiver",
+      "parent_object": "PhoneCall",
+      "data_type": "string",
+      "required": false
+    },
+    "Location.name": {
+      "name": "name",
+      "parent_object": "Location",
+      "data_type": "string",
+      "required": true
+    },
+    "Location.address": {
+      "name": "address",
+      "parent_object": "Location",
+      "data_type": "string",
+      "required": false
+    },
+    "Location.city": {
+      "name": "city",
+      "parent_object": "Location",
+      "data_type": "string",
+      "required": false
+    },
+    "Location.state": {
+      "name": "state",
+      "parent_object": "Location",
+      "data_type": "string",
+      "required": false
+    },
+    "Location.zip": {
+      "name": "zip",
+      "parent_object": "Location",
+      "data_type": "string",
+      "required": false
+    },
+    "Event.name": {
+      "name": "name",
+      "parent_object": "Event",
+      "data_type": "string",
+      "required": true
+    },
+    "Event.date": {
+      "name": "date",
+      "parent_object": "Event",
+      "data_type": "date",
+      "required": false
+    },
+    "Event.description": {
+      "name": "description",
+      "parent_object": "Event",
+      "data_type": "string",
+      "required": false
+    },
+    "Event.location": {
+      "name": "location",
+      "parent_object": "Event",
+      "data_type": "string",
+      "required": false
+    },
+    "Machine.name": {
+      "name": "name",
+      "parent_object": "Machine",
+      "data_type": "string",
+      "required": true
+    },
+    "WorkOrder.machine": {
+      "name": "machine",
+      "parent_object": "WorkOrder",
+      "data_type": "string",
+      "required": true
+    },
+    "WorkOrder.dateReceived": {
+      "name": "dateReceived",
+      "parent_object": "WorkOrder",
+      "data_type": "date",
+      "required": false
+    },
+    "WorkOrder.issue": {
+      "name": "issue",
+      "parent_object": "WorkOrder",
+      "data_type": "string",
+      "required": true
+    },
+    "WorkOrder.info": {
+      "name": "info",
+      "parent_object": "WorkOrder",
+      "data_type": "string",
+      "required": false
+    },
+    "WorkOrder.technicians": {
+      "name": "technicians",
+      "parent_object": "WorkOrder",
+      "data_type": "string",
+      "required": false
+    }
+  },
+  "links": {
+    "WorkOrder_Machine_forMachine": {
+      "name": "forMachine",
+      "from_object": "WorkOrder",
+      "to_object": "Machine",
+      "relationship_type": "association"
+    },
+    "Person_WorkOrder_assignedTo": {
+      "name": "assignedTo",
+      "from_object": "Person",
+      "to_object": "WorkOrder",
+      "relationship_type": "assignment"
+    },
+    "Person_Organization_worksFor": {
+      "name": "worksFor",
+      "from_object": "Person",
+      "to_object": "Organization",
+      "relationship_type": "employment"
+    },
+    "Person_Location_locatedAt": {
+      "name": "locatedAt",
+      "from_object": "Person",
+      "to_object": "Location",
+      "relationship_type": "location"
+    },
+    "Organization_Location_locatedAt": {
+      "name": "locatedAt",
+      "from_object": "Organization",
+      "to_object": "Location",
+      "relationship_type": "location"
+    },
+    "Person_Event_attends": {
+      "name": "attends",
+      "from_object": "Person",
+      "to_object": "Event",
+      "relationship_type": "association"
+    },
+    "Organization_Event_organizes": {
+      "name": "organizes",
+      "from_object": "Organization",
+      "to_object": "Event",
+      "relationship_type": "association"
+    },
+    "Person_PhoneCall_calls": {
+      "name": "calls",
+      "from_object": "Person",
+      "to_object": "PhoneCall",
+      "relationship_type": "association"
+    },
+    "Person_PhoneCall_receives": {
+      "name": "receives",
+      "from_object": "Person",
+      "to_object": "PhoneCall",
+      "relationship_type": "association"
+    }
+  }
+}
