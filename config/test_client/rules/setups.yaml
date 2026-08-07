@@ -1,0 +1,3 @@
+- {machine_id: "M01", from_family: "CLA", to_family: "CLA", setup_minutes: 20, forbidden: false}
+- {machine_id: "M02", from_family: "CLA", to_family: "ESC", setup_minutes: 60, forbidden: false}
+- {machine_id: "M03", from_family: "FIX", to_family: "MET", setup_minutes: 30, forbidden: false}

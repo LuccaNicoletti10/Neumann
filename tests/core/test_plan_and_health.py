@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -60,7 +60,7 @@ def test_plan_dry_run_with_fixture_csv(tmp_path: Path):
         data_root=data_root,
         horizon_days=14,
         dry_run=True,
-        session_factory=MagicMock(),  # não deve tocar o banco em dry-run
+        session_factory=None,
     )
     assert summary.dry_run is True
     assert summary.plan_run_id

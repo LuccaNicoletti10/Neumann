@@ -1,0 +1,6 @@
+sku,available,blocked,in_qc,reserved,in_process,location
+SKU001,40,0,0,0,0,A1
+SKU002,20,0,0,0,0,A1
+SKU003,10,0,0,0,0,A1
+SKU004,100,0,0,0,0,A1
+SKU005,5,0,0,0,0,A1

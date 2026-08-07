@@ -138,7 +138,9 @@ def run_plan(
         # 6) Schedule
         t0 = time.perf_counter()
         logger.info("[%s] schedule início", client)
-        problem, schedule = _step_schedule(client, config_root, netting, products, horizon_days)
+        problem, schedule = _step_schedule(
+            client, config_root, netting, products, horizon_days, factory
+        )
         if schedule.solver_status.upper() == "INFEASIBLE":
             alert_solver_infeasible(client)
             raise RuntimeError("Solver INFEASIBLE — plano não emitido")
@@ -356,6 +358,7 @@ def _step_schedule(
     netting: list[NettingResult],
     products: pl.DataFrame,
     horizon_days: int,
+    factory: sessionmaker | None = None,
 ) -> tuple[SchedulingProblem, Schedule]:
     family_map = {}
     if "sku" in products.columns and "family" in products.columns:
@@ -376,29 +379,327 @@ def _step_schedule(
             )
         )
 
+    today = date.today()
+    horizon_end = today + timedelta(days=horizon_days)
+
     if not orders:
-        # plano vazio ainda é válido
-        today = date.today()
         problem = SchedulingProblem(
             orders=[],
-            compatibility=pl.DataFrame(
-                {"sku": [], "machine_id": [], "speed_units_per_hour": []}
-            ),
-            setup_matrix=pl.DataFrame(
-                {
-                    "machine_id": [],
-                    "from_family": [],
-                    "to_family": [],
-                    "setup_minutes": [],
-                    "forbidden": [],
-                }
-            ),
-            calendar=pl.DataFrame({"machine_id": [], "date": [], "available_hours": []}),
+            compatibility=_empty_compatibility(),
+            setup_matrix=_empty_setup_matrix(),
+            calendar=_empty_calendar(),
             horizon_start=today,
-            horizon_end=today + timedelta(days=horizon_days),
+            horizon_end=horizon_end,
         )
         return problem, Schedule(solver_status="FEASIBLE")
 
+    compatibility, setup_matrix, calendar, source = _load_schedule_frames(
+        client=client,
+        config_root=config_root,
+        orders=orders,
+        today=today,
+        horizon_days=horizon_days,
+        factory=factory,
+    )
+    if source != "postgres":
+        logger.warning(
+            "[%s] schedule usando dados %s (Postgres sem machines/compatibility)",
+            client,
+            source,
+        )
+    else:
+        logger.info("[%s] schedule carregado do Postgres", client)
+
+    problem = SchedulingProblem(
+        orders=orders,
+        compatibility=compatibility,
+        setup_matrix=setup_matrix,
+        calendar=calendar,
+        horizon_start=today,
+        horizon_end=horizon_end,
+    )
+    schedule = solve_schedule(problem, time_limit_s=10)
+    return problem, schedule
+
+
+def _load_schedule_frames(
+    *,
+    client: str,
+    config_root: Path,
+    orders: list[OrderCandidate],
+    today: date,
+    horizon_days: int,
+    factory: sessionmaker | None,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, str]:
+    """Carrega compatibility/setup/calendar: Postgres → YAML → sintético."""
+    if factory is not None:
+        try:
+            frames = _load_schedule_from_postgres(factory, orders, today, horizon_days)
+            if frames is not None:
+                return (*frames, "postgres")
+        except Exception as exc:
+            logger.warning("[%s] falha ao ler schedule do Postgres: %s", client, exc)
+
+    yaml_frames = _load_schedule_from_yaml(config_root, client, orders, today, horizon_days)
+    if yaml_frames is not None:
+        return (*yaml_frames, "yaml")
+
+    return (*_synthetic_schedule_frames(orders, today, horizon_days), "synthetic")
+
+
+def machines_to_polars(rows: list[Any]) -> pl.DataFrame:
+    """Converte MachineModel → Polars."""
+    if not rows:
+        return pl.DataFrame(
+            {
+                "id": [],
+                "work_center_id": [],
+                "name": [],
+                "hours_per_day": [],
+                "shifts": [],
+                "efficiency": [],
+            }
+        )
+    return pl.DataFrame(
+        [
+            {
+                "id": r.id,
+                "work_center_id": r.work_center_id,
+                "name": r.name,
+                "hours_per_day": r.hours_per_day,
+                "shifts": r.shifts,
+                "efficiency": r.efficiency,
+            }
+            for r in rows
+        ]
+    )
+
+
+def compatibility_to_polars(rows: list[Any]) -> pl.DataFrame:
+    """Converte CompatibilityModel → Polars."""
+    if not rows:
+        return _empty_compatibility()
+    return pl.DataFrame(
+        [
+            {
+                "sku": r.sku,
+                "machine_id": r.machine_id,
+                "speed_units_per_hour": r.speed_units_per_hour,
+            }
+            for r in rows
+        ]
+    )
+
+
+def setup_matrix_to_polars(rows: list[Any]) -> pl.DataFrame:
+    """Converte SetupMatrixModel → Polars."""
+    if not rows:
+        return _empty_setup_matrix()
+    return pl.DataFrame(
+        [
+            {
+                "machine_id": r.machine_id,
+                "from_family": r.from_family,
+                "to_family": r.to_family,
+                "setup_minutes": r.setup_minutes,
+                "forbidden": bool(r.forbidden),
+            }
+            for r in rows
+        ]
+    )
+
+
+def build_calendar_from_machines(
+    machines: pl.DataFrame,
+    start: date,
+    horizon_days: int,
+    maintenance_hours: dict[str, float] | None = None,
+) -> pl.DataFrame:
+    """
+    Calendar diário a partir de hours_per_day × shifts × efficiency.
+
+    Subtrai horas de manutenção por máquina quando informadas.
+    """
+    maintenance_hours = maintenance_hours or {}
+    if machines.is_empty():
+        return _empty_calendar()
+
+    rows: list[dict[str, Any]] = []
+    for m in machines.to_dicts():
+        mid = str(m["id"])
+        hours = float(m.get("hours_per_day") or 8.0)
+        shifts = float(m.get("shifts") or 1)
+        eff = float(m.get("efficiency") or 1.0)
+        base = hours * shifts * max(eff, 0.0)
+        maint = float(maintenance_hours.get(mid, 0.0))
+        for d in range(horizon_days + 1):
+            day = start + timedelta(days=d)
+            available = max(base - (maint if d == 0 else 0.0), 0.0)
+            rows.append(
+                {"machine_id": mid, "date": day, "available_hours": available}
+            )
+    return pl.DataFrame(rows)
+
+
+def _load_schedule_from_postgres(
+    factory: sessionmaker,
+    orders: list[OrderCandidate],
+    today: date,
+    horizon_days: int,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None:
+    from sqlalchemy import select
+
+    from planner.core.ontology.db_models import (
+        CompatibilityModel,
+        MachineModel,
+        SetupMatrixModel,
+    )
+
+    try:
+        session = factory()
+    except Exception:
+        return None
+
+    try:
+        machines = list(session.execute(select(MachineModel)).scalars().all())
+        compat_rows = list(session.execute(select(CompatibilityModel)).scalars().all())
+        setup_rows = list(session.execute(select(SetupMatrixModel)).scalars().all())
+    except Exception:
+        return None
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+    # rejeita mocks / resultados inválidos
+    if machines and not isinstance(machines[0], MachineModel):
+        return None
+    if compat_rows and not isinstance(compat_rows[0], CompatibilityModel):
+        return None
+    if not machines and not compat_rows:
+        return None
+
+    machines_df = machines_to_polars(machines)
+    compatibility = compatibility_to_polars(compat_rows)
+    setup_matrix = setup_matrix_to_polars(setup_rows)
+
+    # restringe compatibility aos SKUs do plano
+    order_skus = [o.sku for o in orders]
+    if not compatibility.is_empty() and "sku" in compatibility.columns:
+        filtered = compatibility.filter(pl.col("sku").is_in(order_skus))
+        if not filtered.is_empty():
+            compatibility = filtered
+        else:
+            # Postgres tem outras famílias — cai para fallback externo
+            return None
+
+    # se compatibility vazia, deriva fallback dos SKUs × primeira máquina
+    if compatibility.is_empty() and not machines_df.is_empty():
+        mid = machines_df["id"][0]
+        compatibility = pl.DataFrame(
+            {
+                "sku": order_skus,
+                "machine_id": [mid] * len(orders),
+                "speed_units_per_hour": [100.0] * len(orders),
+            }
+        )
+    if setup_matrix.is_empty():
+        setup_matrix = pl.DataFrame(
+            {
+                "machine_id": [machines_df["id"][0]] if not machines_df.is_empty() else ["M01"],
+                "from_family": ["DEFAULT"],
+                "to_family": ["DEFAULT"],
+                "setup_minutes": [15.0],
+                "forbidden": [False],
+            }
+        )
+
+    calendar = build_calendar_from_machines(machines_df, today, horizon_days)
+    if calendar.is_empty():
+        mids = (
+            compatibility.get_column("machine_id").unique().to_list()
+            if not compatibility.is_empty()
+            else ["M01"]
+        )
+        calendar = pl.DataFrame(
+            {
+                "machine_id": mids,
+                "date": [today] * len(mids),
+                "available_hours": [16.0] * len(mids),
+            }
+        )
+    return compatibility, setup_matrix, calendar
+
+
+def _load_schedule_from_yaml(
+    config_root: Path,
+    client: str,
+    orders: list[OrderCandidate],
+    today: date,
+    horizon_days: int,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None:
+    rules_dir = config_root / client / "rules"
+    if not rules_dir.exists():
+        return None
+
+    compat_path = rules_dir / "compatibility.yaml"
+    setups_path = rules_dir / "setups.yaml"
+    if not compat_path.exists() and not setups_path.exists():
+        return None
+
+    compatibility = _empty_compatibility()
+    if compat_path.exists():
+        raw = yaml.safe_load(compat_path.read_text(encoding="utf-8")) or {}
+        rows = raw if isinstance(raw, list) else (raw.get("compatibility") or raw.get("rows") or [])
+        if rows:
+            compatibility = pl.DataFrame(rows)
+
+    setup_matrix = _empty_setup_matrix()
+    if setups_path.exists():
+        raw = yaml.safe_load(setups_path.read_text(encoding="utf-8")) or {}
+        rows = raw if isinstance(raw, list) else (raw.get("setups") or raw.get("matrix") or [])
+        if rows:
+            setup_matrix = pl.DataFrame(rows)
+
+    # filtra compatibility aos SKUs do plano quando possível
+    skus = {o.sku for o in orders}
+    if not compatibility.is_empty() and "sku" in compatibility.columns:
+        filtered = compatibility.filter(pl.col("sku").is_in(list(skus)))
+        if not filtered.is_empty():
+            compatibility = filtered
+
+    if compatibility.is_empty():
+        return None
+
+    mids = compatibility.get_column("machine_id").unique().to_list()
+    machines_df = pl.DataFrame(
+        {
+            "id": mids,
+            "work_center_id": ["WC1"] * len(mids),
+            "name": mids,
+            "hours_per_day": [8.0] * len(mids),
+            "shifts": [2] * len(mids),
+            "efficiency": [0.9] * len(mids),
+        }
+    )
+    calendar = build_calendar_from_machines(machines_df, today, horizon_days)
+    if setup_matrix.is_empty():
+        setup_matrix = pl.DataFrame(
+            {
+                "machine_id": [mids[0]],
+                "from_family": ["DEFAULT"],
+                "to_family": ["DEFAULT"],
+                "setup_minutes": [15.0],
+                "forbidden": [False],
+            }
+        )
+    return compatibility, setup_matrix, calendar
+
+
+def _synthetic_schedule_frames(
+    orders: list[OrderCandidate], today: date, horizon_days: int
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     skus = [o.sku for o in orders]
     compatibility = pl.DataFrame(
         {
@@ -407,8 +708,6 @@ def _step_schedule(
             "speed_units_per_hour": [100.0] * len(skus),
         }
     )
-    # regras opcionais do cliente
-    rules_dir = config_root / client / "rules"
     setup_matrix = pl.DataFrame(
         {
             "machine_id": ["M01"],
@@ -418,34 +717,38 @@ def _step_schedule(
             "forbidden": [False],
         }
     )
-    if (rules_dir / "setups.yaml").exists():
-        raw = yaml.safe_load((rules_dir / "setups.yaml").read_text(encoding="utf-8")) or {}
-        if isinstance(raw, list):
-            rows = raw
-        elif isinstance(raw, dict):
-            rows = raw.get("setups") or raw.get("matrix") or []
-        else:
-            rows = []
-        if rows:
-            setup_matrix = pl.DataFrame(rows)
-
-    today = date.today()
-    problem = SchedulingProblem(
-        orders=orders,
-        compatibility=compatibility,
-        setup_matrix=setup_matrix,
-        calendar=pl.DataFrame(
-            {
-                "machine_id": ["M01"],
-                "date": [today],
-                "available_hours": [16.0],
-            }
-        ),
-        horizon_start=today,
-        horizon_end=today + timedelta(days=horizon_days),
+    machines_df = pl.DataFrame(
+        {
+            "id": ["M01"],
+            "work_center_id": ["WC1"],
+            "name": ["Tear 1"],
+            "hours_per_day": [8.0],
+            "shifts": [2],
+            "efficiency": [0.9],
+        }
     )
-    schedule = solve_schedule(problem, time_limit_s=10)
-    return problem, schedule
+    calendar = build_calendar_from_machines(machines_df, today, horizon_days)
+    return compatibility, setup_matrix, calendar
+
+
+def _empty_compatibility() -> pl.DataFrame:
+    return pl.DataFrame({"sku": [], "machine_id": [], "speed_units_per_hour": []})
+
+
+def _empty_setup_matrix() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "machine_id": [],
+            "from_family": [],
+            "to_family": [],
+            "setup_minutes": [],
+            "forbidden": [],
+        }
+    )
+
+
+def _empty_calendar() -> pl.DataFrame:
+    return pl.DataFrame({"machine_id": [], "date": [], "available_hours": []})
 
 
 def _persist_plan_run(

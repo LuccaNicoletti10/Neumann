@@ -1,0 +1,10 @@
+machine_id,from_family,to_family,setup_minutes,forbidden
+M01,CLA,CLA,20,false
+M01,CLA,ESC,60,false
+M01,ESC,CLA,60,false
+M02,CLA,CLA,20,false
+M02,CLA,ESC,60,false
+M02,ESC,CLA,60,false
+M03,CLA,CLA,20,false
+M03,CLA,ESC,60,false
+M03,ESC,CLA,60,false

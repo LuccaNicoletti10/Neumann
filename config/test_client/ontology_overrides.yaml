@@ -1,0 +1,3 @@
+# Client-specific ontology extensions (never imported by core parsers).
+# Example: add Product.grammage without changing manufacturing.product core file.
+add_properties: []

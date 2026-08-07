@@ -1,0 +1,4 @@
+id,work_center_id,name,hours_per_day,shifts,efficiency
+M01,WC1,Tear 1,8,2,0.9
+M02,WC1,Tear 2,8,2,0.9
+M03,WC2,Tear 3,8,2,0.9

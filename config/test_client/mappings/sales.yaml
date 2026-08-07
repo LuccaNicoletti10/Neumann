@@ -1,0 +1,13 @@
+source: csv_generic
+source_dataset: sales
+target_object: Demand
+version: "1.0.0"
+key:
+  source: id
+  target: id
+fields:
+  - {source: id, target: id, required: true}
+  - {source: sku, target: sku, required: true}
+  - {source: date, target: date}
+  - {source: qty, target: qty}
+  - {source: type, target: type}

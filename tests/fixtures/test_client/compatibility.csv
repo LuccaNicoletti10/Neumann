@@ -1,0 +1,7 @@
+sku,machine_id,speed_units_per_hour
+SKU001,M01,100
+SKU001,M02,90
+SKU002,M01,95
+SKU003,M02,80
+SKU004,M03,120
+SKU005,M03,70

@@ -1,0 +1,15 @@
+source: csv_generic
+source_dataset: inventory
+target_object: InventoryPosition
+version: "1.0.0"
+key:
+  source: sku
+  target: sku
+fields:
+  - {source: sku, target: sku, required: true}
+  - {source: available, target: available}
+  - {source: blocked, target: blocked}
+  - {source: in_qc, target: in_qc}
+  - {source: reserved, target: reserved}
+  - {source: in_process, target: in_process}
+  - {source: location, target: location}
