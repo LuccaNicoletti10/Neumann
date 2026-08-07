@@ -12,8 +12,9 @@ _health = HealthService()
 
 @app.get("/health")
 def health() -> dict:
-    status = _health.check(postgres_ok=True)
-    return {"ok": status.ok, "checks": status.checks}
+    """Healthcheck: postgres, último plan_run e disco."""
+    status = _health.check()
+    return {"status": status.status, "checks": status.checks}
 
 
 @app.get("/")

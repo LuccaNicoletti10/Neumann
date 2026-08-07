@@ -50,12 +50,18 @@ def solve_schedule(problem: SchedulingProblem, time_limit_s: int = 60) -> Schedu
     """
     Resolve job-shop simplificado.
 
-    Tenta OR-Tools; se indisponível, usa heurística gulosa determinística.
+    Por padrão usa heurística gulosa (determinística e rápida).
+    Defina PLANNER_USE_ORTOOLS=1 para tentar CP-SAT (com fallback guloso).
     """
-    try:
-        return _solve_ortools(problem, time_limit_s)
-    except Exception:
-        return _solve_greedy(problem)
+    import os
+
+    use_ortools = os.environ.get("PLANNER_USE_ORTOOLS", "").lower() in {"1", "true", "yes"}
+    if use_ortools:
+        try:
+            return _solve_ortools(problem, time_limit_s)
+        except Exception:
+            return _solve_greedy(problem)
+    return _solve_greedy(problem)
 
 
 def _solve_greedy(problem: SchedulingProblem) -> Schedule:

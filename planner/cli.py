@@ -327,6 +327,34 @@ def cmd_schedule(args: argparse.Namespace) -> int:
     return cmd_build(ns)
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Fio de ouro: extract → transform → sync → forecast → netting → schedule → explain."""
+    from planner.core.engine.plan_pipeline import run_plan
+
+    paths = _paths(args.client)
+    data_root = Path(args.data_root)
+    try:
+        summary = run_plan(
+            args.client,
+            config_root=paths["config"],
+            data_root=data_root,
+            horizon_days=args.horizon,
+            dry_run=args.dry_run,
+        )
+    except Exception as exc:
+        print(f"ERRO no plan: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"client={args.client}")
+    print(f"plan_run_id={summary.plan_run_id}")
+    print(f"orders_created={summary.orders_created}")
+    print(f"machines_allocated={summary.machines_allocated}")
+    print(f"solver_status={summary.solver_status}")
+    print(f"duration_seconds={summary.duration_seconds:.2f}")
+    print(f"dry_run={summary.dry_run}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="planner", description="Neumann Planner CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -404,6 +432,13 @@ def build_parser() -> argparse.ArgumentParser:
     sch.add_argument("--client", required=True)
     sch.add_argument("--data-root", default=str(ROOT / "data"))
     sch.set_defaults(func=cmd_schedule)
+
+    pln = sub.add_parser("plan", help="Ciclo completo extract→schedule→explain")
+    pln.add_argument("--client", required=True)
+    pln.add_argument("--horizon", type=int, default=30)
+    pln.add_argument("--dry-run", action="store_true")
+    pln.add_argument("--data-root", default=str(ROOT / "data"))
+    pln.set_defaults(func=cmd_plan)
 
     return parser
 
