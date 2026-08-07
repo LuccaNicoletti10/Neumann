@@ -1,0 +1,219 @@
+object:
+  id: manufacturing.product
+  name: Product
+  display_name: Produto
+  key_property: sku
+  active: true
+  description: Industrial product / SKU
+
+properties:
+  - id: manufacturing.product.sku
+    name: sku
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: product.sku.default
+        priority: 10
+        matcher:
+          type: any_non_null
+        transform: strip_upper
+        args: {}
+    validators:
+      - type: not_blank
+      - type: max_length
+        args:
+          value: 50
+
+  - id: manufacturing.product.description
+    name: description
+    type: string
+    required: false
+    nullable: true
+    parsers:
+      - id: product.description.strip
+        priority: 10
+        matcher:
+          type: any_non_null
+        transform: strip
+    validators:
+      - type: max_length
+        args:
+          value: 255
+
+  - id: manufacturing.product.family
+    name: family
+    type: string
+    required: false
+    nullable: true
+    parsers:
+      - id: product.family.upper
+        priority: 10
+        matcher:
+          type: any_non_null
+        transform: strip_upper
+
+  - id: manufacturing.product.unit
+    name: unit
+    type: enum
+    required: true
+    nullable: false
+    parsers:
+      - id: product.unit.mapping
+        priority: 10
+        matcher:
+          type: any_non_null
+        transform: map_values
+        args:
+          case_insensitive: true
+          passthrough_canonical: true
+          mapping:
+            KG: kg
+            KILO: kg
+            QL: kg
+            MT: m
+            M: m
+            METRO: m
+            UN: unit
+            PC: unit
+    validators:
+      - type: allowed_values
+        args:
+          values: [kg, m, unit]
+
+  - id: manufacturing.product.min_stock
+    name: min_stock
+    type: decimal
+    required: false
+    nullable: true
+    default: 0
+    parsers:
+      - id: product.min_stock.br
+        priority: 10
+        matcher:
+          type: decimal_br
+        transform: parse_decimal_br
+      - id: product.min_stock.us
+        priority: 20
+        matcher:
+          type: decimal_us
+        transform: parse_decimal_us
+    validators:
+      - type: min_value
+        args:
+          value: 0
+
+  - id: manufacturing.product.max_stock
+    name: max_stock
+    type: decimal
+    required: false
+    nullable: true
+    parsers:
+      - id: product.max_stock.br
+        priority: 10
+        matcher:
+          type: decimal_br
+        transform: parse_decimal_br
+      - id: product.max_stock.us
+        priority: 20
+        matcher:
+          type: decimal_us
+        transform: parse_decimal_us
+    validators:
+      - type: min_value
+        args:
+          value: 0
+
+  - id: manufacturing.product.min_lot
+    name: min_lot
+    type: decimal
+    required: false
+    nullable: true
+    parsers:
+      - id: product.min_lot.br
+        priority: 10
+        matcher:
+          type: decimal_br
+        transform: parse_decimal_br
+      - id: product.min_lot.us
+        priority: 20
+        matcher:
+          type: decimal_us
+        transform: parse_decimal_us
+    validators:
+      - type: min_value
+        args:
+          value: 0
+
+  - id: manufacturing.product.lot_multiple
+    name: lot_multiple
+    type: decimal
+    required: false
+    nullable: true
+    parsers:
+      - id: product.lot_multiple.br
+        priority: 10
+        matcher:
+          type: decimal_br
+        transform: parse_decimal_br
+      - id: product.lot_multiple.us
+        priority: 20
+        matcher:
+          type: decimal_us
+        transform: parse_decimal_us
+    validators:
+      - type: min_value
+        args:
+          value: 0
+
+  - id: manufacturing.product.lead_time_days
+    name: lead_time_days
+    type: integer
+    required: false
+    nullable: true
+    parsers:
+      - id: product.lead_time.int
+        priority: 10
+        matcher:
+          type: integer
+        transform: parse_integer
+    validators:
+      - type: min_value
+        args:
+          value: 0
+
+  - id: manufacturing.product.cost
+    name: cost
+    type: decimal
+    required: false
+    nullable: true
+    parsers:
+      - id: product.cost.br
+        priority: 10
+        matcher:
+          type: decimal_br
+        transform: parse_decimal_br
+      - id: product.cost.us
+        priority: 20
+        matcher:
+          type: decimal_us
+        transform: parse_decimal_us
+    validators:
+      - type: min_value
+        args:
+          value: 0
+
+  - id: manufacturing.product.active
+    name: active
+    type: boolean
+    required: false
+    nullable: true
+    default: true
+    parsers:
+      - id: product.active.bool
+        priority: 10
+        matcher:
+          type: any_non_null
+        transform: parse_boolean
+        args:
+          case_insensitive: true

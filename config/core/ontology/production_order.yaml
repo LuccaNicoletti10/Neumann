@@ -1,0 +1,46 @@
+object:
+  id: manufacturing.production_order
+  name: ProductionOrder
+  display_name: Ordem de Produção
+  key_property: order_id
+  active: true
+
+properties:
+  - id: manufacturing.po.order_id
+    name: order_id
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: po.order_id.default
+        priority: 10
+        matcher: {type: any_non_null}
+        transform: strip_upper
+    validators:
+      - type: not_blank
+
+  - id: manufacturing.po.sku
+    name: sku
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: po.sku.default
+        priority: 10
+        matcher: {type: any_non_null}
+        transform: strip_upper
+
+  - id: manufacturing.po.quantity
+    name: quantity
+    type: decimal
+    required: true
+    nullable: false
+    parsers:
+      - id: po.qty.br
+        priority: 10
+        matcher: {type: decimal_br}
+        transform: parse_decimal_br
+      - id: po.qty.us
+        priority: 20
+        matcher: {type: decimal_us}
+        transform: parse_decimal_us

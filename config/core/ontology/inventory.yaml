@@ -1,0 +1,38 @@
+object:
+  id: manufacturing.inventory_position
+  name: InventoryPosition
+  display_name: Posição de Estoque
+  key_property: sku
+  active: true
+
+properties:
+  - id: manufacturing.inventory.sku
+    name: sku
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: inventory.sku.default
+        priority: 10
+        matcher: {type: any_non_null}
+        transform: strip_upper
+    validators:
+      - type: not_blank
+
+  - id: manufacturing.inventory.quantity
+    name: quantity
+    type: decimal
+    required: true
+    nullable: false
+    parsers:
+      - id: inventory.qty.br
+        priority: 10
+        matcher: {type: decimal_br}
+        transform: parse_decimal_br
+      - id: inventory.qty.us
+        priority: 20
+        matcher: {type: decimal_us}
+        transform: parse_decimal_us
+    validators:
+      - type: min_value
+        args: {value: 0}

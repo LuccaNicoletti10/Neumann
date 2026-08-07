@@ -1,3 +1,6 @@
-# Stdlib-only runtime (Python 3.10+).
-# Tkinter is required for the GUI and ships with most Python installs.
-# No third-party packages are required for the core engine.
+# Core planner
+PyYAML>=6.0
+
+# Optional: PostgreSQL persistence (Commit 5+)
+# psycopg[binary]>=3.1
+# alembic>=1.13

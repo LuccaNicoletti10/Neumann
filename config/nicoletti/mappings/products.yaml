@@ -1,0 +1,34 @@
+source: csv_generic
+source_dataset: produtos.csv
+target_object: Product
+version: "1.0.0"
+key:
+  source_field: B1_COD
+  target_property: sku
+
+fields:
+  - source: B1_COD
+    target: sku
+    required: true
+
+  - source: B1_DESC
+    target: description
+
+  - source: B1_UM
+    target: unit
+    required: true
+
+  - source: B1_ESTMIN
+    target: min_stock
+
+  - source: B1_LOTEMIN
+    target: min_lot
+
+  - source: B1_GRUPO
+    target: family
+
+  - source: B1_PRV1
+    target: cost
+
+  - source: B1_MSBLQL
+    target: active

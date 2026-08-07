@@ -1,0 +1,31 @@
+object:
+  id: manufacturing.demand
+  name: Demand
+  display_name: Demanda
+  key_property: demand_id
+  active: true
+
+properties:
+  - id: manufacturing.demand.id
+    name: demand_id
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: demand.id.default
+        priority: 10
+        matcher: {type: any_non_null}
+        transform: strip_upper
+    validators:
+      - type: not_blank
+
+  - id: manufacturing.demand.sku
+    name: sku
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: demand.sku.default
+        priority: 10
+        matcher: {type: any_non_null}
+        transform: strip_upper

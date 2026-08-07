@@ -1,0 +1,21 @@
+# Placeholder industrial objects — expand after Product E2E works.
+object:
+  id: manufacturing.machine
+  name: Machine
+  display_name: Máquina
+  key_property: code
+  active: true
+
+properties:
+  - id: manufacturing.machine.code
+    name: code
+    type: string
+    required: true
+    nullable: false
+    parsers:
+      - id: machine.code.default
+        priority: 10
+        matcher: {type: any_non_null}
+        transform: strip_upper
+    validators:
+      - type: not_blank
