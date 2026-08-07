@@ -1,0 +1,6 @@
+sources:
+  - name: csv_generic
+    type: csv_generic
+    config:
+      base_path: ${DATA_ROOT}/nicoletti/csv
+      encoding: auto

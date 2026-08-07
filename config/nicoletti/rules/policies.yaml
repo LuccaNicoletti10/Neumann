@@ -1,0 +1,13 @@
+service_level_z: 1.645
+min_days_of_cover: 12
+default_lead_time_days: 10
+autonomy:
+  approval_threshold: 0.85
+  max_financial_impact: 50000
+families:
+  FIX:
+    service_level_z: 1.645
+  ELE:
+    service_level_z: 1.96
+  MET:
+    service_level_z: 1.645

@@ -1,0 +1,5 @@
+id: nicoletti
+name: Nicoletti Têxtil
+timezone: America/Sao_Paulo
+currency: BRL
+# Credenciais NUNCA aqui — use variáveis de ambiente

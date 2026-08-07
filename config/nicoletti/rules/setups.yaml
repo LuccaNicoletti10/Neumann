@@ -1,0 +1,5 @@
+# machine × from_family × to_family
+- {machine_id: "M04", from_family: "ESC", to_family: "CLA", setup_minutes: 180, forbidden: true}
+- {machine_id: "M04", from_family: "CLA", to_family: "CLA", setup_minutes: 20, forbidden: false}
+- {machine_id: "M04", from_family: "FIX", to_family: "FIX", setup_minutes: 30, forbidden: false}
+- {machine_id: "M03", from_family: "MET", to_family: "FIX", setup_minutes: 45, forbidden: false}

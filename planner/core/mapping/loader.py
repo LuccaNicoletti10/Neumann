@@ -19,14 +19,15 @@ def load_schema_map(path: str | Path, *, client: str) -> SchemaMap:
     path = Path(path)
     data = _load_yaml(path)
     target_object = data["target_object"]
-    key = KeyMapping(
-        source_field=data["key"]["source_field"],
-        target_property=data["key"]["target_property"],
+    key = data.get("key", {})
+    key_map = KeyMapping(
+        source_field=key.get("source_field") or key.get("source"),
+        target_property=key.get("target_property") or key.get("target"),
     )
     fields = tuple(
         FieldMapping(
-            source_field=item["source"],
-            target_property=item["target"],
+            source_field=item.get("source") or item.get("source_field"),
+            target_property=item.get("target") or item.get("target_property"),
             target_object=target_object,
             source_required=bool(item.get("required", False)),
             parser_override=item.get("parser_override"),
@@ -40,7 +41,7 @@ def load_schema_map(path: str | Path, *, client: str) -> SchemaMap:
         source=data.get("source", "csv_generic"),
         source_dataset=data.get("source_dataset", path.name),
         target_object=target_object,
-        key=key,
+        key=key_map,
         fields=fields,
         version=str(data.get("version", "1.0.0")),
         metadata=data.get("metadata", {}),

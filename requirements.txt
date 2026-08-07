@@ -1,6 +1,8 @@
-# Core planner
+# Runtime mínimo (stdlib + YAML). Para o stack completo use: pip install -e ".[dev]"
 PyYAML>=6.0
-
-# Optional: PostgreSQL persistence (Commit 5+)
-# psycopg[binary]>=3.1
-# alembic>=1.13
+polars>=1.0
+pydantic>=2.0
+pytest>=8.0
+rich>=13.0
+fastapi>=0.110
+uvicorn>=0.27

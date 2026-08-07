@@ -1,34 +1,66 @@
 source: csv_generic
-source_dataset: produtos.csv
+source_dataset: products
 target_object: Product
 version: "1.0.0"
 key:
-  source_field: B1_COD
-  target_property: sku
+  source: B1_COD
+  target: sku
 
 fields:
   - source: B1_COD
     target: sku
+    parser: strip_upper
     required: true
 
   - source: B1_DESC
     target: description
+    parser: strip
 
   - source: B1_UM
     target: unit
+    parser: map_values
+    args:
+      case_insensitive: true
+      mapping:
+        KG: kg
+        KILO: kg
+        QL: kg
+        MT: m
+        M: m
+        METRO: m
+        UN: unit
+        PC: unit
     required: true
 
   - source: B1_ESTMIN
     target: min_stock
+    parser: parse_decimal_br
 
   - source: B1_LOTEMIN
     target: min_lot
+    parser: parse_decimal_br
 
   - source: B1_GRUPO
     target: family
+    parser: strip_upper
 
   - source: B1_PRV1
     target: cost
+    parser: parse_decimal_br
 
   - source: B1_MSBLQL
     target: active
+    parser: map_values
+    args:
+      case_insensitive: true
+      mapping:
+        S: true
+        SIM: true
+        "1": true
+        N: false
+        NAO: false
+        "0": false
+
+defaults:
+  max_stock: null
+  active: true

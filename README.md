@@ -1,89 +1,71 @@
-# Neumann — Data Integration Tool (US8930897)
+# Neumann Planner
 
-Ontology-driven data integration with schema mapping, DSL builders, and proactive validation of transformation scripts.
+Planejamento autônomo de produção com ontologia dinâmica, pipeline imutável e motor de decisão.
 
-## Layout
+## Arquitetura
 
 ```
-Neumann/
-├── main.py                      # CLI + GUI entry point
-├── data_integration/            # Core Python package
-│   ├── ontology.py              # Objects, properties, links
-│   ├── schema_map.py            # Source → ontology mappings
-│   ├── object_model.py          # Runtime object instances
-│   ├── dsl_builder.py           # Groovy / Python style builders
-│   ├── transformation_engine.py # Transform + proactive debugger
-│   └── gui.py                   # Tkinter UI
-├── config/
-│   ├── ontology_config.json
-│   └── schema_map.json
-├── scripts/
-│   ├── CSVExample.groovy
-│   └── PhoneTransformer.groovy
-└── examples/
-    ├── sample_people.csv
-    ├── sample_calls.json
-    └── run_cli.py
+planner/
+├── core/          # NÚCLEO UNIVERSAL (não conhece cliente)
+│   ├── ontology/  # tipos, parsers, validators, sync
+│   ├── pipeline/  # RAW parquet, transforms, schema map, timetravel
+│   ├── connectors/
+│   ├── engine/    # forecast, netting, scheduler, explain
+│   ├── actions/   # action registry + executor + audit
+│   ├── ai/        # context + narrator
+│   ├── api/       # FastAPI
+│   └── config/    # ConfigLoader
+├── plugins/       # csv_generic, totvs_protheus
+├── app/           # Streamlit MVP
+└── migrations/    # Alembic
+config/{cliente}/  # YAML declarativo por cliente
+docs/discovery.md
 ```
 
-## Requirements
+Regras:
+- `core/` nunca importa `plugins/` nem conhece nomes de cliente
+- Polars (não Pandas) no pipeline
+- Append-only na camada RAW
+- Dado inválido não entra na ontologia
 
-- Python 3.10+
-- Tkinter (for GUI only; usually bundled with Python)
-
-No third-party packages are required.
-
-## Quick start
+## Setup
 
 ```bash
-# CLI transform (CSV → Person objects)
-python main.py transform \
-  --source examples/sample_people.csv \
-  --source-type csv \
-  --output data/people_objects.json
-
-# Validate a script against the ontology
-python main.py validate --script scripts/CSVExample.groovy
-
-# Proactive debug (stops early on validation errors when useful)
-python main.py debug \
-  --script scripts/CSVExample.groovy \
-  --source examples/sample_people.csv
-
-# Launch GUI
-python main.py gui
-
-# Or run the small example script
-python examples/run_cli.py
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env
 ```
 
-## Core concepts
+## Comandos
 
-1. **Ontology** — defines object types, properties, and allowed links.
-2. **Schema map** — maps source fields (CSV/JSON) onto ontology properties, with optional transforms/filters.
-3. **DSL builder** — builds `ObjectModel` instances with ontology validation.
-4. **Transformation engine** — executes mapped transforms and script validation.
-5. **Proactive debugger** — validates as rows are processed and surfaces errors early.
+```bash
+# Ontologia
+python -m planner ontology validate --client nicoletti
+python -m planner parse-property --client nicoletti --object Product --property unit --value QL
 
-## Programmatic usage
+# Pipeline
+python -m planner extract --client nicoletti
+python -m planner build --client nicoletti
+python -m planner timetravel --client nicoletti --dataset raw.products --date 2026-08-07
+python -m planner show --client nicoletti --object Product --key PROD001
 
-```python
-from data_integration import (
-    Ontology,
-    SchemaMap,
-    TransformationEngine,
-    TransformationScript,
-    CSVDataSource,
-)
+# Ingestão tipada (parsers na propriedade)
+python -m planner ingest --client nicoletti --dataset products --dry-run
 
-ontology = Ontology.load_from_file("config/ontology_config.json")
-schema_map = SchemaMap.load_from_file("config/schema_map.json")
-engine = TransformationEngine(ontology, schema_map)
+# API / UI
+uvicorn planner.core.api.app:app --reload
+streamlit run planner/app/streamlit_app.py
 
-result = engine.execute_script(
-    TransformationScript("demo", open("scripts/CSVExample.groovy").read()),
-    CSVDataSource("examples/sample_people.csv"),
-    source_type="csv",
-)
-print(result.objects_created)
+# Docker
+docker compose up --build
 ```
+
+## Testes
+
+```bash
+pytest -q
+```
+
+## Discovery
+
+Ver `docs/discovery.md` (família têxtil, fio de ouro Protheus, regras tácitas).

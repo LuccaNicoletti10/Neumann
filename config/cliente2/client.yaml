@@ -1,0 +1,5 @@
+id: cliente2
+name: Cliente Template
+timezone: America/Sao_Paulo
+currency: BRL
+# Copie este diretório e preencha mappings/rules/sources.

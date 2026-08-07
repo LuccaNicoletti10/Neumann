@@ -9,5 +9,9 @@ venv/
 .vscode/
 *.log
 .pytest_cache/
+data/**/raw/
+data/**/clean/
 data/*.json
 !data/.gitkeep
+!data/nicoletti/csv/
+*.parquet

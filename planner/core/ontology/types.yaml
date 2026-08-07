@@ -1,0 +1,95 @@
+Product:
+  properties:
+    sku: {type: string, required: true, pk: true}
+    description: {type: string}
+    family: {type: string}
+    unit: {type: string}
+    min_stock: {type: float}
+    max_stock: {type: float}
+    min_lot: {type: float}
+    lot_multiple: {type: float}
+    lead_time_days: {type: int}
+    cost: {type: float}
+    active: {type: bool}
+  links:
+    - consumes: Product
+    - follows: Routing
+
+WorkCenter:
+  properties:
+    id: {type: string, required: true, pk: true}
+    name: {type: string}
+
+Machine:
+  properties:
+    id: {type: string, required: true, pk: true}
+    work_center_id: {type: string, fk: WorkCenter.id}
+    name: {type: string}
+    hours_per_day: {type: float}
+    shifts: {type: int}
+    efficiency: {type: float}
+
+InventoryPosition:
+  properties:
+    sku: {type: string, required: true, pk: true}
+    snapshot_date: {type: date, required: true, pk: true}
+    available: {type: float}
+    blocked: {type: float}
+    in_qc: {type: float}
+    reserved: {type: float}
+    in_process: {type: float}
+    location: {type: string}
+
+Demand:
+  properties:
+    id: {type: string, required: true, pk: true}
+    sku: {type: string, fk: Product.sku}
+    date: {type: date}
+    qty: {type: float}
+    type: {type: string}
+    customer: {type: string}
+    price: {type: float}
+    source_ref: {type: string}
+
+ProductionOrder:
+  properties:
+    id: {type: string, required: true, pk: true}
+    sku: {type: string, fk: Product.sku}
+    machine_id: {type: string, fk: Machine.id}
+    qty_planned: {type: float}
+    qty_produced: {type: float}
+    start_planned: {type: datetime}
+    end_planned: {type: datetime}
+    start_actual: {type: datetime}
+    end_actual: {type: datetime}
+    status: {type: string}
+    scrap: {type: float}
+    rework: {type: float}
+    source_ref: {type: string}
+
+BOM:
+  properties:
+    parent_sku: {type: string, pk: true}
+    component_sku: {type: string, pk: true}
+    qty_per_unit: {type: float}
+
+Routing:
+  properties:
+    sku: {type: string, pk: true}
+    step: {type: int, pk: true}
+    work_center_id: {type: string, fk: WorkCenter.id}
+    minutes_per_unit: {type: float}
+
+Compatibility:
+  properties:
+    sku: {type: string, pk: true}
+    machine_id: {type: string, pk: true}
+    speed_units_per_hour: {type: float}
+
+SetupMatrix:
+  properties:
+    machine_id: {type: string, pk: true}
+    from_family: {type: string, pk: true}
+    to_family: {type: string, pk: true}
+    setup_minutes: {type: float}
+    forbidden: {type: bool}
