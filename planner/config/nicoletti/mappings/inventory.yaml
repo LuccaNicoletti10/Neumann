@@ -1,0 +1,16 @@
+source: csv_generic
+source_dataset: inventory.csv
+target_object: InventoryPosition
+version: "1.0.0"
+key:
+  source_field: B2_COD
+  target_property: sku
+
+fields:
+  - source: B2_COD
+    target: sku
+    required: true
+
+  - source: B2_QATU
+    target: quantity
+    required: true

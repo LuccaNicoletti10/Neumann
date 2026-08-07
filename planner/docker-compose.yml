@@ -1,0 +1,45 @@
+# Projeto planner — sobe Postgres 16 (e opcionalmente API) com healthcheck.
+# Uso: docker compose -f planner/docker-compose.yml up -d
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: planner-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-planner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-planner}
+      POSTGRES_DB: ${POSTGRES_DB:-planner}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - planner_pgdata:/var/lib/postgresql/data
+      - ../scripts/init_db.sh:/docker-entrypoint-initdb.d/01_init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  planner-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: planner-api
+    command: uvicorn planner.core.api.app:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-planner}:${POSTGRES_PASSWORD:-planner}@postgres:5432/${POSTGRES_DB:-planner}
+      DATA_ROOT: /data
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/data
+      - ./config:/app/planner/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["full"]
+
+volumes:
+  planner_pgdata:

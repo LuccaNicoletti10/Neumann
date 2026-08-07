@@ -1,1 +1,1 @@
-"""Package."""
+"""Migrações Alembic do planner."""

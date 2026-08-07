@@ -1,1 +1,1 @@
-"""Package."""
+"""App Streamlit — MVP operacional."""

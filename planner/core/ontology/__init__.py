@@ -1,4 +1,4 @@
-"""Ontology package public exports."""
+"""Ontologia tipada e dinâmica — tipos, parsers, validators e sync."""
 
 from .exceptions import (
     DefinitionNotFoundError,

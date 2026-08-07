@@ -1,7 +1,4 @@
-"""Núcleo universal do planner — Clean Architecture.
+"""Núcleo universal do planner (Clean Architecture).
 
-As setas de import apontam SEMPRE para dentro: plugins/ importa de core/;
-core/ NUNCA importa de plugins/ nem de config/ de clientes.
+Importa apenas para dentro. Nunca importa plugins/ nem config/ de clientes.
 """
-
-__all__ = ["__doc__"]

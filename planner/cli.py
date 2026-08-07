@@ -14,13 +14,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _paths(client: str) -> dict[str, Path]:
+    # Preferência: planner/config (estrutura canônica); fallback: config/ na raiz
+    planner_config = ROOT / "planner" / "config"
+    root_config = ROOT / "config"
+    config_root = planner_config if (planner_config / client).exists() else root_config
     return {
-        "core": ROOT / "config" / "core" / "ontology",
-        "overrides": ROOT / "config" / client / "ontology_overrides.yaml",
-        "mappings": ROOT / "config" / client / "mappings",
+        "core": root_config / "core" / "ontology",
+        "overrides": config_root / client / "ontology_overrides.yaml",
+        "mappings": config_root / client / "mappings",
         "fixtures": ROOT / "fixtures" / client,
-        "data": Path(__file__).resolve().parents[1] / "data",
-        "config": ROOT / "config",
+        "data": ROOT / "data",
+        "config": config_root,
     }
 
 
@@ -244,7 +248,9 @@ def cmd_build(args: argparse.Namespace) -> int:
     import planner.core.pipeline.transform  # noqa: F401 — registra @transform
 
     data_root = Path(args.data_root)
-    ctx = Context.load(args.client, ROOT / "config", data_root)
+    config_root = _paths(args.client)["config"]
+    # Se config está em planner/config, o parent do client dir é o config root
+    ctx = Context.load(args.client, config_root, data_root)
     runner = TransformRunner(ctx, RawLayer(data_root))
     paths = runner.run_all()
     for output, path in paths.items():

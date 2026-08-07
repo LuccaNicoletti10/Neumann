@@ -1,0 +1,16 @@
+source: csv_generic
+source_dataset: sales.csv
+target_object: Demand
+version: "1.0.0"
+key:
+  source_field: C5_NUM
+  target_property: demand_id
+
+fields:
+  - source: C5_NUM
+    target: demand_id
+    required: true
+
+  - source: C6_PRODUTO
+    target: sku
+    required: true
