@@ -318,13 +318,26 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_schedule(args: argparse.Namespace) -> int:
-    """Batch diário simplificado: extract → build."""
-    print(f"[scheduler] client={args.client} starting extract+build")
-    ns = argparse.Namespace(client=args.client, data_root=args.data_root)
-    rc = cmd_extract(ns)
-    if rc != 0:
-        return rc
-    return cmd_build(ns)
+    """Batch diário: ciclo completo (ou só extract+build com --extract-only)."""
+    if getattr(args, "extract_only", False):
+        print(f"[scheduler] client={args.client} extract+build")
+        ns = argparse.Namespace(client=args.client, data_root=args.data_root)
+        rc = cmd_extract(ns)
+        if rc != 0:
+            return rc
+        return cmd_build(ns)
+    if getattr(args, "daemon", False):
+        from planner.core.engine.daily_job import start_scheduler
+
+        start_scheduler()
+        return 0
+    from planner.core.engine.daily_job import run_daily_plan
+    import os
+
+    os.environ["PLANNER_CLIENT"] = args.client
+    os.environ["PLANNER_DATA_ROOT"] = str(args.data_root)
+    run_daily_plan(args.client)
+    return 0
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
@@ -432,9 +445,11 @@ def build_parser() -> argparse.ArgumentParser:
     sh.add_argument("--data-root", default=str(ROOT / "data"))
     sh.set_defaults(func=cmd_show)
 
-    sch = sub.add_parser("schedule", help="Batch diário extract+build")
+    sch = sub.add_parser("schedule", help="Batch diário (ciclo completo ou daemon APScheduler)")
     sch.add_argument("--client", required=True)
     sch.add_argument("--data-root", default=str(ROOT / "data"))
+    sch.add_argument("--extract-only", action="store_true", help="Só extract+build")
+    sch.add_argument("--daemon", action="store_true", help="Agenda APScheduler (bloqueia)")
     sch.set_defaults(func=cmd_schedule)
 
     pln = sub.add_parser("plan", help="Ciclo completo extract→schedule→explain")

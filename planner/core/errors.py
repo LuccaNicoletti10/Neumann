@@ -35,3 +35,15 @@ class SyncCriticalError(PlannerError):
 
 class SolverError(PlannerError):
     """Falha ou INFEASIBLE do scheduler."""
+
+
+class DedupConflictError(InvalidDatasetError):
+    """Chaves duplicadas com valores conflitantes — não apagar silenciosamente."""
+
+
+class ForecastError(PlannerError):
+    """Falha no forecast (statsforecast ausente/erro) em modo operacional."""
+
+
+class ForecastBlockedError(PlannerError):
+    """Forecast com WMAPE acima do limite — plano não deve ser emitido."""

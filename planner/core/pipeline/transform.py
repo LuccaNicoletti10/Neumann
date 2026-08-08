@@ -14,12 +14,31 @@ import polars as pl
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
+from planner.core.errors import DedupConflictError
 from planner.core.pipeline.raw import RawLayer, new_run_id
 from planner.core.pipeline.schema_map import SchemaMapConfig, SchemaMapLoader, apply_schema_map
 from planner.core.pipeline.schemas import SCHEMA_BY_OUTPUT
 from planner.core.pipeline.validation import validate_clean_dataset
 
 logger = logging.getLogger(__name__)
+
+# Chave de negócio por dataset — NUNCA deduplicar só por sku quando a chave é composta.
+DEDUP_KEYS_BY_OUTPUT: dict[str, list[str]] = {
+    "clean.products": ["sku"],
+    "clean.sales": ["id"],
+    "clean.inventory": ["sku", "snapshot_date", "location"],
+    "clean.open_orders": ["id"],
+    "clean.production_orders": ["id"],
+    "clean.machines": ["id"],
+    "clean.work_centers": ["id"],
+    "clean.bom": ["parent_sku", "component_sku"],
+    "clean.routings": ["sku", "step"],
+    "clean.compatibility": ["sku", "machine_id"],
+    "clean.setup_matrix": ["machine_id", "from_family", "to_family"],
+    "clean.machine_calendar": ["machine_id", "date"],
+    "clean.maintenance": ["id"],
+    "clean.quality_events": ["id"],
+}
 
 
 @dataclass
@@ -79,6 +98,7 @@ class TransformSpec:
     fn: Callable[..., pl.DataFrame]
     output_schema: Any | None = None
     required: bool = False  # se True e RAW ausente → erro em operational
+    dedup_keys: list[str] | None = None
 
 
 class TransformRegistry:
@@ -129,10 +149,12 @@ def transform(
     output: str,
     output_schema: Any | None = None,
     required: bool = False,
+    dedup_keys: list[str] | None = None,
 ) -> Callable[[Callable[..., pl.DataFrame]], Callable[..., pl.DataFrame]]:
     """Decorator que registra um transform puro no registry global."""
 
     def decorator(fn: Callable[..., pl.DataFrame]) -> Callable[..., pl.DataFrame]:
+        keys = dedup_keys if dedup_keys is not None else DEDUP_KEYS_BY_OUTPUT.get(output)
         _REGISTRY.register(
             TransformSpec(
                 name=fn.__name__,
@@ -141,6 +163,7 @@ def transform(
                 fn=fn,
                 output_schema=output_schema or SCHEMA_BY_OUTPUT.get(output),
                 required=required,
+                dedup_keys=list(keys) if keys else None,
             )
         )
         return fn
@@ -196,8 +219,12 @@ class TransformRunner:
         if not isinstance(result, pl.DataFrame):
             raise TypeError(f"Transform {spec.name} deve retornar pl.DataFrame")
 
-        # Dedup por chave se houver coluna id/sku típica
-        result = _dedup(result)
+        result = _dedup(
+            result,
+            keys=spec.dedup_keys,
+            mode=self.ctx.mode,
+            dataset=spec.output,
+        )
 
         dataset_name = spec.output.split(".", 1)[-1]
         result = validate_clean_dataset(spec.output, result)
@@ -272,27 +299,68 @@ def _apply_or_passthrough(df: pl.DataFrame, ctx: Context, mapping_name: str) -> 
     return apply_schema_map(df, mapping)
 
 
-def _dedup(df: pl.DataFrame) -> pl.DataFrame:
-    for key in ("id", "sku"):
-        if key in df.columns and df.height == df.select(pl.col(key).n_unique()).item():
-            return df
-        if key in df.columns:
-            before = df.height
-            df = df.unique(subset=[key], keep="last")
-            if df.height < before:
-                logger.warning("Removidas %s duplicatas por %s", before - df.height, key)
-            return df
-    if {"parent_sku", "component_sku"}.issubset(df.columns):
-        return df.unique(subset=["parent_sku", "component_sku"], keep="last")
-    if {"sku", "machine_id"}.issubset(df.columns):
-        return df.unique(subset=["sku", "machine_id"], keep="last")
-    if {"machine_id", "from_family", "to_family"}.issubset(df.columns):
-        return df.unique(subset=["machine_id", "from_family", "to_family"], keep="last")
-    if {"sku", "step"}.issubset(df.columns):
-        return df.unique(subset=["sku", "step"], keep="last")
-    if {"machine_id", "date"}.issubset(df.columns):
-        return df.unique(subset=["machine_id", "date"], keep="last")
-    return df
+def _dedup(
+    df: pl.DataFrame,
+    keys: list[str] | None = None,
+    *,
+    mode: str = "operational",
+    dataset: str = "",
+) -> pl.DataFrame:
+    """
+    Deduplica pela chave declarada do dataset.
+
+    Duplicatas idênticas → keep last.
+    Duplicatas conflitantes (mesma chave, conteúdo diferente) → erro em operational.
+    """
+    if df.is_empty() or not keys:
+        return df
+    present = [k for k in keys if k in df.columns]
+    if not present:
+        return df
+    # location/shift opcionais: se ausentes, usa o que existir
+    if len(present) < len(keys):
+        missing = set(keys) - set(present)
+        # preenche colunas ausentes com null para chave composta estável
+        for col in missing:
+            if col in ("location", "shift"):
+                df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
+                present.append(col)
+            else:
+                logger.warning(
+                    "Dedup %s: coluna de chave ausente %s — pulando dedup",
+                    dataset,
+                    col,
+                )
+                return df
+        present = [k for k in keys if k in df.columns]
+
+    before = df.height
+    # conflito = mesma chave, linhas não idênticas
+    variant_counts = (
+        df.group_by(present)
+        .agg(pl.struct(pl.all()).n_unique().alias("_variants"))
+        .filter(pl.col("_variants") > 1)
+    )
+    if variant_counts.height > 0:
+        sample = variant_counts.head(3).to_dicts()
+        msg = (
+            f"chaves duplicadas com valores conflitantes em {dataset} "
+            f"keys={present} exemplos={sample}"
+        )
+        if mode == "operational":
+            raise DedupConflictError(dataset, msg)
+        logger.warning("DEMO: %s — mantendo última linha", msg)
+
+    out = df.unique(subset=present, keep="last")
+    if out.height < before:
+        logger.info(
+            "Dedup %s: %s → %s linhas (chave=%s)",
+            dataset,
+            before,
+            out.height,
+            present,
+        )
+    return out
 
 
 def _ensure_cols(df: pl.DataFrame, defaults: dict[str, Any]) -> pl.DataFrame:
@@ -418,6 +486,8 @@ def clean_production_orders(orders: pl.DataFrame, ctx: Context) -> pl.DataFrame:
 @transform(inputs=["raw.machines"], output="clean.machines", required=True)
 def clean_machines(machines: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     df = _apply_or_passthrough(machines, ctx, "machines")
+    if "id" not in df.columns and "machine_id" in df.columns:
+        df = df.rename({"machine_id": "id"})
     df = _ensure_cols(df, {"hours_per_day": 8.0, "shifts": 1, "efficiency": 1.0, "name": None})
     df = df.with_columns(
         pl.col("hours_per_day").cast(pl.Float64),

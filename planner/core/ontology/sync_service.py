@@ -14,7 +14,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from planner.core.db import get_session_factory
 
-from .db_models import DemandModel, InventoryPositionModel, ProductModel
+from .db_models import (
+    BomModel,
+    CompatibilityModel,
+    DemandModel,
+    InventoryPositionModel,
+    MachineModel,
+    ProductModel,
+    ProductionOrderModel,
+    RoutingModel,
+    SetupMatrixModel,
+)
 from .objects import Demand, InventoryPosition, Product
 
 logger = logging.getLogger(__name__)
@@ -264,6 +274,217 @@ class SyncService:
         except Exception as exc:
             session.rollback()
             logger.error("Falha ao sincronizar demanda client=%s: %s", client, exc)
+            result.errors.append(str(exc))
+        finally:
+            session.close()
+        return result
+
+    def sync_machines(self, client: str, df: pl.DataFrame, source_ref: str) -> SyncResult:
+        result = SyncResult()
+        if df.is_empty():
+            return result
+        session = self._session_factory()
+        try:
+            id_col = "id" if "id" in df.columns else "machine_id"
+            for row in df.to_dicts():
+                mid = str(row.get(id_col, "")).strip()
+                if not mid:
+                    result.errors.append("machine id ausente")
+                    continue
+                values = {
+                    "id": mid,
+                    "work_center_id": _str(row.get("work_center_id")) or "DEFAULT",
+                    "name": _str(row.get("name")),
+                    "hours_per_day": _f(row.get("hours_per_day")),
+                    "shifts": _i(row.get("shifts")),
+                    "efficiency": _f(row.get("efficiency")),
+                    "props": row.get("props") if isinstance(row.get("props"), dict) else {},
+                    "source_ref": source_ref,
+                }
+                stmt = insert(MachineModel).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={k: stmt.excluded[k] for k in values if k != "id"},
+                )
+                session.execute(stmt)
+                result.inserted += 1
+            session.commit()
+            logger.info("sync_machines client=%s rows=%s", client, result.inserted)
+        except Exception as exc:
+            session.rollback()
+            result.errors.append(str(exc))
+        finally:
+            session.close()
+        return result
+
+    def sync_compatibility(self, client: str, df: pl.DataFrame, source_ref: str) -> SyncResult:
+        result = SyncResult()
+        if df.is_empty():
+            return result
+        session = self._session_factory()
+        try:
+            for row in df.to_dicts():
+                sku = str(row.get("sku", "")).strip()
+                mid = str(row.get("machine_id", "")).strip()
+                if not sku or not mid:
+                    result.errors.append("sku/machine_id ausente em compatibility")
+                    continue
+                values = {
+                    "sku": sku,
+                    "machine_id": mid,
+                    "speed_units_per_hour": _f(row.get("speed_units_per_hour")),
+                }
+                stmt = insert(CompatibilityModel).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["sku", "machine_id"],
+                    set_={"speed_units_per_hour": stmt.excluded.speed_units_per_hour},
+                )
+                session.execute(stmt)
+                result.inserted += 1
+            session.commit()
+            logger.info("sync_compatibility client=%s rows=%s", client, result.inserted)
+        except Exception as exc:
+            session.rollback()
+            result.errors.append(str(exc))
+        finally:
+            session.close()
+        return result
+
+    def sync_setup_matrix(self, client: str, df: pl.DataFrame, source_ref: str) -> SyncResult:
+        result = SyncResult()
+        if df.is_empty():
+            return result
+        session = self._session_factory()
+        try:
+            for row in df.to_dicts():
+                mid = str(row.get("machine_id", "")).strip()
+                ff = str(row.get("from_family", "")).strip()
+                tf = str(row.get("to_family", "")).strip()
+                if not mid or not ff or not tf:
+                    result.errors.append("chave incompleta em setup_matrix")
+                    continue
+                values = {
+                    "machine_id": mid,
+                    "from_family": ff,
+                    "to_family": tf,
+                    "setup_minutes": _f(row.get("setup_minutes")),
+                    "forbidden": bool(row.get("forbidden") or False),
+                }
+                stmt = insert(SetupMatrixModel).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["machine_id", "from_family", "to_family"],
+                    set_={
+                        "setup_minutes": stmt.excluded.setup_minutes,
+                        "forbidden": stmt.excluded.forbidden,
+                    },
+                )
+                session.execute(stmt)
+                result.inserted += 1
+            session.commit()
+            logger.info("sync_setup_matrix client=%s rows=%s", client, result.inserted)
+        except Exception as exc:
+            session.rollback()
+            result.errors.append(str(exc))
+        finally:
+            session.close()
+        return result
+
+    def sync_bom(self, client: str, df: pl.DataFrame, source_ref: str) -> SyncResult:
+        result = SyncResult()
+        if df.is_empty():
+            return result
+        session = self._session_factory()
+        try:
+            for row in df.to_dicts():
+                parent = str(row.get("parent_sku", "")).strip()
+                comp = str(row.get("component_sku", "")).strip()
+                if not parent or not comp:
+                    continue
+                values = {
+                    "parent_sku": parent,
+                    "component_sku": comp,
+                    "qty_per_unit": _f(row.get("qty_per_unit")),
+                }
+                stmt = insert(BomModel).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["parent_sku", "component_sku"],
+                    set_={"qty_per_unit": stmt.excluded.qty_per_unit},
+                )
+                session.execute(stmt)
+                result.inserted += 1
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            result.errors.append(str(exc))
+        finally:
+            session.close()
+        return result
+
+    def sync_routings(self, client: str, df: pl.DataFrame, source_ref: str) -> SyncResult:
+        result = SyncResult()
+        if df.is_empty():
+            return result
+        session = self._session_factory()
+        try:
+            for row in df.to_dicts():
+                sku = str(row.get("sku", "")).strip()
+                step = row.get("step")
+                if not sku or step is None:
+                    continue
+                values = {
+                    "sku": sku,
+                    "step": int(step),
+                    "work_center_id": _str(row.get("work_center_id")),
+                    "minutes_per_unit": _f(row.get("minutes_per_unit")),
+                }
+                stmt = insert(RoutingModel).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["sku", "step"],
+                    set_={
+                        "work_center_id": stmt.excluded.work_center_id,
+                        "minutes_per_unit": stmt.excluded.minutes_per_unit,
+                    },
+                )
+                session.execute(stmt)
+                result.inserted += 1
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            result.errors.append(str(exc))
+        finally:
+            session.close()
+        return result
+
+    def sync_production_orders(self, client: str, df: pl.DataFrame, source_ref: str) -> SyncResult:
+        result = SyncResult()
+        if df.is_empty():
+            return result
+        session = self._session_factory()
+        try:
+            for row in df.to_dicts():
+                oid = str(row.get("id", "")).strip()
+                sku = str(row.get("sku", "")).strip()
+                if not oid or not sku:
+                    continue
+                values = {
+                    "id": oid,
+                    "sku": sku,
+                    "machine_id": _str(row.get("machine_id")),
+                    "qty_planned": _f(row.get("qty_planned") or row.get("qty")),
+                    "qty_produced": _f(row.get("qty_produced")) or 0.0,
+                    "status": _str(row.get("status")) or "planned",
+                    "source_ref": source_ref,
+                }
+                stmt = insert(ProductionOrderModel).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={k: stmt.excluded[k] for k in values if k != "id"},
+                )
+                session.execute(stmt)
+                result.inserted += 1
+            session.commit()
+        except Exception as exc:
+            session.rollback()
             result.errors.append(str(exc))
         finally:
             session.close()

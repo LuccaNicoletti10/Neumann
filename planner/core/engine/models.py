@@ -72,6 +72,7 @@ class WriteBackLogModel(DecisionsBase):
         DateTime(timezone=True), server_default=func.now()
     )
     status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default="default")
 
 
 class LlmLogModel(DecisionsBase):

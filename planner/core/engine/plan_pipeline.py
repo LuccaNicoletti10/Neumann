@@ -20,7 +20,11 @@ from sqlalchemy.orm import sessionmaker
 from planner.core.db import get_session_factory
 from planner.core.engine.decision_log import DecisionLogService
 from planner.core.engine.explain import PlanExplanation, explain_plan_line
-from planner.core.engine.forecast import generate_forecast, persist_forecast
+from planner.core.engine.forecast import (
+    assert_forecast_usable,
+    generate_forecast,
+    persist_forecast,
+)
 from planner.core.engine.netting import NettingResult, calculate_net_requirements
 from planner.core.engine.scheduler import (
     OrderCandidate,
@@ -161,11 +165,13 @@ def run_plan(
             sales,
             horizon_days=horizon_days,
             reference_date=ref,
+            mode=mode,
         )
         for row in forecast_df.to_dicts():
             wmape = float(row.get("wmape_backtest") or 0)
             if wmape > 0.5:
                 alert_high_wmape(client, str(row["sku"]), wmape)
+        assert_forecast_usable(forecast_df, mode=mode)
         if not dry_run and not forecast_df.is_empty():
             persist_forecast(
                 forecast_df,
@@ -373,15 +379,27 @@ def _step_sync(
     for output, path in clean_paths.items():
         df = pl.read_parquet(path)
         ref = f"{output}:{run_id}"
-        name = output.lower()
-        if "product" in name:
+        name = output.lower().split(".")[-1]
+        if name == "products":
             results.append(sync.sync_products(client, df, source_ref=ref))
-        elif "invent" in name or "stock" in name:
+        elif name == "inventory":
             if "snapshot_date" not in df.columns:
                 raise InvalidDatasetError("clean.inventory", "inventory sem snapshot válido")
             results.append(sync.sync_inventory(client, df, snapshot_date=today, source_ref=ref))
-        elif "sales" in name or "demand" in name:
+        elif name in {"sales", "demand"}:
             results.append(sync.sync_demand(client, df, source_ref=ref))
+        elif name == "machines":
+            results.append(sync.sync_machines(client, df, source_ref=ref))
+        elif name == "compatibility":
+            results.append(sync.sync_compatibility(client, df, source_ref=ref))
+        elif name == "setup_matrix":
+            results.append(sync.sync_setup_matrix(client, df, source_ref=ref))
+        elif name == "bom":
+            results.append(sync.sync_bom(client, df, source_ref=ref))
+        elif name == "routings":
+            results.append(sync.sync_routings(client, df, source_ref=ref))
+        elif name == "production_orders":
+            results.append(sync.sync_production_orders(client, df, source_ref=ref))
     return results
 
 
@@ -445,9 +463,11 @@ def _step_schedule(
 ) -> tuple[SchedulingProblem, Schedule]:
     family_map = dict(zip(products["sku"].to_list(), products["family"].to_list()))
     orders: list[OrderCandidate] = []
-    for i, n in enumerate(netting):
-        if n.suggested_qty <= 0:
-            continue
+    ranked = sorted(
+        [n for n in netting if n.suggested_qty > 0],
+        key=lambda n: (n.sku, -n.suggested_qty),
+    )
+    for i, n in enumerate(ranked):
         orders.append(
             OrderCandidate(
                 id=f"ORD-{i+1:04d}",
@@ -612,6 +632,7 @@ def _persist_plan_run(
     problem: SchedulingProblem,
     netting: list[NettingResult],
 ) -> None:
+    """Persiste plan_run + plan_line + decision_log na mesma transação."""
     session = factory()
     decision_log = DecisionLogService(session_factory=factory)
     try:
@@ -636,57 +657,56 @@ def _persist_plan_run(
                 "duration": duration_seconds,
             },
         )
-        # plan_line se a tabela existir
-        try:
-            for a in schedule.assignments:
-                order = next(o for o in problem.orders if o.id == a.order_id)
-                exp = next((e for e in explanations if e.order == a.order_id), None)
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO decisions.plan_line
-                            (id, client, plan_run_id, sku, family, qty, machine_id,
-                             start_ts, end_ts, priority, deadline, status, explanation, created_at)
-                        VALUES
-                            (:id, :client, :plan_run_id, :sku, :family, :qty, :machine_id,
-                             :start_ts, :end_ts, :priority, :deadline, 'proposed',
-                             CAST(:explanation AS jsonb), :created_at)
-                        """
+        for a in schedule.assignments:
+            order = next(o for o in problem.orders if o.id == a.order_id)
+            exp = next((e for e in explanations if e.order == a.order_id), None)
+            plan_line_id = str(uuid4())
+            session.execute(
+                text(
+                    """
+                    INSERT INTO decisions.plan_line
+                        (id, client, plan_run_id, sku, family, qty, machine_id,
+                         start_ts, end_ts, priority, deadline, status, explanation, created_at)
+                    VALUES
+                        (:id, :client, :plan_run_id, :sku, :family, :qty, :machine_id,
+                         :start_ts, :end_ts, :priority, :deadline, 'proposed',
+                         CAST(:explanation AS jsonb), :created_at)
+                    """
+                ),
+                {
+                    "id": plan_line_id,
+                    "client": client,
+                    "plan_run_id": plan_run_id,
+                    "sku": order.sku,
+                    "family": order.family,
+                    "qty": a.qty,
+                    "machine_id": a.machine_id,
+                    "start_ts": a.start,
+                    "end_ts": a.end,
+                    "priority": order.priority,
+                    "deadline": order.deadline,
+                    "explanation": json.dumps(
+                        {
+                            "order_ref": a.order_id,
+                            "reasons": [
+                                {"type": r.type, "message": r.message, "data": r.data}
+                                for r in (exp.reasons if exp else [])
+                            ],
+                        },
+                        default=str,
                     ),
-                    {
-                        "id": str(uuid4()),
-                        "client": client,
-                        "plan_run_id": plan_run_id,
-                        "sku": order.sku,
-                        "family": order.family,
-                        "qty": a.qty,
-                        "machine_id": a.machine_id,
-                        "start_ts": a.start,
-                        "end_ts": a.end,
-                        "priority": order.priority,
-                        "deadline": order.deadline,
-                        "explanation": json.dumps(
-                            {
-                                "reasons": [
-                                    {"type": r.type, "message": r.message, "data": r.data}
-                                    for r in (exp.reasons if exp else [])
-                                ]
-                            },
-                            default=str,
-                        ),
-                        "created_at": datetime.now(timezone.utc),
-                    },
-                )
-                decision_log.record_recommendation(
-                    UUID(plan_run_id),
-                    a.order_id,
-                    a.qty,
-                    a.machine_id,
-                    client=client,
-                    family=order.family,
-                )
-        except Exception as exc:
-            logger.warning("plan_line/decision_log parcial: %s", exc)
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+            decision_log.record_recommendation(
+                UUID(plan_run_id),
+                plan_line_id,
+                a.qty,
+                a.machine_id,
+                client=client,
+                family=order.family,
+                session=session,
+            )
 
         session.commit()
     except Exception:

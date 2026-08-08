@@ -8,6 +8,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: planner
+          POSTGRES_PASSWORD: planner
+          POSTGRES_DB: planner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U planner -d planner"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://planner:planner@localhost:5432/planner
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,9 +33,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install polars PyYAML pydantic pytest
-      - name: Unit tests
-        run: pytest -m "unit or not slow" -q --ignore=tests/test_validators_engine.py
+          pip install polars PyYAML pydantic pytest ortools statsforecast psycopg[binary] alembic
+      - name: Migrate
+        run: |
+          cd planner && alembic -c migrations/alembic.ini upgrade head
+      - name: Unit + integration tests
+        run: pytest -q --ignore=tests/test_validators_engine.py
       - name: Architecture check
         run: |
           if grep -R "nicoletti" planner/core --include='*.py' | grep -v 'Binary' | grep -v docstring | grep -v '#' ; then

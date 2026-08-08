@@ -91,7 +91,7 @@ def test_plan_dry_run_with_full_fixtures(tmp_path: Path):
         mode="operational",
         emergency_greedy=True,  # evita OR-Tools lento em unit
         solver_seed=42,
-        reference_date=__import__("datetime").date(2026, 8, 1),
+        reference_date=__import__("datetime").date(2026, 1, 15),
     )
     assert summary.dry_run is True
     assert summary.plan_run_id

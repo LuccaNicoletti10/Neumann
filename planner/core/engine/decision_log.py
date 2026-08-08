@@ -71,12 +71,14 @@ class DecisionLogService:
         *,
         client: str,
         family: str | None = None,
+        session: Session | None = None,
     ) -> DecisionRecord:
-        """INSERT da recomendação do motor."""
+        """INSERT da recomendação do motor (usa sessão externa se fornecida)."""
         row_id = uuid4()
-        session = self._session_factory()
+        own_session = session is None
+        sess = session or self._session_factory()
         try:
-            session.add(
+            sess.add(
                 DecisionLogModel(
                     id=row_id,
                     client=client,
@@ -88,7 +90,10 @@ class DecisionLogService:
                     created_at=datetime.now(timezone.utc),
                 )
             )
-            session.commit()
+            if own_session:
+                sess.commit()
+            else:
+                sess.flush()
             logger.info(
                 "Recomendação registrada plan_line=%s qty=%.2f machine=%s",
                 plan_line_id,
@@ -105,10 +110,12 @@ class DecisionLogService:
                 family=family,
             )
         except Exception:
-            session.rollback()
+            if own_session:
+                sess.rollback()
             raise
         finally:
-            session.close()
+            if own_session:
+                sess.close()
 
     def record_decision(
         self,

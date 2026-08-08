@@ -38,8 +38,29 @@ def test_generate_forecast_synthetic_24_months():
 
 
 @pytest.mark.unit
-def test_generate_forecast_empty():
-    empty = pl.DataFrame({"sku": [], "date": [], "qty": []})
-    out = generate_forecast(empty)
-    assert out.is_empty()
-    assert "wmape_backtest" in out.columns
+def test_generate_forecast_operational_no_stub_without_statsforecast(monkeypatch):
+    from planner.core.errors import ForecastError
+    from planner.core.engine import forecast as forecast_mod
+
+    def boom(*_a, **_k):
+        raise ImportError("no statsforecast")
+
+    monkeypatch.setattr(forecast_mod, "_forecast_statsforecast", boom)
+    history = _synthetic_sales(6)
+    with pytest.raises(ForecastError):
+        generate_forecast(history, mode="operational", reference_date=date(2026, 1, 15))
+
+
+@pytest.mark.unit
+def test_generate_forecast_demo_allows_stub(monkeypatch):
+    from planner.core.engine import forecast as forecast_mod
+
+    def boom(*_a, **_k):
+        raise ImportError("no statsforecast")
+
+    monkeypatch.setattr(forecast_mod, "_forecast_statsforecast", boom)
+    history = _synthetic_sales(6)
+    out = generate_forecast(history, mode="demo", reference_date=date(2026, 1, 15))
+    assert not out.is_empty()
+    assert "status" in out.columns
+

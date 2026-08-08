@@ -1,15 +1,16 @@
-"""Testes do ActionExecutor com audit (PostgreSQL ou memória de fallback)."""
+"""Testes do ActionExecutor com audit (PostgreSQL ou mocks)."""
 
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from planner.core.actions.executor import ActionExecutor
+from planner.core.actions import registry as action_registry
 
 
 def _database_url() -> str:
@@ -34,23 +35,33 @@ def test_approve_plan_line_valid_and_invalid_with_mock_session():
     """Ambos (válido e inválido) entram no audit — mesmo se o INSERT DB falhar."""
     session = MagicMock()
     factory = MagicMock(return_value=session)
-
     executor = ActionExecutor(session_factory=factory)
 
-    ok = executor.execute(
-        "approve_plan_line",
-        {"plan_line_id": "PL-1", "approver": "lucca", "client": "nicoletti"},
-        actor="lucca",
-        actor_type="human",
-        client="nicoletti",
-    )
-    bad = executor.execute(
-        "approve_plan_line",
-        {"approver": "lucca", "client": "nicoletti"},
-        actor="lucca",
-        actor_type="human",
-        client="nicoletti",
-    )
+    action = action_registry.ACTIONS["approve_plan_line"]
+    original_vals = list(action.validations)
+    original_effects = list(action.effects)
+    action.validations = [lambda p: (bool(p.get("plan_line_id")), "plan_line_id obrigatório")]
+    action.effects = [
+        lambda p, actor: {"status": "approved", "actor": actor, "plan_line_id": p["plan_line_id"]}
+    ]
+    try:
+        ok = executor.execute(
+            "approve_plan_line",
+            {"plan_line_id": "PL-1", "approver": "lucca", "client": "nicoletti"},
+            actor="lucca",
+            actor_type="human",
+            client="nicoletti",
+        )
+        bad = executor.execute(
+            "approve_plan_line",
+            {"approver": "lucca", "client": "nicoletti"},
+            actor="lucca",
+            actor_type="human",
+            client="nicoletti",
+        )
+    finally:
+        action.validations = original_vals
+        action.effects = original_effects
 
     assert ok.success is True
     assert bad.success is False
@@ -69,9 +80,9 @@ def test_approve_persists_to_postgres():
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     executor = ActionExecutor(session_factory=factory)
 
-    ok = executor.execute(
+    missing = executor.execute(
         "approve_plan_line",
-        {"plan_line_id": "PL-TEST-OK", "approver": "tester", "client": "nicoletti"},
+        {"plan_line_id": "PL-MISSING-XYZ", "approver": "tester", "actor_role": "approver"},
         actor="tester",
         actor_type="human",
         client="nicoletti",
@@ -83,18 +94,19 @@ def test_approve_persists_to_postgres():
         actor_type="human",
         client="nicoletti",
     )
-    assert ok.success and not bad.success
+    assert missing.success is False
+    assert bad.success is False
 
     rows = executor.get_audit_log("nicoletti", limit=50)
     ids = {r["id"] for r in rows}
-    assert ok.audit_id in ids
+    assert missing.audit_id in ids
     assert bad.audit_id in ids
 
     session = factory()
     try:
         session.execute(
             text("DELETE FROM audit.action_log WHERE id = :a OR id = :b"),
-            {"a": ok.audit_id, "b": bad.audit_id},
+            {"a": missing.audit_id, "b": bad.audit_id},
         )
         session.commit()
     finally:

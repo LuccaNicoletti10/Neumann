@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
+from typing import Literal
 
 import polars as pl
 
+from planner.core.errors import ForecastBlockedError, ForecastError
+
 logger = logging.getLogger(__name__)
+
+ForecastStatus = Literal["approved", "degraded", "blocked"]
 
 
 def generate_forecast(
@@ -15,13 +20,18 @@ def generate_forecast(
     horizon_days: int = 30,
     backtest_until: date | None = None,
     reference_date: date | None = None,
+    *,
+    mode: str = "operational",
+    wmape_block_threshold: float = 0.5,
+    wmape_degraded_threshold: float = 0.35,
+    allow_stub: bool | None = None,
 ) -> pl.DataFrame:
     """
     Gera previsão por SKU com seleção de modelo via backtest WMAPE móvel.
 
-    Entrada: colunas sku, date, qty. Função pura — sem acesso a banco.
-    backtest_until padrão = reference_date - 1 dia (não datas fixas).
-    Horizonte respeita horizon_days (previsão diária somada ou mensal proporcional).
+    mode=operational → falha se StatsForecast indisponível/erro (sem stub).
+    mode=demo → stub permitido.
+    Coluna status: approved | degraded | blocked conforme WMAPE.
     """
     empty = pl.DataFrame(
         schema={
@@ -33,22 +43,65 @@ def generate_forecast(
             "bias_backtest": pl.Float64,
             "training_rows": pl.Int64,
             "profile": pl.Utf8,
+            "status": pl.Utf8,
+            "horizon_days": pl.Int64,
+            "backtest_valid": pl.Boolean,
         }
     )
     if sales_history.is_empty():
         return empty
 
+    use_stub = allow_stub if allow_stub is not None else (mode == "demo")
     ref = reference_date or date.today()
-    cutoff = backtest_until or (ref - __import__("datetime").timedelta(days=1))
+    cutoff = backtest_until or (ref - timedelta(days=1))
     df = sales_history.with_columns(pl.col("date").cast(pl.Date))
     try:
-        return _forecast_statsforecast(df, horizon_days, cutoff, ref)
-    except ImportError:
-        logger.warning("statsforecast indisponível — usando stub sazonal")
-        return _forecast_stub(df, horizon_days, ref)
+        out = _forecast_statsforecast(df, horizon_days, cutoff, ref)
+    except ImportError as exc:
+        if not use_stub:
+            raise ForecastError(
+                "statsforecast indisponível em modo operacional — instale a dependência"
+            ) from exc
+        logger.warning("statsforecast indisponível — usando stub sazonal (demo)")
+        out = _forecast_stub(df, horizon_days, ref)
     except Exception as exc:
-        logger.error("Falha no forecast statsforecast, fallback stub: %s", exc)
-        return _forecast_stub(df, horizon_days, ref)
+        if not use_stub:
+            raise ForecastError(f"Falha no forecast statsforecast: {exc}") from exc
+        logger.error("Falha no forecast statsforecast, fallback stub (demo): %s", exc)
+        out = _forecast_stub(df, horizon_days, ref)
+
+    out = out.with_columns(
+        pl.lit(horizon_days).cast(pl.Int64).alias("horizon_days"),
+    )
+    if "backtest_valid" not in out.columns:
+        out = out.with_columns(pl.lit(False).alias("backtest_valid"))
+    out = out.with_columns(
+        pl.when(~pl.col("backtest_valid"))
+        .then(pl.lit("degraded"))
+        .when(pl.col("wmape_backtest") > wmape_block_threshold)
+        .then(pl.lit("blocked"))
+        .when(pl.col("wmape_backtest") > wmape_degraded_threshold)
+        .then(pl.lit("degraded"))
+        .otherwise(pl.lit("approved"))
+        .alias("status"),
+    )
+    return out
+
+
+def assert_forecast_usable(forecast_df: pl.DataFrame, *, mode: str = "operational") -> None:
+    """Impede emissão do plano se forecast estiver blocked (operational)."""
+    if forecast_df.is_empty():
+        if mode == "operational":
+            raise ForecastError("forecast vazio em modo operacional")
+        return
+    if "status" not in forecast_df.columns:
+        return
+    blocked = forecast_df.filter(pl.col("status") == "blocked")
+    if blocked.height and mode == "operational":
+        skus = blocked.get_column("sku").to_list()
+        raise ForecastBlockedError(
+            f"forecast blocked (WMAPE alto) para SKUs: {skus} — plano não emitido"
+        )
 
 
 def persist_forecast(
@@ -70,15 +123,19 @@ def persist_forecast(
     factory = session_factory or get_session_factory()
     session = factory()
     inserted = 0
-    ref = reference_date or date.today()
     try:
         for row in df.to_dicts():
             session.execute(
                 text(
                     """
                     INSERT INTO decisions.forecast
-                        (sku, month, qty, model, wmape_backtest)
-                    VALUES (:sku, :month, :qty, :model, :wmape)
+                        (sku, month, qty, model, wmape_backtest,
+                         client_id, forecast_run_id, bias_backtest, profile,
+                         horizon_days, training_rows, status)
+                    VALUES
+                        (:sku, :month, :qty, :model, :wmape,
+                         :client_id, :forecast_run_id, :bias, :profile,
+                         :horizon_days, :training_rows, :status)
                     """
                 ),
                 {
@@ -87,6 +144,13 @@ def persist_forecast(
                     "qty": float(row["qty"]),
                     "model": str(row.get("model") or "")[:64],
                     "wmape": float(row.get("wmape_backtest") or 0),
+                    "client_id": client or "default",
+                    "forecast_run_id": forecast_run_id or None,
+                    "bias": float(row.get("bias_backtest") or 0),
+                    "profile": str(row.get("profile") or "")[:32] or None,
+                    "horizon_days": int(row.get("horizon_days") or horizon_days),
+                    "training_rows": int(row.get("training_rows") or 0),
+                    "status": str(row.get("status") or "approved")[:16],
                 },
             )
             inserted += 1
@@ -115,7 +179,6 @@ def _classify_profile(hist: pl.DataFrame) -> str:
     zero_ratio = float((hist.filter(pl.col("qty") == 0).height) / max(hist.height, 1))
     if zero_ratio > 0.5:
         return "intermittent"
-    # sazonalidade grosseira: CV mensal
     if hist.height >= 12:
         return "seasonal"
     return "regular"
@@ -137,7 +200,6 @@ def _forecast_statsforecast(
             Croston = None
 
     monthly = _to_monthly(df)
-    # Backtest móvel: últimos 6 meses antes do cutoff
     backtest_end = date(backtest_until.year, backtest_until.month, 1)
     bt_months = []
     y, m = backtest_end.year, backtest_end.month
@@ -148,7 +210,6 @@ def _forecast_statsforecast(
             y -= 1
         bt_months.append(date(y, m, 1))
     bt_months = sorted(bt_months)
-    train_until = bt_months[0] - __import__("datetime").timedelta(days=1) if bt_months else backtest_end
 
     horizon_months = max(1, round(horizon_days / 30))
     day_scale = horizon_days / (horizon_months * 30.0)
@@ -172,6 +233,7 @@ def _forecast_statsforecast(
                     "bias_backtest": 0.0,
                     "training_rows": training_rows,
                     "profile": profile,
+                    "backtest_valid": False,
                 }
             )
             logger.info("SKU %s: MovingAverage, WMAPE 100.0%%, prev %.0f", sku, qty)
@@ -196,6 +258,7 @@ def _forecast_statsforecast(
         best_model = "SeasonalNaive"
         best_wmape = 1.0
         best_bias = 0.0
+        backtest_valid = False
         mean_monthly = float(hist.select(pl.col("qty").mean()).item() or 0)
         best_qty = mean_monthly * horizon_months * day_scale
 
@@ -218,6 +281,7 @@ def _forecast_statsforecast(
                         else float((merged["y"] - merged["yhat"]).abs().sum() / denom)
                     )
                     bias = float((merged["yhat"] - merged["y"]).sum() / max(denom, 1e-9))
+                    backtest_valid = True
                     if wmape < best_wmape:
                         best_wmape = wmape
                         best_bias = bias
@@ -235,7 +299,6 @@ def _forecast_statsforecast(
                 model_map["CrostonSBA"] = Croston()
             chosen = model_map.get(best_model, SeasonalNaive(season_length=12))
             sf = StatsForecast(models=[chosen], freq="MS", n_jobs=1)
-            # treina só até cutoff
             full = pdf[pdf["ds"] <= pd.Timestamp(backtest_end)]
             if full.empty:
                 full = pdf
@@ -246,11 +309,12 @@ def _forecast_statsforecast(
             best_qty = mean_monthly * horizon_months * day_scale
 
         logger.info(
-            "SKU %s: modelo %s, WMAPE %.1f%%, prev %.0f",
+            "SKU %s: modelo %s, WMAPE %.1f%%, prev %.0f, backtest_valid=%s",
             sku,
             best_model,
             best_wmape * 100,
             best_qty,
+            backtest_valid,
         )
         rows.append(
             {
@@ -262,6 +326,7 @@ def _forecast_statsforecast(
                 "bias_backtest": best_bias,
                 "training_rows": training_rows,
                 "profile": profile,
+                "backtest_valid": backtest_valid,
             }
         )
 
@@ -269,7 +334,7 @@ def _forecast_statsforecast(
 
 
 def _forecast_stub(df: pl.DataFrame, horizon_days: int, reference_date: date) -> pl.DataFrame:
-    """Fallback: média do mesmo mês (SeasonalNaive simplificado)."""
+    """Fallback demo: média do mesmo mês (SeasonalNaive simplificado)."""
     rows: list[dict] = []
     target_month = date(reference_date.year, reference_date.month, 1)
     scale = horizon_days / 30.0
@@ -297,6 +362,7 @@ def _forecast_stub(df: pl.DataFrame, horizon_days: int, reference_date: date) ->
                 "bias_backtest": 0.0,
                 "training_rows": hist.height,
                 "profile": profile,
+                "backtest_valid": False,
             }
         )
     return pl.DataFrame(rows)

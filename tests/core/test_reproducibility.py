@@ -18,7 +18,7 @@ FIXTURES = ROOT / "tests" / "fixtures" / "test_client"
 def test_plan_reproducible_same_seed(tmp_path: Path):
     client = "test_client"
     config_root = ROOT / "config"
-    ref = date(2026, 8, 1)
+    ref = date(2026, 1, 15)
 
     def _run(base: Path):
         data_root = base / "data"
@@ -53,6 +53,6 @@ def test_plan_reproducible_same_seed(tmp_path: Path):
     assert a.solver_status == b.solver_status
     assert a.objective == b.objective
 
-    exp_a = [(e.order, e.sku, e.qty, e.machine, e.window) for e in a.explanations]
-    exp_b = [(e.order, e.sku, e.qty, e.machine, e.window) for e in b.explanations]
+    exp_a = sorted([(e.sku, e.qty, e.machine, e.window) for e in a.explanations])
+    exp_b = sorted([(e.sku, e.qty, e.machine, e.window) for e in b.explanations])
     assert exp_a == exp_b

@@ -77,6 +77,28 @@ def test_plan_e2e_test_client(tmp_path: Path):
     try:
         session.execute(text("DELETE FROM ontology.product WHERE sku LIKE 'SKU00%'"))
         session.execute(text("DELETE FROM decisions.forecast WHERE sku LIKE 'SKU00%'"))
+        session.execute(
+            text(
+                """
+                DELETE FROM decisions.decision_log
+                WHERE plan_run_id IN (
+                    SELECT id FROM decisions.plan_run WHERE client = :c
+                )
+                """
+            ),
+            {"c": client},
+        )
+        session.execute(
+            text(
+                """
+                DELETE FROM decisions.plan_line
+                WHERE plan_run_id IN (
+                    SELECT id FROM decisions.plan_run WHERE client = :c
+                )
+                """
+            ),
+            {"c": client},
+        )
         session.execute(text("DELETE FROM decisions.plan_run WHERE client = :c"), {"c": client})
         session.commit()
     finally:
@@ -93,6 +115,7 @@ def test_plan_e2e_test_client(tmp_path: Path):
         session_factory=factory,
         emergency_greedy=True,
         solver_seed=42,
+        reference_date=__import__("datetime").date(2026, 1, 15),
     )
     elapsed = time.perf_counter() - started
 
