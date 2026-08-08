@@ -1,5 +1,8 @@
+"""Alembic env — DATABASE_URL tem prioridade sobre alembic.ini."""
+
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -11,17 +14,25 @@ if config.config_file_name is not None:
 
 target_metadata = None
 
+_DEFAULT_URL = "postgresql+psycopg://planner:planner@localhost:5432/planner"
+
+
+def _database_url() -> str:
+    return os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url") or _DEFAULT_URL
+
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    url = _database_url()
     context.configure(url=url, literal_binds=True, dialect_opts={"paramstyle": "named"})
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
+    configuration = config.get_section(config.config_ini_section, {}) or {}
+    configuration["sqlalchemy.url"] = _database_url()
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

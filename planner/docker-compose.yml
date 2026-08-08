@@ -1,4 +1,4 @@
-# Projeto planner — sobe Postgres 16 (e opcionalmente API) com healthcheck.
+# Projeto planner — Postgres 16 + migrate + API.
 # Uso: docker compose -f planner/docker-compose.yml up -d
 
 services:
@@ -22,6 +22,19 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: planner-migrate
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-planner}:${POSTGRES_PASSWORD:-planner}@postgres:5432/${POSTGRES_DB:-planner}
+    command: alembic -c planner/migrations/alembic.ini upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   planner-api:
     build:
       context: ..
@@ -39,6 +52,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     profiles: ["full"]
 
 volumes:

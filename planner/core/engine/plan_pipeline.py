@@ -1,14 +1,16 @@
-"""Orquestração do fio de ouro: extract → sync → forecast → netting → schedule."""
+"""Orquestração do fio de ouro — modos demo | operational."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
 import polars as pl
 import yaml
@@ -16,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from planner.core.db import get_session_factory
+from planner.core.engine.decision_log import DecisionLogService
 from planner.core.engine.explain import PlanExplanation, explain_plan_line
 from planner.core.engine.forecast import generate_forecast, persist_forecast
 from planner.core.engine.netting import NettingResult, calculate_net_requirements
@@ -25,18 +28,35 @@ from planner.core.engine.scheduler import (
     SchedulingProblem,
     solve_schedule,
 )
+from planner.core.engine.version import ENGINE_VERSION, SOLVER_DEFAULT, SOLVER_EMERGENCY
+from planner.core.errors import (
+    InvalidDatasetError,
+    MissingDatasetError,
+    SyncCriticalError,
+)
 from planner.core.monitoring.alerts import (
     alert_connector_failure,
     alert_high_wmape,
     alert_pipeline_failure,
     alert_solver_infeasible,
 )
-from planner.core.ontology.sync_service import SyncService
-from planner.core.pipeline.raw import RawLayer
+from planner.core.ontology.sync_service import SyncResult, SyncService
+from planner.core.pipeline.raw import RawLayer, new_run_id
 from planner.core.pipeline.transform import Context, TransformRunner
 from planner.plugins.csv_generic import CsvGenericConnector
 
 logger = logging.getLogger(__name__)
+
+PlanMode = Literal["demo", "operational"]
+
+REQUIRED_CLEAN = (
+    "clean.products",
+    "clean.sales",
+    "clean.inventory",
+    "clean.machines",
+    "clean.compatibility",
+    "clean.setup_matrix",
+)
 
 
 @dataclass
@@ -51,6 +71,9 @@ class PlanSummary:
     explanations: list[PlanExplanation] = field(default_factory=list)
     netting: list[NettingResult] = field(default_factory=list)
     dry_run: bool = False
+    mode: str = "operational"
+    input_versions: dict[str, Any] = field(default_factory=dict)
+    objective: float = 0.0
     errors: list[str] = field(default_factory=list)
 
 
@@ -61,68 +84,105 @@ def run_plan(
     data_root: Path,
     horizon_days: int = 30,
     dry_run: bool = False,
+    mode: PlanMode = "operational",
     session_factory: sessionmaker | None = None,
+    reference_date: date | None = None,
+    solver: str = SOLVER_DEFAULT,
+    solver_seed: int = 42,
+    emergency_greedy: bool = False,
 ) -> PlanSummary:
     """
     Executa o ciclo completo de planejamento.
 
-    Em falha de etapa: alerta, não emite plano parcial, propaga erro.
-    --dry-run: calcula até o schedule sem gravar Postgres.
+    mode=operational → falha se faltar dado obrigatório (nunca inventa).
+    mode=demo → permite ausências com WARNING explícito (ainda sem inventar vendas).
     """
     started = time.perf_counter()
     factory = session_factory or get_session_factory()
-    snapshot_versions: dict[str, str] = {}
-    summary = PlanSummary(plan_run_id=None, dry_run=dry_run)
+    ref = reference_date or date.today()
+    summary = PlanSummary(plan_run_id=None, dry_run=dry_run, mode=mode)
+    run_id = new_run_id()
+    snapshot_versions: dict[str, Any] = {
+        "engine_version": ENGINE_VERSION,
+        "mode": mode,
+        "horizon_days": horizon_days,
+        "reference_date": ref.isoformat(),
+        "solver": SOLVER_EMERGENCY if emergency_greedy else solver,
+        "solver_seed": solver_seed,
+        "datasets": {},
+        "config_checksum": _config_checksum(config_root, client),
+    }
 
     try:
-        # 1) Extract
         t0 = time.perf_counter()
-        logger.info("[%s] extract início", client)
-        snapshot_versions.update(
-            _step_extract(client, config_root, data_root)
+        logger.info("[%s] extract início mode=%s", client, mode)
+        snapshot_versions["datasets"].update(
+            _step_extract(client, config_root, data_root, factory, run_id)
         )
         logger.info("[%s] extract fim (%.2fs)", client, time.perf_counter() - t0)
 
-        # 2) Transform
         t0 = time.perf_counter()
         logger.info("[%s] transform início", client)
         import planner.core.pipeline.transform  # noqa: F401
 
-        ctx = Context.load(client, config_root, data_root)
-        runner = TransformRunner(ctx, RawLayer(data_root))
+        ctx = Context.load(
+            client,
+            config_root,
+            data_root,
+            run_id=run_id,
+            mode=mode,
+            session_factory=factory,
+        )
+        runner = TransformRunner(ctx, RawLayer(data_root, session_factory=factory))
         clean_paths = runner.run_all()
         for name, path in clean_paths.items():
-            snapshot_versions[f"clean:{name}"] = str(path)
+            snap = {
+                "path": str(path),
+                "checksum": _file_sha256(Path(path)),
+                "run_id": run_id,
+            }
+            snapshot_versions["datasets"][name] = snap
+        _assert_required_clean(clean_paths, mode)
         logger.info("[%s] transform fim (%.2fs)", client, time.perf_counter() - t0)
 
-        # 3) Sync
         t0 = time.perf_counter()
         logger.info("[%s] sync início", client)
         if not dry_run:
-            _step_sync(client, clean_paths, ctx.run_id, factory)
+            sync_results = _step_sync(client, clean_paths, run_id, factory)
+            _assert_sync_ok(sync_results)
         else:
             logger.info("[%s] sync pulado (--dry-run)", client)
         logger.info("[%s] sync fim (%.2fs)", client, time.perf_counter() - t0)
 
-        # 4) Forecast
         t0 = time.perf_counter()
         logger.info("[%s] forecast início", client)
-        sales = _load_sales_history(client, data_root, clean_paths, factory, dry_run)
-        forecast_df = generate_forecast(sales, horizon_days=horizon_days)
+        sales = _require_clean_df(clean_paths, "clean.sales", "sales")
+        forecast_df = generate_forecast(
+            sales,
+            horizon_days=horizon_days,
+            reference_date=ref,
+        )
         for row in forecast_df.to_dicts():
             wmape = float(row.get("wmape_backtest") or 0)
             if wmape > 0.5:
                 alert_high_wmape(client, str(row["sku"]), wmape)
         if not dry_run and not forecast_df.is_empty():
-            persist_forecast(forecast_df, session_factory=factory)
+            persist_forecast(
+                forecast_df,
+                session_factory=factory,
+                client=client,
+                forecast_run_id=run_id,
+                reference_date=ref,
+                horizon_days=horizon_days,
+            )
         logger.info("[%s] forecast fim (%.2fs)", client, time.perf_counter() - t0)
 
-        # 5) Netting
         t0 = time.perf_counter()
         logger.info("[%s] netting início", client)
         products, inventory, open_orders, open_prod, bom, policies = _load_netting_inputs(
-            client, data_root, clean_paths, factory, dry_run
+            client, config_root, clean_paths, mode
         )
+        sales_hist = sales.select(["sku", "date", "qty"]) if "date" in sales.columns else sales
         netting = calculate_net_requirements(
             forecast_df,
             inventory,
@@ -131,15 +191,26 @@ def run_plan(
             products,
             bom,
             policies,
+            sales_history=sales_hist,
+            today=ref,
         )
         summary.netting = netting
         logger.info("[%s] netting fim (%.2fs) skus=%s", client, time.perf_counter() - t0, len(netting))
 
-        # 6) Schedule
         t0 = time.perf_counter()
         logger.info("[%s] schedule início", client)
         problem, schedule = _step_schedule(
-            client, config_root, netting, products, horizon_days, factory
+            client,
+            config_root,
+            netting,
+            products,
+            horizon_days,
+            clean_paths,
+            mode,
+            factory,
+            ref,
+            emergency_greedy=emergency_greedy,
+            solver_seed=solver_seed,
         )
         if schedule.solver_status.upper() == "INFEASIBLE":
             alert_solver_infeasible(client)
@@ -147,9 +218,9 @@ def run_plan(
         summary.solver_status = schedule.solver_status
         summary.orders_created = len(schedule.assignments)
         summary.machines_allocated = len({a.machine_id for a in schedule.assignments})
+        summary.objective = schedule.objective_value
         logger.info("[%s] schedule fim (%.2fs)", client, time.perf_counter() - t0)
 
-        # 7) Explain
         t0 = time.perf_counter()
         logger.info("[%s] explain início", client)
         net_by_sku = {n.sku: n for n in netting}
@@ -167,9 +238,9 @@ def run_plan(
         summary.explanations = explanations
         logger.info("[%s] explain fim (%.2fs)", client, time.perf_counter() - t0)
 
-        # 8) Persist plan_run
         plan_run_id = str(uuid4())
         summary.plan_run_id = plan_run_id
+        summary.input_versions = snapshot_versions
         if not dry_run:
             t0 = time.perf_counter()
             logger.info("[%s] persist início", client)
@@ -181,6 +252,10 @@ def run_plan(
                 solver_status=schedule.solver_status,
                 objective=schedule.objective_value,
                 duration_seconds=time.perf_counter() - started,
+                schedule=schedule,
+                explanations=explanations,
+                problem=problem,
+                netting=netting,
             )
             logger.info("[%s] persist fim (%.2fs)", client, time.perf_counter() - t0)
         else:
@@ -188,13 +263,13 @@ def run_plan(
 
         summary.duration_seconds = time.perf_counter() - started
         logger.info(
-            "[%s] plano concluído orders=%s machines=%s status=%s duração=%.2fs dry_run=%s",
+            "[%s] plano concluído orders=%s machines=%s status=%s duração=%.2fs mode=%s",
             client,
             summary.orders_created,
             summary.machines_allocated,
             summary.solver_status,
             summary.duration_seconds,
-            dry_run,
+            mode,
         )
         return summary
     except Exception as exc:
@@ -204,12 +279,51 @@ def run_plan(
         raise
 
 
-def _step_extract(client: str, config_root: Path, data_root: Path) -> dict[str, str]:
+def _assert_required_clean(clean_paths: dict[str, str], mode: PlanMode) -> None:
+    missing = [name for name in REQUIRED_CLEAN if name not in clean_paths]
+    if not missing:
+        return
+    if mode == "operational":
+        raise MissingDatasetError(missing[0], f"obrigatórios ausentes: {missing}")
+    for name in missing:
+        logger.warning("DEMO: dataset ausente %s — plano pode ficar incompleto", name)
+
+
+def _assert_sync_ok(results: list[SyncResult]) -> None:
+    for r in results:
+        if r.errors:
+            raise SyncCriticalError("; ".join(r.errors))
+
+
+def _require_clean_df(clean_paths: dict[str, str], key: str, label: str) -> pl.DataFrame:
+    path = clean_paths.get(key)
+    if not path:
+        # tenta alias sem prefixo
+        alt = key.split(".", 1)[-1]
+        for k, v in clean_paths.items():
+            if k.endswith(alt):
+                path = v
+                break
+    if not path:
+        raise MissingDatasetError(key, f"{label} não encontrado")
+    df = pl.read_parquet(path)
+    if df.is_empty():
+        raise InvalidDatasetError(key, f"{label} vazio")
+    return df
+
+
+def _step_extract(
+    client: str,
+    config_root: Path,
+    data_root: Path,
+    factory: sessionmaker,
+    run_id: str,
+) -> dict[str, Any]:
     sources_path = config_root / client / "sources.yaml"
     csv_path = data_root / client / "csv"
     if sources_path.exists():
-        raw = yaml.safe_load(sources_path.read_text(encoding="utf-8")) or {}
-        for src in raw.get("sources") or []:
+        raw_cfg = yaml.safe_load(sources_path.read_text(encoding="utf-8")) or {}
+        for src in raw_cfg.get("sources") or []:
             if src.get("type") == "csv_generic":
                 cfg = src.get("config") or {}
                 base = str(cfg.get("base_path", "")).replace("${DATA_ROOT}", str(data_root))
@@ -218,27 +332,29 @@ def _step_extract(client: str, config_root: Path, data_root: Path) -> dict[str, 
 
     connector = CsvGenericConnector(csv_path)
     if not connector.healthcheck():
-        # fallback fixtures
-        alt = data_root / client / "csv"
-        connector = CsvGenericConnector(alt)
-    if not connector.healthcheck():
         alert_connector_failure(client, connector.name, connector.retries)
-        raise RuntimeError(f"Fonte CSV inacessível: {csv_path}")
+        raise MissingDatasetError("csv_source", f"Fonte CSV inacessível: {csv_path}")
 
-    raw = RawLayer(data_root)
-    run_id = datetime.now().strftime("%H%M%S")
-    versions: dict[str, str] = {}
+    raw = RawLayer(data_root, session_factory=factory)
+    versions: dict[str, Any] = {}
     try:
         for dataset in connector.list_datasets():
             df = connector.extract(dataset)
+            # run_id único por dataset para evitar colisão append-only
+            ds_run = f"{run_id}_{dataset}"
             path = raw.write_dataset(
                 client,
                 dataset,
                 df,
-                run_id=run_id,
+                run_id=ds_run,
                 metadata={"connector": connector.name},
             )
-            versions[f"raw:{dataset}"] = str(path)
+            versions[f"raw:{dataset}"] = {
+                "path": str(path),
+                "checksum": _file_sha256(Path(path)),
+                "run_id": ds_run,
+                "rows": df.height,
+            }
     except Exception:
         alert_connector_failure(client, connector.name, connector.retries)
         raise
@@ -247,109 +363,70 @@ def _step_extract(client: str, config_root: Path, data_root: Path) -> dict[str, 
 
 def _step_sync(
     client: str,
-    clean_paths: dict[str, Path],
+    clean_paths: dict[str, Path | str],
     run_id: str,
     factory: sessionmaker,
-) -> None:
+) -> list[SyncResult]:
     sync = SyncService(session_factory=factory)
     today = date.today()
+    results: list[SyncResult] = []
     for output, path in clean_paths.items():
         df = pl.read_parquet(path)
         ref = f"{output}:{run_id}"
         name = output.lower()
         if "product" in name:
-            sync.sync_products(client, df, source_ref=ref)
+            results.append(sync.sync_products(client, df, source_ref=ref))
         elif "invent" in name or "stock" in name:
-            sync.sync_inventory(client, df, snapshot_date=today, source_ref=ref)
+            if "snapshot_date" not in df.columns:
+                raise InvalidDatasetError("clean.inventory", "inventory sem snapshot válido")
+            results.append(sync.sync_inventory(client, df, snapshot_date=today, source_ref=ref))
         elif "sales" in name or "demand" in name:
-            if "id" not in df.columns and "sku" in df.columns:
-                df = df.with_columns(
-                    (pl.col("sku").cast(pl.Utf8) + "-" + pl.col("date").cast(pl.Utf8)).alias("id")
-                    if "date" in df.columns
-                    else pl.col("sku").cast(pl.Utf8).alias("id")
-                )
-            sync.sync_demand(client, df, source_ref=ref)
-
-
-def _load_sales_history(
-    client: str,
-    data_root: Path,
-    clean_paths: dict[str, Path],
-    factory: sessionmaker,
-    dry_run: bool,
-) -> pl.DataFrame:
-    for key, path in clean_paths.items():
-        if "sales" in key.lower() or "demand" in key.lower():
-            df = pl.read_parquet(path)
-            cols = {c.lower(): c for c in df.columns}
-            if "sku" in cols and ("qty" in cols or "quantity" in cols) and "date" in cols:
-                return df.rename(
-                    {
-                        cols["sku"]: "sku",
-                        cols.get("qty", cols.get("quantity")): "qty",
-                        cols["date"]: "date",
-                    }
-                ).select(["sku", "date", "qty"])
-
-    # synthetic fallback from products (demo)
-    products_path = None
-    for key, path in clean_paths.items():
-        if "product" in key.lower():
-            products_path = path
-            break
-    if products_path is None:
-        return pl.DataFrame({"sku": [], "date": [], "qty": []})
-
-    products = pl.read_parquet(products_path)
-    skus = products.get_column("sku").to_list() if "sku" in products.columns else []
-    rows: list[dict[str, Any]] = []
-    start = date.today() - timedelta(days=24 * 30)
-    for sku in skus[:20]:
-        for i in range(24 * 30):
-            d = start + timedelta(days=i)
-            # sazonalidade mensal + ruído determinístico
-            qty = 10 + (d.month % 6) * 3 + (hash(f"{sku}-{d}") % 5)
-            rows.append({"sku": sku, "date": d, "qty": float(qty)})
-    return pl.DataFrame(rows)
+            results.append(sync.sync_demand(client, df, source_ref=ref))
+    return results
 
 
 def _load_netting_inputs(
     client: str,
-    data_root: Path,
-    clean_paths: dict[str, Path],
-    factory: sessionmaker,
-    dry_run: bool,
+    config_root: Path,
+    clean_paths: dict[str, str],
+    mode: PlanMode,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, dict]:
-    products = pl.DataFrame({"sku": [], "lead_time_days": [], "min_lot": [], "lot_multiple": []})
-    inventory = pl.DataFrame({"sku": [], "available": []})
-    for key, path in clean_paths.items():
-        df = pl.read_parquet(path)
-        if "product" in key.lower() and "sku" in df.columns:
-            products = df
-        if "invent" in key.lower() or "stock" in key.lower():
-            inventory = df
+    products = _require_clean_df(clean_paths, "clean.products", "products")
+    inventory = _require_clean_df(clean_paths, "clean.inventory", "inventory")
+    if "snapshot_date" not in inventory.columns:
+        raise InvalidDatasetError("clean.inventory", "inventory sem snapshot válido")
 
-    if products.is_empty():
-        # mínimo para não quebrar o motor em demo
-        products = pl.DataFrame(
-            {
-                "sku": ["DEMO-1"],
-                "family": ["DEFAULT"],
-                "lead_time_days": [7],
-                "min_lot": [1.0],
-                "lot_multiple": [1.0],
-            }
-        )
+    open_orders = _optional_clean(clean_paths, "clean.open_orders", ["sku", "qty"])
+    open_prod = _optional_clean(
+        clean_paths, "clean.production_orders", ["sku", "qty_planned", "qty_produced"]
+    )
+    bom = _optional_clean(clean_paths, "clean.bom", ["parent_sku", "component_sku", "qty_per_unit"])
+
+    policies_path = config_root / client / "rules" / "policies.yaml"
+    if not policies_path.exists():
+        if mode == "operational":
+            raise MissingDatasetError("policies.yaml", "políticas do cliente não encontradas")
+        logger.warning("DEMO: policies.yaml ausente — usando defaults documentados")
+        policies = {
+            "service_level_z": 1.645,
+            "min_days_of_cover": 12,
+            "default_lead_time_days": 10,
+        }
+    else:
+        policies = yaml.safe_load(policies_path.read_text(encoding="utf-8")) or {}
+
     if "family" not in products.columns:
-        products = products.with_columns(pl.lit("DEFAULT").alias("family"))
-    if inventory.is_empty() and "sku" in products.columns:
-        inventory = products.select(["sku"]).with_columns(pl.lit(0.0).alias("available"))
+        raise InvalidDatasetError("clean.products", "família obrigatória")
+    return products, inventory, open_orders, open_prod, bom, policies
 
-    empty_oo = pl.DataFrame({"sku": [], "qty": []})
-    empty_op = pl.DataFrame({"sku": [], "qty_planned": [], "qty_produced": []})
-    bom = pl.DataFrame({"parent_sku": [], "component_sku": [], "qty_per_unit": []})
-    policies = {"service_level_z": 1.645, "min_days_of_cover": 12, "default_lead_time_days": 10}
-    return products, inventory, empty_oo, empty_op, bom, policies
+
+def _optional_clean(
+    clean_paths: dict[str, str], key: str, columns: list[str]
+) -> pl.DataFrame:
+    path = clean_paths.get(key)
+    if not path:
+        return pl.DataFrame({c: [] for c in columns})
+    return pl.read_parquet(path)
 
 
 def _step_schedule(
@@ -358,12 +435,15 @@ def _step_schedule(
     netting: list[NettingResult],
     products: pl.DataFrame,
     horizon_days: int,
-    factory: sessionmaker | None = None,
+    clean_paths: dict[str, str],
+    mode: PlanMode,
+    factory: sessionmaker | None,
+    today: date,
+    *,
+    emergency_greedy: bool,
+    solver_seed: int,
 ) -> tuple[SchedulingProblem, Schedule]:
-    family_map = {}
-    if "sku" in products.columns and "family" in products.columns:
-        family_map = dict(zip(products["sku"].to_list(), products["family"].to_list()))
-
+    family_map = dict(zip(products["sku"].to_list(), products["family"].to_list()))
     orders: list[OrderCandidate] = []
     for i, n in enumerate(netting):
         if n.suggested_qty <= 0:
@@ -379,36 +459,42 @@ def _step_schedule(
             )
         )
 
-    today = date.today()
     horizon_end = today + timedelta(days=horizon_days)
-
     if not orders:
         problem = SchedulingProblem(
             orders=[],
-            compatibility=_empty_compatibility(),
-            setup_matrix=_empty_setup_matrix(),
+            compatibility=_empty_compat(),
+            setup_matrix=_empty_setup(),
             calendar=_empty_calendar(),
             horizon_start=today,
             horizon_end=horizon_end,
         )
-        return problem, Schedule(solver_status="FEASIBLE")
+        return problem, Schedule(solver_status="FEASIBLE", objective_value=0.0)
 
-    compatibility, setup_matrix, calendar, source = _load_schedule_frames(
-        client=client,
-        config_root=config_root,
-        orders=orders,
-        today=today,
-        horizon_days=horizon_days,
-        factory=factory,
-    )
-    if source != "postgres":
-        logger.warning(
-            "[%s] schedule usando dados %s (Postgres sem machines/compatibility)",
-            client,
-            source,
-        )
+    compatibility = _require_clean_df(clean_paths, "clean.compatibility", "compatibility")
+    setup_matrix = _require_clean_df(clean_paths, "clean.setup_matrix", "setup_matrix")
+    machines = _require_clean_df(clean_paths, "clean.machines", "machines")
+
+    # calendar: clean.machine_calendar ou derivado de machines
+    if "clean.machine_calendar" in clean_paths:
+        calendar = pl.read_parquet(clean_paths["clean.machine_calendar"])
     else:
-        logger.info("[%s] schedule carregado do Postgres", client)
+        machines_df = machines
+        if "id" not in machines_df.columns and "machine_id" in machines_df.columns:
+            machines_df = machines_df.rename({"machine_id": "id"})
+        calendar = build_calendar_from_machines(machines_df, today, horizon_days)
+
+    if calendar.is_empty():
+        raise MissingDatasetError("calendário de máquinas", "machine_calendar vazio")
+
+    # filtra compatibility aos SKUs do plano
+    order_skus = [o.sku for o in orders]
+    compatibility = compatibility.filter(pl.col("sku").is_in(order_skus))
+    for o in orders:
+        if compatibility.filter(pl.col("sku") == o.sku).is_empty():
+            raise RuntimeError(
+                f"INFEASIBLE: SKU {o.sku} sem máquina compatível"
+            )
 
     problem = SchedulingProblem(
         orders=orders,
@@ -418,47 +504,45 @@ def _step_schedule(
         horizon_start=today,
         horizon_end=horizon_end,
     )
-    schedule = solve_schedule(problem, time_limit_s=10)
+    schedule = solve_schedule(
+        problem,
+        time_limit_s=10,
+        emergency_greedy=emergency_greedy,
+        seed=solver_seed,
+    )
     return problem, schedule
 
 
-def _load_schedule_frames(
-    *,
-    client: str,
-    config_root: Path,
-    orders: list[OrderCandidate],
-    today: date,
+def build_calendar_from_machines(
+    machines: pl.DataFrame,
+    start: date,
     horizon_days: int,
-    factory: sessionmaker | None,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, str]:
-    """Carrega compatibility/setup/calendar: Postgres → YAML → sintético."""
-    if factory is not None:
-        try:
-            frames = _load_schedule_from_postgres(factory, orders, today, horizon_days)
-            if frames is not None:
-                return (*frames, "postgres")
-        except Exception as exc:
-            logger.warning("[%s] falha ao ler schedule do Postgres: %s", client, exc)
-
-    yaml_frames = _load_schedule_from_yaml(config_root, client, orders, today, horizon_days)
-    if yaml_frames is not None:
-        return (*yaml_frames, "yaml")
-
-    return (*_synthetic_schedule_frames(orders, today, horizon_days), "synthetic")
+    maintenance_hours: dict[str, float] | None = None,
+) -> pl.DataFrame:
+    """Calendar diário a partir de hours_per_day × shifts × efficiency."""
+    maintenance_hours = maintenance_hours or {}
+    if machines.is_empty():
+        return _empty_calendar()
+    id_col = "id" if "id" in machines.columns else "machine_id"
+    rows: list[dict[str, Any]] = []
+    for m in machines.to_dicts():
+        mid = str(m[id_col])
+        hours = float(m.get("hours_per_day") or 8.0)
+        shifts = float(m.get("shifts") or 1)
+        eff = float(m.get("efficiency") or 1.0)
+        base = hours * shifts * max(eff, 0.0)
+        maint = float(maintenance_hours.get(mid, 0.0))
+        for d in range(horizon_days + 1):
+            day = start + timedelta(days=d)
+            available = max(base - (maint if d == 0 else 0.0), 0.0)
+            rows.append({"machine_id": mid, "date": day, "available_hours": available})
+    return pl.DataFrame(rows)
 
 
 def machines_to_polars(rows: list[Any]) -> pl.DataFrame:
-    """Converte MachineModel → Polars."""
     if not rows:
         return pl.DataFrame(
-            {
-                "id": [],
-                "work_center_id": [],
-                "name": [],
-                "hours_per_day": [],
-                "shifts": [],
-                "efficiency": [],
-            }
+            {"id": [], "work_center_id": [], "name": [], "hours_per_day": [], "shifts": [], "efficiency": []}
         )
     return pl.DataFrame(
         [
@@ -476,25 +560,16 @@ def machines_to_polars(rows: list[Any]) -> pl.DataFrame:
 
 
 def compatibility_to_polars(rows: list[Any]) -> pl.DataFrame:
-    """Converte CompatibilityModel → Polars."""
     if not rows:
-        return _empty_compatibility()
+        return _empty_compat()
     return pl.DataFrame(
-        [
-            {
-                "sku": r.sku,
-                "machine_id": r.machine_id,
-                "speed_units_per_hour": r.speed_units_per_hour,
-            }
-            for r in rows
-        ]
+        [{"sku": r.sku, "machine_id": r.machine_id, "speed_units_per_hour": r.speed_units_per_hour} for r in rows]
     )
 
 
 def setup_matrix_to_polars(rows: list[Any]) -> pl.DataFrame:
-    """Converte SetupMatrixModel → Polars."""
     if not rows:
-        return _empty_setup_matrix()
+        return _empty_setup()
     return pl.DataFrame(
         [
             {
@@ -509,241 +584,13 @@ def setup_matrix_to_polars(rows: list[Any]) -> pl.DataFrame:
     )
 
 
-def build_calendar_from_machines(
-    machines: pl.DataFrame,
-    start: date,
-    horizon_days: int,
-    maintenance_hours: dict[str, float] | None = None,
-) -> pl.DataFrame:
-    """
-    Calendar diário a partir de hours_per_day × shifts × efficiency.
-
-    Subtrai horas de manutenção por máquina quando informadas.
-    """
-    maintenance_hours = maintenance_hours or {}
-    if machines.is_empty():
-        return _empty_calendar()
-
-    rows: list[dict[str, Any]] = []
-    for m in machines.to_dicts():
-        mid = str(m["id"])
-        hours = float(m.get("hours_per_day") or 8.0)
-        shifts = float(m.get("shifts") or 1)
-        eff = float(m.get("efficiency") or 1.0)
-        base = hours * shifts * max(eff, 0.0)
-        maint = float(maintenance_hours.get(mid, 0.0))
-        for d in range(horizon_days + 1):
-            day = start + timedelta(days=d)
-            available = max(base - (maint if d == 0 else 0.0), 0.0)
-            rows.append(
-                {"machine_id": mid, "date": day, "available_hours": available}
-            )
-    return pl.DataFrame(rows)
-
-
-def _load_schedule_from_postgres(
-    factory: sessionmaker,
-    orders: list[OrderCandidate],
-    today: date,
-    horizon_days: int,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None:
-    from sqlalchemy import select
-
-    from planner.core.ontology.db_models import (
-        CompatibilityModel,
-        MachineModel,
-        SetupMatrixModel,
-    )
-
-    try:
-        session = factory()
-    except Exception:
-        return None
-
-    try:
-        machines = list(session.execute(select(MachineModel)).scalars().all())
-        compat_rows = list(session.execute(select(CompatibilityModel)).scalars().all())
-        setup_rows = list(session.execute(select(SetupMatrixModel)).scalars().all())
-    except Exception:
-        return None
-    finally:
-        try:
-            session.close()
-        except Exception:
-            pass
-
-    # rejeita mocks / resultados inválidos
-    if machines and not isinstance(machines[0], MachineModel):
-        return None
-    if compat_rows and not isinstance(compat_rows[0], CompatibilityModel):
-        return None
-    if not machines and not compat_rows:
-        return None
-
-    machines_df = machines_to_polars(machines)
-    compatibility = compatibility_to_polars(compat_rows)
-    setup_matrix = setup_matrix_to_polars(setup_rows)
-
-    # restringe compatibility aos SKUs do plano
-    order_skus = [o.sku for o in orders]
-    if not compatibility.is_empty() and "sku" in compatibility.columns:
-        filtered = compatibility.filter(pl.col("sku").is_in(order_skus))
-        if not filtered.is_empty():
-            compatibility = filtered
-        else:
-            # Postgres tem outras famílias — cai para fallback externo
-            return None
-
-    # se compatibility vazia, deriva fallback dos SKUs × primeira máquina
-    if compatibility.is_empty() and not machines_df.is_empty():
-        mid = machines_df["id"][0]
-        compatibility = pl.DataFrame(
-            {
-                "sku": order_skus,
-                "machine_id": [mid] * len(orders),
-                "speed_units_per_hour": [100.0] * len(orders),
-            }
-        )
-    if setup_matrix.is_empty():
-        setup_matrix = pl.DataFrame(
-            {
-                "machine_id": [machines_df["id"][0]] if not machines_df.is_empty() else ["M01"],
-                "from_family": ["DEFAULT"],
-                "to_family": ["DEFAULT"],
-                "setup_minutes": [15.0],
-                "forbidden": [False],
-            }
-        )
-
-    calendar = build_calendar_from_machines(machines_df, today, horizon_days)
-    if calendar.is_empty():
-        mids = (
-            compatibility.get_column("machine_id").unique().to_list()
-            if not compatibility.is_empty()
-            else ["M01"]
-        )
-        calendar = pl.DataFrame(
-            {
-                "machine_id": mids,
-                "date": [today] * len(mids),
-                "available_hours": [16.0] * len(mids),
-            }
-        )
-    return compatibility, setup_matrix, calendar
-
-
-def _load_schedule_from_yaml(
-    config_root: Path,
-    client: str,
-    orders: list[OrderCandidate],
-    today: date,
-    horizon_days: int,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None:
-    rules_dir = config_root / client / "rules"
-    if not rules_dir.exists():
-        return None
-
-    compat_path = rules_dir / "compatibility.yaml"
-    setups_path = rules_dir / "setups.yaml"
-    if not compat_path.exists() and not setups_path.exists():
-        return None
-
-    compatibility = _empty_compatibility()
-    if compat_path.exists():
-        raw = yaml.safe_load(compat_path.read_text(encoding="utf-8")) or {}
-        rows = raw if isinstance(raw, list) else (raw.get("compatibility") or raw.get("rows") or [])
-        if rows:
-            compatibility = pl.DataFrame(rows)
-
-    setup_matrix = _empty_setup_matrix()
-    if setups_path.exists():
-        raw = yaml.safe_load(setups_path.read_text(encoding="utf-8")) or {}
-        rows = raw if isinstance(raw, list) else (raw.get("setups") or raw.get("matrix") or [])
-        if rows:
-            setup_matrix = pl.DataFrame(rows)
-
-    # filtra compatibility aos SKUs do plano quando possível
-    skus = {o.sku for o in orders}
-    if not compatibility.is_empty() and "sku" in compatibility.columns:
-        filtered = compatibility.filter(pl.col("sku").is_in(list(skus)))
-        if not filtered.is_empty():
-            compatibility = filtered
-
-    if compatibility.is_empty():
-        return None
-
-    mids = compatibility.get_column("machine_id").unique().to_list()
-    machines_df = pl.DataFrame(
-        {
-            "id": mids,
-            "work_center_id": ["WC1"] * len(mids),
-            "name": mids,
-            "hours_per_day": [8.0] * len(mids),
-            "shifts": [2] * len(mids),
-            "efficiency": [0.9] * len(mids),
-        }
-    )
-    calendar = build_calendar_from_machines(machines_df, today, horizon_days)
-    if setup_matrix.is_empty():
-        setup_matrix = pl.DataFrame(
-            {
-                "machine_id": [mids[0]],
-                "from_family": ["DEFAULT"],
-                "to_family": ["DEFAULT"],
-                "setup_minutes": [15.0],
-                "forbidden": [False],
-            }
-        )
-    return compatibility, setup_matrix, calendar
-
-
-def _synthetic_schedule_frames(
-    orders: list[OrderCandidate], today: date, horizon_days: int
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    skus = [o.sku for o in orders]
-    compatibility = pl.DataFrame(
-        {
-            "sku": skus,
-            "machine_id": ["M01"] * len(skus),
-            "speed_units_per_hour": [100.0] * len(skus),
-        }
-    )
-    setup_matrix = pl.DataFrame(
-        {
-            "machine_id": ["M01"],
-            "from_family": ["DEFAULT"],
-            "to_family": ["DEFAULT"],
-            "setup_minutes": [15.0],
-            "forbidden": [False],
-        }
-    )
-    machines_df = pl.DataFrame(
-        {
-            "id": ["M01"],
-            "work_center_id": ["WC1"],
-            "name": ["Tear 1"],
-            "hours_per_day": [8.0],
-            "shifts": [2],
-            "efficiency": [0.9],
-        }
-    )
-    calendar = build_calendar_from_machines(machines_df, today, horizon_days)
-    return compatibility, setup_matrix, calendar
-
-
-def _empty_compatibility() -> pl.DataFrame:
+def _empty_compat() -> pl.DataFrame:
     return pl.DataFrame({"sku": [], "machine_id": [], "speed_units_per_hour": []})
 
 
-def _empty_setup_matrix() -> pl.DataFrame:
+def _empty_setup() -> pl.DataFrame:
     return pl.DataFrame(
-        {
-            "machine_id": [],
-            "from_family": [],
-            "to_family": [],
-            "setup_minutes": [],
-            "forbidden": [],
-        }
+        {"machine_id": [], "from_family": [], "to_family": [], "setup_minutes": [], "forbidden": []}
     )
 
 
@@ -756,14 +603,17 @@ def _persist_plan_run(
     *,
     plan_run_id: str,
     client: str,
-    snapshot_versions: dict[str, str],
+    snapshot_versions: dict[str, Any],
     solver_status: str,
     objective: float,
     duration_seconds: float,
+    schedule: Schedule,
+    explanations: list[PlanExplanation],
+    problem: SchedulingProblem,
+    netting: list[NettingResult],
 ) -> None:
-    import json
-
     session = factory()
+    decision_log = DecisionLogService(session_factory=factory)
     try:
         session.execute(
             text(
@@ -780,15 +630,85 @@ def _persist_plan_run(
                 "id": plan_run_id,
                 "client": client,
                 "created_at": datetime.now(timezone.utc),
-                "versions": json.dumps(snapshot_versions),
+                "versions": json.dumps(snapshot_versions, default=str),
                 "status": solver_status,
                 "objective": objective,
                 "duration": duration_seconds,
             },
         )
+        # plan_line se a tabela existir
+        try:
+            for a in schedule.assignments:
+                order = next(o for o in problem.orders if o.id == a.order_id)
+                exp = next((e for e in explanations if e.order == a.order_id), None)
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO decisions.plan_line
+                            (id, client, plan_run_id, sku, family, qty, machine_id,
+                             start_ts, end_ts, priority, deadline, status, explanation, created_at)
+                        VALUES
+                            (:id, :client, :plan_run_id, :sku, :family, :qty, :machine_id,
+                             :start_ts, :end_ts, :priority, :deadline, 'proposed',
+                             CAST(:explanation AS jsonb), :created_at)
+                        """
+                    ),
+                    {
+                        "id": str(uuid4()),
+                        "client": client,
+                        "plan_run_id": plan_run_id,
+                        "sku": order.sku,
+                        "family": order.family,
+                        "qty": a.qty,
+                        "machine_id": a.machine_id,
+                        "start_ts": a.start,
+                        "end_ts": a.end,
+                        "priority": order.priority,
+                        "deadline": order.deadline,
+                        "explanation": json.dumps(
+                            {
+                                "reasons": [
+                                    {"type": r.type, "message": r.message, "data": r.data}
+                                    for r in (exp.reasons if exp else [])
+                                ]
+                            },
+                            default=str,
+                        ),
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                )
+                decision_log.record_recommendation(
+                    UUID(plan_run_id),
+                    a.order_id,
+                    a.qty,
+                    a.machine_id,
+                    client=client,
+                    family=order.family,
+                )
+        except Exception as exc:
+            logger.warning("plan_line/decision_log parcial: %s", exc)
+
         session.commit()
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+
+
+def _config_checksum(config_root: Path, client: str) -> str:
+    root = config_root / client
+    if not root.exists():
+        return ""
+    h = hashlib.sha256()
+    for path in sorted(root.rglob("*.yaml")):
+        h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()

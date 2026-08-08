@@ -8,11 +8,13 @@ from unittest.mock import patch
 
 import pytest
 
+from planner.core.errors import MissingDatasetError
 from planner.core.monitoring.alerts import send_alert
 from planner.core.monitoring.health import HealthService
 
 
 ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "tests" / "fixtures" / "test_client"
 
 
 @pytest.mark.unit
@@ -39,30 +41,60 @@ def test_health_disk_check():
 
 
 @pytest.mark.unit
-def test_plan_dry_run_with_fixture_csv(tmp_path: Path):
+def test_plan_operational_fails_without_sales(tmp_path: Path):
     from planner.core.engine.plan_pipeline import run_plan
 
     client = "nicoletti"
     data_root = tmp_path / "data"
     csv_dir = data_root / client / "csv"
     csv_dir.mkdir(parents=True)
-    src = ROOT / "fixtures" / "nicoletti" / "produtos.csv"
-    shutil.copy(src, csv_dir / "products.csv")
-
-    # config canônica na raiz do repo
+    # só produtos — operacional deve falhar
+    shutil.copy(ROOT / "fixtures" / "nicoletti" / "produtos.csv", csv_dir / "products.csv")
     config_root = ROOT / "config"
-    if not (config_root / client).exists():
-        config_root = ROOT / "planner" / "config"
+    with pytest.raises((MissingDatasetError, FileNotFoundError, Exception)):
+        run_plan(
+            client,
+            config_root=config_root,
+            data_root=data_root,
+            horizon_days=14,
+            dry_run=True,
+            mode="operational",
+            emergency_greedy=True,
+        )
 
+
+@pytest.mark.unit
+def test_plan_dry_run_with_full_fixtures(tmp_path: Path):
+    from planner.core.engine.plan_pipeline import run_plan
+
+    client = "test_client"
+    data_root = tmp_path / "data"
+    csv_dir = data_root / client / "csv"
+    csv_dir.mkdir(parents=True)
+    for name in (
+        "products.csv",
+        "sales.csv",
+        "inventory.csv",
+        "machines.csv",
+        "compatibility.csv",
+        "setup_matrix.csv",
+    ):
+        shutil.copy(FIXTURES / name, csv_dir / name)
+
+    config_root = ROOT / "config"
     summary = run_plan(
         client,
         config_root=config_root,
         data_root=data_root,
         horizon_days=14,
         dry_run=True,
-        session_factory=None,
+        mode="operational",
+        emergency_greedy=True,  # evita OR-Tools lento em unit
+        solver_seed=42,
+        reference_date=__import__("datetime").date(2026, 8, 1),
     )
     assert summary.dry_run is True
     assert summary.plan_run_id
     assert summary.solver_status
     assert not summary.errors
+    assert "engine_version" in summary.input_versions

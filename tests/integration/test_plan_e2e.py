@@ -89,7 +89,10 @@ def test_plan_e2e_test_client(tmp_path: Path):
         data_root=data_root,
         horizon_days=14,
         dry_run=False,
+        mode="operational",
         session_factory=factory,
+        emergency_greedy=True,
+        solver_seed=42,
     )
     elapsed = time.perf_counter() - started
 

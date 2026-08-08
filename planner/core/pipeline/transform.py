@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 import polars as pl
+from sqlalchemy import text
+from sqlalchemy.orm import sessionmaker
 
-from .raw import RawLayer
-from .schema_map import SchemaMapConfig, SchemaMapLoader, apply_schema_map
-from .validation import validate_clean_dataset
+from planner.core.pipeline.raw import RawLayer, new_run_id
+from planner.core.pipeline.schema_map import SchemaMapConfig, SchemaMapLoader, apply_schema_map
+from planner.core.pipeline.schemas import SCHEMA_BY_OUTPUT
+from planner.core.pipeline.validation import validate_clean_dataset
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,14 +30,13 @@ class Context:
     config_root: Path
     data_root: Path
     run_id: str
+    mode: str = "operational"  # demo | operational
     mappings: dict[str, SchemaMapConfig] = field(default_factory=dict)
     rules: dict[str, Any] = field(default_factory=dict)
+    session_factory: sessionmaker | None = None
 
-    def mapping(self, name: str) -> SchemaMapConfig:
-        try:
-            return self.mappings[name]
-        except KeyError as exc:
-            raise KeyError(f"Mapping não encontrado: {name}") from exc
+    def mapping(self, name: str) -> SchemaMapConfig | None:
+        return self.mappings.get(name)
 
     @classmethod
     def load(
@@ -39,6 +45,8 @@ class Context:
         config_root: str | Path,
         data_root: str | Path,
         run_id: str | None = None,
+        mode: str = "operational",
+        session_factory: sessionmaker | None = None,
     ) -> Context:
         config_root = Path(config_root)
         data_root = Path(data_root)
@@ -55,9 +63,11 @@ class Context:
             client=client,
             config_root=config_root,
             data_root=data_root,
-            run_id=run_id or datetime.now(timezone.utc).strftime("%H%M%S"),
+            run_id=run_id or new_run_id(),
+            mode=mode,
             mappings=mappings,
             rules=rules,
+            session_factory=session_factory,
         )
 
 
@@ -68,6 +78,7 @@ class TransformSpec:
     output: str
     fn: Callable[..., pl.DataFrame]
     output_schema: Any | None = None
+    required: bool = False  # se True e RAW ausente → erro em operational
 
 
 class TransformRegistry:
@@ -84,11 +95,9 @@ class TransformRegistry:
         return list(self._transforms.values())
 
     def topological_order(self) -> list[TransformSpec]:
-        # ordenação simples por dependência de outputs já produzidos
         remaining = list(self._transforms.values())
         produced: set[str] = set()
         ordered: list[TransformSpec] = []
-        # inputs raw.* sempre disponíveis
         safety = 0
         while remaining and safety < 1000:
             safety += 1
@@ -98,13 +107,9 @@ class TransformRegistry:
                 for inp in spec.inputs:
                     if inp.startswith("raw."):
                         continue
-                    if inp not in produced and inp.replace("clean.", "") not in {
-                        s.output.replace("clean.", "") for s in ordered
-                    }:
-                        # também aceita se output de outro transform bate
-                        if not any(inp == s.output for s in ordered):
-                            deps_ok = False
-                            break
+                    if not any(inp == s.output for s in ordered):
+                        deps_ok = False
+                        break
                 if deps_ok:
                     ordered.append(spec)
                     produced.add(spec.output)
@@ -123,6 +128,7 @@ def transform(
     inputs: list[str],
     output: str,
     output_schema: Any | None = None,
+    required: bool = False,
 ) -> Callable[[Callable[..., pl.DataFrame]], Callable[..., pl.DataFrame]]:
     """Decorator que registra um transform puro no registry global."""
 
@@ -133,7 +139,8 @@ def transform(
                 inputs=list(inputs),
                 output=output,
                 fn=fn,
-                output_schema=output_schema,
+                output_schema=output_schema or SCHEMA_BY_OUTPUT.get(output),
+                required=required,
             )
         )
         return fn
@@ -150,18 +157,27 @@ class TransformRunner:
 
     def __init__(self, ctx: Context, raw_layer: RawLayer | None = None) -> None:
         self.ctx = ctx
-        self.raw = raw_layer or RawLayer(ctx.data_root)
+        self.raw = raw_layer or RawLayer(ctx.data_root, session_factory=ctx.session_factory)
         self.lineage: list[dict[str, Any]] = []
+        self.skipped: list[str] = []
+        self.outputs: dict[str, str] = {}
 
     def run_all(self) -> dict[str, str]:
         paths: dict[str, str] = {}
         for spec in get_transform_registry().topological_order():
-            paths[spec.output] = self.run_one(spec)
+            try:
+                paths[spec.output] = self.run_one(spec)
+            except FileNotFoundError as exc:
+                if self.ctx.mode == "operational" and spec.required:
+                    raise
+                logger.warning("Transform %s pulado: %s", spec.name, exc)
+                self.skipped.append(spec.output)
+        self.outputs = paths
         return paths
 
     def run_one(self, spec: TransformSpec) -> str:
         frames: list[pl.DataFrame] = []
-        source_versions: list[tuple[str, str]] = []
+        source_versions: list[tuple[str, str, str]] = []
         for inp in spec.inputs:
             if inp.startswith("raw."):
                 dataset = inp.split(".", 1)[1]
@@ -169,17 +185,19 @@ class TransformRunner:
                 if not versions:
                     raise FileNotFoundError(f"RAW ausente: {inp}")
                 frames.append(self.raw.read_dataset(self.ctx.client, dataset))
-                source_versions.append((inp, versions[0].run_id))
+                source_versions.append((inp, versions[0].run_id, versions[0].checksum))
             else:
-                # clean já gravado
                 clean_name = inp.split(".", 1)[-1]
                 path = self._latest_clean_path(clean_name)
                 frames.append(pl.read_parquet(path))
-                source_versions.append((inp, path.stem))
+                source_versions.append((inp, path.stem, ""))
 
         result = spec.fn(*frames, self.ctx)
         if not isinstance(result, pl.DataFrame):
             raise TypeError(f"Transform {spec.name} deve retornar pl.DataFrame")
+
+        # Dedup por chave se houver coluna id/sku típica
+        result = _dedup(result)
 
         dataset_name = spec.output.split(".", 1)[-1]
         result = validate_clean_dataset(spec.output, result)
@@ -195,21 +213,22 @@ class TransformRunner:
         )
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"run_{self.ctx.run_id}.parquet"
+        if out_path.exists():
+            raise FileExistsError(f"Clean já existe (append-only): {out_path}")
         result.write_parquet(out_path, compression="zstd")
 
-        for source_dataset, source_version in source_versions:
-            self.lineage.append(
-                {
-                    "derived_table": spec.output,
-                    "derived_version": self.ctx.run_id,
-                    "source_dataset": source_dataset,
-                    "source_version": source_version,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-        lineage_path = (
-            self.ctx.data_root / self.ctx.client / "clean" / "_lineage.jsonl"
-        )
+        for source_dataset, source_version, _checksum in source_versions:
+            row = {
+                "derived_table": spec.output,
+                "derived_version": self.ctx.run_id,
+                "source_dataset": source_dataset,
+                "source_version": source_version,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self.lineage.append(row)
+            self._persist_lineage_pg(row)
+
+        lineage_path = self.ctx.data_root / self.ctx.client / "clean" / "_lineage.jsonl"
         with lineage_path.open("a", encoding="utf-8") as f:
             for row in self.lineage[-len(source_versions) :]:
                 f.write(json.dumps(row) + "\n")
@@ -223,30 +242,249 @@ class TransformRunner:
             raise FileNotFoundError(f"Clean ausente: {dataset}")
         return files[-1]
 
+    def _persist_lineage_pg(self, row: dict[str, Any]) -> None:
+        if self.ctx.session_factory is None:
+            return
+        session = self.ctx.session_factory()
+        try:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO raw_meta.lineage
+                        (derived_table, derived_version, source_dataset, source_version, created_at)
+                    VALUES
+                        (:derived_table, :derived_version, :source_dataset, :source_version, NOW())
+                    """
+                ),
+                row,
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()
 
-# Transform padrão de produtos (registrado ao importar)
-@transform(inputs=["raw.products"], output="clean.products")
+
+def _apply_or_passthrough(df: pl.DataFrame, ctx: Context, mapping_name: str) -> pl.DataFrame:
+    mapping = ctx.mapping(mapping_name)
+    if mapping is None:
+        return df
+    return apply_schema_map(df, mapping)
+
+
+def _dedup(df: pl.DataFrame) -> pl.DataFrame:
+    for key in ("id", "sku"):
+        if key in df.columns and df.height == df.select(pl.col(key).n_unique()).item():
+            return df
+        if key in df.columns:
+            before = df.height
+            df = df.unique(subset=[key], keep="last")
+            if df.height < before:
+                logger.warning("Removidas %s duplicatas por %s", before - df.height, key)
+            return df
+    if {"parent_sku", "component_sku"}.issubset(df.columns):
+        return df.unique(subset=["parent_sku", "component_sku"], keep="last")
+    if {"sku", "machine_id"}.issubset(df.columns):
+        return df.unique(subset=["sku", "machine_id"], keep="last")
+    if {"machine_id", "from_family", "to_family"}.issubset(df.columns):
+        return df.unique(subset=["machine_id", "from_family", "to_family"], keep="last")
+    if {"sku", "step"}.issubset(df.columns):
+        return df.unique(subset=["sku", "step"], keep="last")
+    if {"machine_id", "date"}.issubset(df.columns):
+        return df.unique(subset=["machine_id", "date"], keep="last")
+    return df
+
+
+def _ensure_cols(df: pl.DataFrame, defaults: dict[str, Any]) -> pl.DataFrame:
+    for col, default in defaults.items():
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(default).alias(col))
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Transforms registrados
+# ---------------------------------------------------------------------------
+
+
+@transform(inputs=["raw.products"], output="clean.products", required=True)
 def clean_products(products: pl.DataFrame, ctx: Context) -> pl.DataFrame:
-    mapping = ctx.mapping("products")
-    df = apply_schema_map(products, mapping)
-    # normaliza tipos básicos para Pandera
+    df = _apply_or_passthrough(products, ctx, "products")
+    df = _ensure_cols(
+        df,
+        {
+            "family": "DEFAULT",
+            "lot_multiple": 1.0,
+            "lead_time_days": 10,
+            "min_stock": None,
+            "max_stock": None,
+            "min_lot": None,
+            "cost": None,
+            "active": True,
+            "description": None,
+        },
+    )
+    df = df.filter(pl.col("family").is_not_null() & (pl.col("family").cast(pl.Utf8) != ""))
     if "active" in df.columns:
         df = df.with_columns(
             pl.col("active")
             .map_elements(
-                lambda v: bool(v) if isinstance(v, bool) else str(v).lower() in {"1", "s", "sim", "true", "y"},
+                lambda v: bool(v)
+                if isinstance(v, bool)
+                else str(v).lower() in {"1", "s", "sim", "true", "y"},
                 return_dtype=pl.Boolean,
             )
             .alias("active")
         )
-    for col in ("min_stock", "min_lot", "cost", "max_stock"):
+    for col in ("min_stock", "min_lot", "lot_multiple", "cost", "max_stock"):
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
+    df = df.with_columns(
+        pl.col("lot_multiple").fill_null(1.0).clip(lower_bound=0.0001),
+        pl.col("lead_time_days").cast(pl.Int64, strict=False).fill_null(10),
+    )
     if "unit" in df.columns:
         df = df.with_columns(
             pl.col("unit")
-            .replace({"un": "unit", "pc": "unit", "UN": "unit"})
+            .replace({"un": "unit", "pc": "unit", "UN": "unit", "KG": "kg", "MT": "m"})
             .alias("unit")
         )
         df = df.filter(pl.col("unit").is_in(["kg", "m", "unit", "un", "pc"]))
     return df
+
+
+@transform(inputs=["raw.sales"], output="clean.sales", required=True)
+def clean_sales(sales: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(sales, ctx, "sales")
+    df = _ensure_cols(df, {"type": "sale", "customer": None, "price": None})
+    if "id" not in df.columns:
+        df = df.with_columns(
+            (pl.col("sku").cast(pl.Utf8) + "-" + pl.col("date").cast(pl.Utf8)).alias("id")
+        )
+    df = df.with_columns(pl.col("date").cast(pl.Date, strict=False), pl.col("qty").cast(pl.Float64))
+    df = df.filter(pl.col("qty") >= 0)
+    # cancelamentos → qty 0 type cancel; devoluções type return
+    if "type" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("type").cast(pl.Utf8).str.to_lowercase().is_in(["cancel", "cancelled"]))
+            .then(pl.lit("cancel"))
+            .when(pl.col("type").cast(pl.Utf8).str.to_lowercase().is_in(["return", "devolucao", "devolução"]))
+            .then(pl.lit("return"))
+            .otherwise(pl.col("type"))
+            .alias("type")
+        )
+    return df
+
+
+@transform(inputs=["raw.inventory"], output="clean.inventory", required=True)
+def clean_inventory(inventory: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(inventory, ctx, "inventory")
+    today = datetime.now(timezone.utc).date()
+    df = _ensure_cols(
+        df,
+        {
+            "snapshot_date": today,
+            "blocked": 0.0,
+            "in_qc": 0.0,
+            "reserved": 0.0,
+            "in_process": 0.0,
+            "location": None,
+        },
+    )
+    if "available" not in df.columns and "quantity" in df.columns:
+        df = df.rename({"quantity": "available"})
+    for col in ("available", "blocked", "in_qc", "reserved", "in_process"):
+        df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0))
+    df = df.with_columns(pl.col("snapshot_date").cast(pl.Date, strict=False))
+    return df
+
+
+@transform(inputs=["raw.open_orders"], output="clean.open_orders", required=False)
+def clean_open_orders(orders: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(orders, ctx, "open_orders")
+    df = _ensure_cols(df, {"customer": None, "date": None})
+    if "id" not in df.columns:
+        df = df.with_columns(pl.col("sku").cast(pl.Utf8).alias("id"))
+    return df.with_columns(pl.col("qty").cast(pl.Float64))
+
+
+@transform(inputs=["raw.production_orders"], output="clean.production_orders", required=False)
+def clean_production_orders(orders: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(orders, ctx, "production_orders")
+    df = _ensure_cols(df, {"qty_produced": 0.0, "status": "planned", "machine_id": None})
+    return df
+
+
+@transform(inputs=["raw.machines"], output="clean.machines", required=True)
+def clean_machines(machines: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(machines, ctx, "machines")
+    df = _ensure_cols(df, {"hours_per_day": 8.0, "shifts": 1, "efficiency": 1.0, "name": None})
+    df = df.with_columns(
+        pl.col("hours_per_day").cast(pl.Float64),
+        pl.col("shifts").cast(pl.Int64),
+        pl.col("efficiency").cast(pl.Float64).clip(0.0, 1.0),
+    )
+    return df
+
+
+@transform(inputs=["raw.work_centers"], output="clean.work_centers", required=False)
+def clean_work_centers(wcs: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    return _apply_or_passthrough(wcs, ctx, "work_centers")
+
+
+@transform(inputs=["raw.bom"], output="clean.bom", required=False)
+def clean_bom(bom: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(bom, ctx, "bom")
+    df = df.with_columns(pl.col("qty_per_unit").cast(pl.Float64))
+    # detecta ciclos triviais A→A
+    df = df.filter(pl.col("parent_sku") != pl.col("component_sku"))
+    return df
+
+
+@transform(inputs=["raw.routings"], output="clean.routings", required=False)
+def clean_routings(routings: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    return _apply_or_passthrough(routings, ctx, "routings")
+
+
+@transform(inputs=["raw.compatibility"], output="clean.compatibility", required=True)
+def clean_compatibility(compat: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(compat, ctx, "compatibility")
+    return df.with_columns(pl.col("speed_units_per_hour").cast(pl.Float64))
+
+
+@transform(inputs=["raw.setup_matrix"], output="clean.setup_matrix", required=True)
+def clean_setup_matrix(setup: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(setup, ctx, "setup_matrix")
+    if "forbidden" in df.columns:
+        df = df.with_columns(
+            pl.col("forbidden")
+            .map_elements(
+                lambda v: bool(v)
+                if isinstance(v, bool)
+                else str(v).lower() in {"1", "true", "yes", "s", "sim"},
+                return_dtype=pl.Boolean,
+            )
+            .alias("forbidden")
+        )
+    else:
+        df = df.with_columns(pl.lit(False).alias("forbidden"))
+    return df.with_columns(pl.col("setup_minutes").cast(pl.Float64))
+
+
+@transform(inputs=["raw.machine_calendar"], output="clean.machine_calendar", required=False)
+def clean_machine_calendar(cal: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    df = _apply_or_passthrough(cal, ctx, "machine_calendar")
+    return df.with_columns(
+        pl.col("date").cast(pl.Date, strict=False),
+        pl.col("available_hours").cast(pl.Float64),
+    )
+
+
+@transform(inputs=["raw.maintenance"], output="clean.maintenance", required=False)
+def clean_maintenance(maint: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    return _apply_or_passthrough(maint, ctx, "maintenance")
+
+
+@transform(inputs=["raw.quality_events"], output="clean.quality_events", required=False)
+def clean_quality_events(events: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    return _apply_or_passthrough(events, ctx, "quality_events")

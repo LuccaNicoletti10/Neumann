@@ -212,7 +212,7 @@ def cmd_quarantine_list(args: argparse.Namespace) -> int:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    from planner.core.pipeline.raw import RawLayer
+    from planner.core.pipeline.raw import RawLayer, new_run_id
     from planner.plugins.csv_generic import CsvGenericConnector
 
     data_root = Path(args.data_root)
@@ -227,14 +227,14 @@ def cmd_extract(args: argparse.Namespace) -> int:
         return 1
 
     raw = RawLayer(data_root)
-    run_id = datetime.now().strftime("%H%M%S")
+    run_id = new_run_id()
     for dataset in connector.list_datasets():
         df = connector.extract(dataset)
         path = raw.write_dataset(
             args.client,
             dataset,
             df,
-            run_id=run_id,
+            run_id=f"{run_id}_{dataset}",
             metadata={"connector": connector.name},
         )
         print(f"RAW {dataset}: {df.height} rows → {path}")
@@ -340,16 +340,20 @@ def cmd_plan(args: argparse.Namespace) -> int:
             data_root=data_root,
             horizon_days=args.horizon,
             dry_run=args.dry_run,
+            mode=args.mode,
+            emergency_greedy=args.emergency_greedy,
         )
     except Exception as exc:
         print(f"ERRO no plan: {exc}", file=sys.stderr)
         return 1
 
     print(f"client={args.client}")
+    print(f"mode={summary.mode}")
     print(f"plan_run_id={summary.plan_run_id}")
     print(f"orders_created={summary.orders_created}")
     print(f"machines_allocated={summary.machines_allocated}")
     print(f"solver_status={summary.solver_status}")
+    print(f"objective={summary.objective}")
     print(f"duration_seconds={summary.duration_seconds:.2f}")
     print(f"dry_run={summary.dry_run}")
     return 0
@@ -437,6 +441,12 @@ def build_parser() -> argparse.ArgumentParser:
     pln.add_argument("--client", required=True)
     pln.add_argument("--horizon", type=int, default=30)
     pln.add_argument("--dry-run", action="store_true")
+    pln.add_argument("--mode", choices=["demo", "operational"], default="operational")
+    pln.add_argument(
+        "--emergency-greedy",
+        action="store_true",
+        help="Usa heurística gulosa explicitamente (marca HEURISTIC_*)",
+    )
     pln.add_argument("--data-root", default=str(ROOT / "data"))
     pln.set_defaults(func=cmd_plan)
 

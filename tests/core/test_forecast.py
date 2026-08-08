@@ -28,7 +28,7 @@ def test_generate_forecast_synthetic_24_months():
     out = generate_forecast(
         history,
         horizon_days=30,
-        backtest_until=date(2025, 12, 31),
+        reference_date=date(2026, 8, 1),
     )
     assert not out.is_empty()
     assert set(out.columns) >= {"sku", "month", "qty", "model", "wmape_backtest"}
