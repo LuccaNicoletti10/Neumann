@@ -1,0 +1,2358 @@
+BLUEPRINT MESTRE — IMPLEMENTAÇÃO + TESTES DA ARQUITETURA PALANTIR-LIKE
+
+
+0. PRINCÍPIO FUNDAMENTAL
+
+A sequência original do material enviado é:
+
+Apollo → Connect → Store/Version → Transform → Lineage/Security → Entity Resolution →
+Ontology → Functions/Actions → Applications → AIP.
+
+E existe uma regra ainda mais importante no próprio documento: cada camada deve possuir
+interfaces estáveis antes da construção da camada superior, e o valor vem da integração entre
+as tecnologias, não de uma patente isolada.
+
+Eu transformaria isso nesta arquitetura:
+
+F0 PLATFORM / APOLLO
+↓
+F1 CONNECT + EDGE + FEDERATION
+↓
+F2 IMMUTABLE DATA + VERSIONING
+↓
+F3 TRANSFORMATION + COMPUTE
+↓
+F4 LINEAGE + POLICY + SECURITY
+↓
+F5 REPLICATION + COLLABORATION + OFFLINE
+↓
+F6 ENTITY RESOLUTION
+↓
+F7 ONTOLOGY + OBJECT PLATFORM + KNOWLEDGE GRAPH
+↓
+F8 FUNCTIONS + ACTIONS + WORKFLOWS
+↓
+F9 SEARCH + APPLICATIONS + OPERATIONAL UI
+↓
+F10 AIP + AGENTS + MODEL OPERATIONS
+↓
+F11 CLOSED-LOOP + HARDENING
+
+
+O sistema completo só existe quando o fluxo fecha:
+
+SISTEMA EXTERNO
+  ↓
+CONNECTOR
+  ↓
+RAW DATA
+  ↓
+VERSIONED DATASET
+  ↓
+TRANSFORMATION
+  ↓
+CLEAN DATASET
+  ↓
+ENTITY RESOLUTION
+  ↓
+ONTOLOGY OBJECT
+  ↓
+FUNCTION
+  ↓
+DECISION
+  ↓
+ACTION
+  ↓
+WRITE-BACK
+  ↓
+SISTEMA EXTERNO MUDA
+  ↓
+NOVO EVENTO
+  ↓
+NOVO ESTADO DA ONTOLOGY
+
+
+Esse ciclo é o produto.
+
+
+
+
+FASE 0 — PLATFORM / APOLLO
+
+
+Objetivo
+
+Criar uma fundação operacional na qual todos os outros serviços possam ser construídos,
+implantados, atualizados, observados e revertidos.
+
+A blueprint original já coloca aqui Common Build System, Automatic Logging, Software Usage
+Telemetry e Dynamic Documentation. Justia confirma que US 11,681,606 automatiza configuração de
+logging a partir do código e US 11,870,666 coleta e classifica métricas de uso de deployments.
+
+
+Famílias/patentes relevantes
+
+Núcleo
+
+    ●​   US 10,001,982 — Common Build System.
+    ●​   US 10,509,647 — Dynamic Documentation.
+    ●​   US 11,681,606 — Automatic Configuration of Logging Infrastructure.
+    ●​   US 11,870,666 — Software Usage Metrics.
+
+Hardening moderno
+
+    ●​ EP4660856A2/A3 — Managing Software Security.
+    ●​ US20250298632A1 — modificação gráfica/configuração de ambientes computacionais.
+O que construir
+
+0.1 Service Registry
+
+Cada serviço precisa possuir:
+
+service_id
+name
+version
+artifact_hash
+dependencies[]
+api_version
+configuration_schema
+deployment_targets[]
+required_permissions[]
+health_endpoint
+metrics_endpoint
+owner
+
+
+
+0.2 Build Graph
+
+Não tratar cada microsserviço como projeto independente.
+
+Crie:
+
+source
+ ↓
+dependency graph
+ ↓
+build
+ ↓
+unit tests
+ ↓
+security scan
+ ↓
+artifact
+ ↓
+signed manifest
+ ↓
+deployment plan
+
+
+O mesmo commit precisa gerar artefato reproduzível.
+
+0.3 Deployment Control Plane
+
+Componentes:
+
+Deployment API
+Deployment Planner
+Artifact Registry
+Configuration Registry
+Environment Registry
+Agent/Spoke
+Health Monitor
+Rollback Controller
+Audit Log
+
+
+
+0.4 Observability
+
+Todos os serviços obrigatoriamente emitem:
+
+   ●​   logs estruturados;
+   ●​   traces;
+   ●​   métricas;
+   ●​   versão;
+   ●​   deployment ID;
+   ●​   correlation ID;
+   ●​   principal;
+   ●​   operação;
+   ●​   duração;
+   ●​   resultado.
+
+0.5 Configuração
+
+Separar completamente:
+
+CODE
+CONFIGURATION
+SECRETS
+POLICY
+ENVIRONMENT STATE
+
+
+Nunca embutir segredo ou configuração de cliente no artefato.
+
+
+Testes obrigatórios
+
+T0.1 — Reproducible build
+
+Mesmo commit + mesmas dependências → mesmo hash.
+
+T0.2 — Canary
+
+Versão v2 é enviada para subconjunto de nós sem afetar v1.
+
+T0.3 — Rollback
+
+Introduzir uma versão deliberadamente inválida e comprovar retorno automático à anterior.
+
+T0.4 — Node offline
+
+Desconectar um spoke, fazer novo deployment e reconectá-lo.
+Ele precisa descobrir seu estado divergente e reconciliá-lo.
+
+T0.5 — Observability
+
+100% das requisições críticas precisam ter:
+
+trace_id
+actor
+service
+operation
+result
+latency
+
+
+
+Gate de saída
+
+Não avançar enquanto não for possível:
+
+         pegar qualquer serviço, buildar uma vez, colocar em dois ambientes diferentes,
+         observar seu estado e fazer rollback.
+
+
+
+
+FASE 1 — CONNECT + FEDERATION + EDGE
+
+
+Objetivo
+
+Conectar dados externos sem exigir que o sistema fonte seja substituído.
+
+A blueprint inclui US 8,930,897, US 11,281,659 e famílias de replicação.
+
+US 8,930,897 é particularmente importante: descreve transformação de fontes externas para um
+object model associado a uma ontology e validação do transformation script contra parâmetros dessa
+ontology.
+
+US 11,281,659 vai além de simplesmente copiar dados: trabalha com representações temporárias de
+dados federados e objetos da plataforma, permitindo acesso antes de materializar tudo
+definitivamente.
+
+
+Famílias/patentes
+
+Data integration
+
+    ●​    US 8,930,897.
+    ●​    US 9,984,152 — continuation da família.
+    ●​    US 10,572,529 — continuation.
+    ●​    US 11,100,154 — continuation.
+
+Federation
+
+    ●​ US 10,402,397.
+    ●​ US 11,281,659.
+      ●​ US 11,681,690.
+
+Importação/modelagem
+
+      ●​ US 9,330,120 — Visual Data Importer.
+      ●​ US 10,809,888 / US20140282121 — tagging de conteúdo externo.
+      ●​ US 10,552,524 — inline document tagging + object synchronization.
+
+Edge / mundo físico
+
+      ●​ US 11,799,877 — SCADA.
+      ●​ US 12,261,861 — continuação.
+      ●​ US20250233873A1 — continuação.
+
+
+Arquitetura
+
+Criar um Connector SDK.
+
+Um connector não deve conhecer Ontology diretamente.
+
+Interface:
+
+discover()
+schema()
+snapshot()
+read(cursor)
+subscribe(cursor)
+health()
+checkpoint()
+permissions()
+
+
+
+Connector Runtime
+ERP ─────┐
+MES ─────┤
+SQL ─────┤
+API ─────┼→ Connector Runtime → Canonical Event Bus
+Files ───┤
+SCADA ───┤
+IoT ─────┘
+
+
+
+Canonical Event Envelope
+
+Todo dado entrando deve receber envelope padrão:
+
+{
+    "event_id": "...",
+    "source_system": "...",
+    "source_object": "...",
+    "source_primary_key": "...",
+    "schema_version": "...",
+    "occurred_at": "...",
+    "ingested_at": "...",
+    "connector_id": "...",
+    "checkpoint": "...",
+    "principal": "...",
+    "policy_tags": [],
+    "payload_hash": "...",
+    "payload": {}
+}
+
+
+Isso será crítico para lineage, replay e replicação.
+
+
+Schema Registry
+
+Guardar:
+
+Source
+Table/Object
+Column/Field
+Physical Type
+Semantic Hint
+Nullable
+Primary Key
+Foreign Keys
+Observed Values
+First Seen
+Last Seen
+Schema Version
+
+
+
+Schema drift
+
+Se uma fonte muda:
+
+quantity INT
+    ↓
+quantity DECIMAL
+
+
+o connector não deve simplesmente quebrar.
+
+Classifique mudança como:
+
+compatible
+coercible
+breaking
+unknown
+
+
+
+Federation
+Para fontes gigantes ou sensíveis:
+
+user query
+  ↓
+federation planner
+  ↓
+pushdown query
+  ↓
+source system
+  ↓
+temporary representation
+  ↓
+optional materialization
+
+
+Não copie 5 TB para responder uma pergunta de 200 linhas.
+
+
+Testes
+
+T1.1 — Snapshot idempotente
+
+Executar duas vezes o mesmo snapshot.
+
+Resultado lógico deve permanecer idêntntico.
+
+T1.2 — CDC
+insert
+update
+delete
+
+
+devem aparecer exatamente uma vez no estado final.
+
+T1.3 — Restart
+
+Parar connector no evento 10.000.
+
+Reiniciar.
+
+Ele precisa continuar do checkpoint correto.
+
+T1.4 — Schema drift
+
+Adicionar, remover e alterar coluna.
+
+Confirmar classificação e resposta.
+
+T1.5 — Federation
+
+Consultar registro remoto sem copiá-lo definitivamente.
+
+T1.6 — Backpressure
+Fonte produz 10× mais eventos que o processamento.
+
+Não perder informação.
+
+T1.7 — Security
+
+Usuário sem acesso à fonte não pode adquirir o dado simplesmente porque ele passou pelo
+connector.
+
+
+Gate
+
+O sistema deve conectar uma fonte completamente nova através do SDK sem alterar o core da
+plataforma.
+
+
+
+
+FASE 2 — IMMUTABLE STORE + VERSIONING
+
+
+Objetivo
+
+Transformar dados recebidos em histórico reproduzível.
+
+A blueprint exige armazenamento imutável, histórico V1→V2→V3 e deltas.
+
+US 11,397,717 descreve justamente armazenamento de deltas individuais e deltas
+combinados/hierárquicos para reconstrução eficiente de estados.
+
+
+Famílias relevantes
+
+   ●​    US 9,229,952 — History Preserving Data Pipeline.
+   ●​    US 9,483,506 — continuation relacionada.
+   ●​    US 9,946,738 — versioned/universal pipeline, conforme sua blueprint.
+   ●​    US 11,397,717 — Data Storage Deltas.
+   ●​    US 8,504,542 — multi-row transactions.
+   ●​    US 9,619,507 — transaction read protocol.
+   ●​    US 9,367,463 / US 9,652,291 — zero-copy/caching.
+   ●​    US 9,092,482 / US 9,715,526 — fair scheduling.
+
+
+Modelo
+
+Nunca:
+
+dataset_current.csv
+
+
+Sozinho.
+
+Use:
+
+Dataset
+├── DatasetVersion 1
+├── DatasetVersion 2
+├── DatasetVersion 3
+└── DatasetVersion N
+
+
+Cada versão:
+
+dataset_id
+version_id
+parent_version
+created_at
+created_by
+input_versions[]
+transformation_id
+schema_version
+content_hash
+policy_id
+lineage_ref
+
+
+
+Imutabilidade
+
+Depois de commitado:
+
+VERSION N ≠ mutável
+
+
+Alteração gera:
+
+VERSION N+1
+
+
+
+Delta tree
+
+Em vez de:
+
+BASE + Δ1 + Δ2 + Δ3 + ... + Δ100000
+
+
+construir compactações intermediárias:
+
+BASE
+├ Δ1
+├ Δ2
+├ Combined Δ1-10
+├ Combined Δ11-20
+...
+└ Combined Δ1-1000
+
+
+
+APIs mínimas
+createDataset()
+commitVersion()
+getLatestVersion()
+getVersion(id)
+diff(v1,v2)
+snapshot(timestamp)
+listVersions()
+replay()
+
+
+
+Testes
+
+    ●​    reconstrução byte-for-byte;
+    ●​    time travel;
+    ●​    concorrência;
+    ●​    crash entre write e commit;
+    ●​    duplicate commit;
+    ●​    delta corrompido;
+    ●​    compactação;
+    ●​    leitura enquanto ocorre novo commit;
+    ●​    replay completo.
+
+
+Gate
+
+Pergunta obrigatória:
+
+         “Qual era exatamente o estado desse dataset às 14:37:22 de determinada data?”
+
+Se a plataforma não puder responder de maneira determinística, F2 não terminou.
+
+
+
+
+FASE 3 — TRANSFORMATION + COMPUTE
+
+
+Objetivo
+
+Converter raw data em informação estruturalmente confiável.
+
+Patentes centrais da blueprint: US 9,965,534, US 11,314,698, US 11,429,572 e US 10,678,860.
+
+US 11,314,698, por exemplo, descreve determinar dependências entre datasets e iniciar
+automaticamente builds quando os inputs necessários tornam-se disponíveis, sem esperar datasets
+irrelevantes.
+
+
+Famílias
+
+    ●​    US 9,576,015 / US 9,965,534 — DSL para transformações.
+    ●​    US20170068698A1 — aplicação relacionada à DSL.
+    ●​    US 11,314,698 — Dynamic Pipeline Processing.
+    ●​    US 11,429,572 — Rules-Based Cleaning.
+    ●​    US 9,542,446 / US 10,678,860 — Composite Datasets.
+    ●​    US 9,922,108 / US 10,776,382 — transformação de dados.
+    ●​ US20250265045A1 — Code Execution and Data Processing Pipeline.
+
+
+Pipeline IR
+
+Usuário pode escrever:
+
+orders
+ .filter(status == "OPEN")
+ .join(customers, customer_id)
+ .derive(days_open)
+ .validate(amount >= 0)
+ .output("open_orders")
+
+
+Internamente transformar para:
+
+AST
+↓
+Logical Plan
+↓
+Dependency Graph
+↓
+Physical Plan
+↓
+Execution
+
+
+
+DAG
+RAW_A ──┐
+   ├─→ T1 → CLEAN_A ──┐
+RAW_B ──┘        ├→ T3 → FINAL
+RAW_C ───────→ T2 ────────┘
+
+
+O scheduler precisa conhecer dependências.
+
+
+Incremental recomputation
+
+Se só RAW_C mudar:
+
+não recalcular T1.
+
+Calcular somente descendentes afetados.
+
+
+Rule engine
+
+Estrutura:
+
+RULE
+condition
+severity
+action
+scope
+version
+owner
+
+
+Exemplo estrutural:
+
+condition → violated?
+     ↓
+  corrective action
+     ↓
+   audit event
+
+
+
+Data quality
+
+Calcular para cada dataset:
+
+completeness
+uniqueness
+validity
+consistency
+freshness
+distribution drift
+schema drift
+
+
+
+Sandbox
+
+Transformações customizadas nunca executam diretamente com permissão ilimitada.
+
+Impor:
+
+    ●​    CPU limit;
+    ●​    memory limit;
+    ●​    timeout;
+    ●​    filesystem restrictions;
+    ●​    network restrictions;
+    ●​    identity;
+    ●​    audit.
+
+
+Testes
+
+    ●​    parser da DSL;
+    ●​    AST determinístico;
+    ●​    mesma entrada → mesma saída;
+    ●​    incremental recompute;
+    ●​    dependency invalidation;
+    ●​    ciclo no DAG;
+    ●​    failure propagation;
+    ●​    rule ordering;
+    ●​    schema changes;
+    ●​ sandbox escape attempts;
+    ●​ replay usando versões antigas.
+
+
+Gate
+
+Mudar apenas um input precisa reconstruir exatamente e somente os outputs dependentes.
+
+
+
+
+FASE 4 — LINEAGE + PROVENANCE + SECURITY
+
+Essa é uma das maiores diferenças entre um simples data platform e algo realmente Palantir-like.
+
+
+Patentes/famílias principais
+
+    ●​   US 9,996,595 — Full Data Provenance.
+    ●​   US 9,348,879.
+    ●​   US20140114907.
+    ●​   US20150012477 — Data Lineage.
+    ●​   US 10,027,551.
+    ●​   US 10,432,469 — Node-Based Access Control.
+    ●​   US 10,397,229 — resource-creation permissions.
+    ●​   US20150188715 — Verifiable Redactable Audit Log.
+    ●​   US 8,763,078 — authentication attempt monitoring.
+    ●​   US 10,044,745 — network-security risk.
+    ●​   US 9,857,960 — inter-entity collaboration.
+    ●​   US 10,222,965.
+    ●​   US 11,327,641.
+    ●​   US 12,386,496.
+    ●​   US20250328230A1 — continuations da colaboração.
+    ●​   US 10,146,960 / US 11,720,713 — collaborative environments/classification access.
+    ●​   US 10,915,542 — contextual sharing constraints.
+    ●​   EP4248349 — electronic data asset access.
+    ●​   WO2022245989 — control of user actions/access.
+    ●​   US 12,066,982 — data-asset sharing.
+    ●​   US 12,353,582 — exploration/access to data assets.
+    ●​   US 12,619,785 — document hierarchy permissions.
+    ●​   US20240403396A1 — permission propagation para outputs de LLMs.
+
+A blueprint original já coloca lineage e ACL antes da Ontology.
+
+US 9,996,595 descreve proveniência como um grafo onde datasets/versioned datasets são nós e
+derivation dependencies são arestas.
+
+
+Construir três grafos diferentes
+
+1. Data lineage graph
+RAW
+↓
+TRANSFORM
+↓
+DATASET
+↓
+OBJECT
+
+
+
+2. Authorization graph
+USER
+↓ role
+GROUP
+↓ permission
+RESOURCE
+↓ policy
+PROPERTY/ACTION
+
+
+
+3. Audit graph
+actor
+action
+resource
+old_state
+new_state
+timestamp
+reason
+request_id
+
+
+
+Lineage granularidade
+
+Idealmente:
+
+dataset
+table
+column
+record/element quando necessário
+object
+property
+action
+model output
+
+
+
+Policy engine
+
+A decisão não deve existir apenas no frontend.
+
+Interface:
+
+authorize(
+  principal,
+  resource,
+  operation,
+  context
+) → allow | deny
+
+
+Context pode incluir:
+
+purpose
+time
+environment
+classification
+tenant
+network
+action
+object state
+
+
+
+Propagação
+
+Se:
+
+DATA A = confidential
+
+
+e:
+
+DATA B = transform(DATA A)
+
+
+B não pode magicamente perder a classificação.
+
+O mesmo vale para:
+
+LLM(DATA A)
+    ↓
+MODEL OUTPUT
+
+
+O output precisa preservar restrições aplicáveis.
+
+
+Redaction
+graph completo
+    ↓
+policy evaluation
+    ↓
+remove unauthorized nodes
+remove unauthorized properties
+repair dangling edges
+    ↓
+sanitized graph
+
+
+
+Testes
+Security matrix
+
+Para toda API:
+
+allowed principal
+denied principal
+partially allowed principal
+
+
+
+Noninterference
+
+Usuário sem acesso não deve inferir informação proibida por:
+
+    ●​   quantidade de resultados;
+    ●​   erro diferente;
+    ●​   autocomplete;
+    ●​   search index;
+    ●​   embeddings;
+    ●​   cache;
+    ●​   LLM;
+    ●​   logs.
+
+Lineage completeness
+
+100% dos outputs produtivos precisam apontar para seus inputs.
+
+Tamper detection
+
+Alteração de audit log precisa ser detectável.
+
+Authorization fuzzing
+
+Gerar combinações automáticas de:
+
+principal × resource × action × context
+
+
+
+Gate
+
+Nenhum componente da F5–F10 pode ler dados diretamente do storage ignorando o policy layer.
+
+
+
+
+FASE 5 — REPLICATION + COLLABORATION + OFFLINE
+
+Eu separaria isso da F4.
+
+
+Famílias
+
+Incremental replication
+
+    ●​ US 8,886,601.
+   ●​ US 9,785,694.
+
+Cross-Ontology
+
+   ●​ US 9,330,157.
+   ●​ US 10,061,828.
+
+Cross-ACL
+
+   ●​   US 8,527,461.
+   ●​   US 8,782,004.
+   ●​   US 9,715,518.
+   ●​   US 10,089,345.
+
+Secure replication
+
+   ●​ US 10,621,198.
+
+ACL replication changes
+
+   ●​ US 8,838,538.
+
+Conflict/deconfliction
+
+   ●​ US 8,515,912.
+   ●​ US 9,569,070.
+
+Disconnected investigations
+
+   ●​ US 8,364,642.
+   ●​ US 8,812,444.
+   ●​ US 9,275,069.
+
+Redacted graph collaboration
+
+   ●​ US 9,501,761.
+
+
+Replication protocol
+
+Cada mutation:
+
+mutation_id
+source_replica
+logical_clock
+object
+operation
+payload
+policy
+timestamp
+dependencies
+Estado de uma replica
+Replica A:
+vector/checkpoint = X
+
+Replica B:
+vector/checkpoint = Y
+
+
+O sistema calcula diferença e envia somente eventos necessários.
+
+
+Problema crítico
+
+Replica B pode não ter permissão para visualizar parte do evento.
+
+Então precisa conseguir convergir mesmo recebendo uma mudança parcialmente redigida.
+
+Esse é exatamente o tipo de problema arquitetural que torna Cross-ACL importante.
+
+
+Offline
+ONLINE STATE
+ ↓
+local authorized snapshot
+ ↓
+DISCONNECT
+ ↓
+local mutations
+ ↓
+RECONNECT
+ ↓
+conflict detector
+ ↓
+resolution
+ ↓
+new converged state
+
+
+
+Testes
+
+   ●​     network partition;
+   ●​     reordered events;
+   ●​     duplicated events;
+   ●​     dropped events;
+   ●​     denied fields;
+   ●​     change de ACL durante partition;
+   ●​     simultaneous edits;
+   ●​     offline mutation;
+   ●​     reconciliation;
+   ●​     3+ replicas;
+   ●​     eventual convergence.
+
+
+Invariante
+Quando a rede estabilizar:
+
+authorized_state(replica A)
+==
+authorized_state(replica B)
+
+
+para a porção de informação compartilhável entre elas.
+
+
+
+
+FASE 6 — ENTITY RESOLUTION
+
+
+Problema
+
+Sistemas diferentes falam sobre a mesma entidade sem usar o mesmo identificador.
+
+System A: CUSTOMER 1842
+System B: ACME LTDA
+System C: CNPJ XYZ
+
+
+Você precisa determinar:
+
+A == B == C ?
+
+
+
+Patentes/famílias
+
+    ●​   US 8,554,719.
+    ●​   US 9,501,552.
+    ●​   US 9,846,731 — entity resolution.
+    ●​   US 12,229,154 — Focused Probabilistic Entity Resolution.
+    ●​   US20250165857A1 — Generalizable Entity Resolution Based on Ontology Structures.
+    ●​   US 12,393,406 / US20250348288A1 — entity search powered by copy-detection.
+    ●​   US20140280252 — comparing/associating objects.
+    ●​   US 8,788,405 — clusters.
+    ●​   US 8,818,892 — cluster prioritization.
+
+A aplicação US20250165857 está pendente e descreve comparação de incoming records com
+entidades já presentes numa ontology, inclusive usando feedback para melhorar resolução.
+
+
+Pipeline
+incoming record
+    ↓
+normalization
+    ↓
+candidate generation
+    ↓
+feature extraction
+    ↓
+scoring
+   ↓
+match / no-match / uncertain
+   ↓
+human feedback when needed
+   ↓
+canonical entity
+
+
+
+Candidate generation
+
+Nunca comparar cada registro contra milhões.
+
+Gerar candidatos por:
+
+exact keys
+normalized names
+addresses
+phone/email
+dates
+ontology neighborhood
+relationships
+semantic similarity
+
+
+
+Score
+
+Modelo:
+
+P(same_entity | features)
+
+
+Não gravar apenas o resultado.
+
+Guardar:
+
+candidate
+score
+features
+model_version
+decision
+reason
+review
+timestamp
+
+
+
+Gold set
+
+Criar dataset manual de referência:
+
+MATCH
+MATCH
+NO_MATCH
+NO_MATCH
+...
+
+
+
+Métricas
+
+Principal:
+
+precision
+recall
+F1
+false merge rate
+false split rate
+manual review rate
+
+
+False merge deve receber atenção especial porque combinar duas entidades diferentes pode
+contaminar todo o grafo operacional.
+
+
+Gate
+
+Só avançar para Ontology quando você consegue demonstrar quantitativamente que a identidade
+canônica é confiável.
+
+
+
+
+FASE 7 — ONTOLOGY + OBJECT PLATFORM
+
+Aqui está o coração.
+
+Sua própria blueprint define essa camada como a separação entre dados físicos e representação
+lógica, criando Object Types, Property Types, Parsers, Links e security associada ao modelo.
+
+US 8,930,897 também explica essa estrutura: fontes são reorganizadas em um object model cujos
+significados são definidos pela ontology; propriedades físicas podem ser mapeadas para
+propriedades dos objetos e relacionamentos podem ser definidos entre eles.
+
+
+Famílias fundamentais
+
+Dynamic Ontology
+
+    ●​   US 7,962,495.
+    ●​   US 8,489,623.
+    ●​   US 8,856,153.
+    ●​   US 9,201,920.
+    ●​   US 9,589,014.
+    ●​   US 10,872,067.
+
+Object Modeling
+      ●​ US20100070426.
+      ●​ US 9,229,966.
+
+Object Platform
+
+      ●​ US 10,691,729.
+      ●​ EP3425537A1.
+
+Knowledge Graph
+
+      ●​ US20250077899A1.
+
+Remote object references
+
+      ●​ US 9,378,526.
+      ●​ US 9,621,676.
+      ●​ US 9,906,623.
+
+Rich objects/spreadsheet integration
+
+      ●​ US 9,280,532.
+      ●​ US 9,880,993.
+
+Ontology index/query evolução
+
+      ●​ US 11,816,156.
+      ●​ US 12,561,339 — unified query interface across multiple ontology-based databases.
+
+
+Ontology Registry
+ObjectType
+PropertyType
+LinkType
+ActionType
+FunctionType
+InterfaceType
+PolicyBinding
+OntologyVersion
+
+
+
+ObjectType
+{
+    "id": "Customer",
+    "version": 7,
+    "properties": {},
+    "links": {},
+    "actions": [],
+    "interfaces": [],
+    "policies": []
+}
+Object instance
+{
+    "object_id": "...",
+    "object_type": "Customer",
+    "ontology_version": 7,
+    "properties": {},
+    "links": [],
+    "provenance": {},
+    "policy": {}
+}
+
+
+
+Separar SEMÂNTICA e CINÉTICA
+
+Semantic layer
+Object
+Property
+Link
+
+
+Diz:
+
+         O que existe?
+
+Kinetic layer
+Function
+Action
+Workflow
+
+
+Diz:
+
+         O que pode acontecer?
+
+Essa divisão é essencial.
+
+
+Mapping
+physical dataset
+   ↓
+mapping definition
+   ↓
+object type
+   ↓
+properties
+   ↓
+links
+
+
+O mapping precisa ser versionado.
+
+
+Schema evolution
+Você inevitavelmente terá:
+
+Machine v1
+Machine v2
+Machine v3
+
+
+Então precisa suportar:
+
+    ●​   adicionar property;
+    ●​   deprecated property;
+    ●​   rename;
+    ●​   type change;
+    ●​   split;
+    ●​   merge;
+    ●​   link migration;
+    ●​   object migration.
+
+
+Object API
+getObject()
+queryObjects()
+createObject()
+updateObject()
+traverseLinks()
+getHistory()
+getProvenance()
+getAvailableActions()
+
+
+Todas passando pelo authorization layer.
+
+
+Knowledge Graph
+
+Ontology é o schema semântico.
+
+Operational Knowledge Graph é a instanciação viva:
+
+Object → Link → Object
+
+
+
+Testes
+
+    ●​   criação de object type;
+    ●​   mapping;
+    ●​   atualização de ontology;
+    ●​   migrations;
+    ●​   invalid property;
+    ●​   invalid link;
+    ●​   deleted property;
+    ●​   referential integrity;
+    ●​   traversal;
+    ●​   security por property;
+    ●​ historical object read;
+    ●​ ontology rollback;
+    ●​ multiple ontology versions.
+
+
+Gate
+
+Você deve conseguir desconectar a aplicação visual inteira e ainda assim trabalhar com a operação
+exclusivamente pelas APIs da Ontology.
+
+Se não consegue, lógica de negócio vazou para a UI.
+
+
+
+
+FASE 8 — FUNCTIONS + ACTIONS + WORKFLOWS
+
+Aqui dados passam a provocar mudança no mundo.
+
+
+Famílias
+
+Workflow/document workflow
+
+    ●​ US 8,429,194.
+    ●​ US 8,905,597.
+
+Workflow parameterization/generation
+
+    ●​   US 8,732,574.
+    ●​   US 9,058,315.
+    ●​   US 9,880,987.
+    ●​   US 10,706,220.
+
+Document generation
+
+    ●​ US 9,223,773.
+
+Object-based process management
+
+    ●​ US20240386347A1 / EP4465217.
+
+Interactive workflow analysis
+
+    ●​ US20260017035A1.
+
+
+Function
+
+Function não altera estado:
+
+f(objects) → result
+
+
+Exemplos conceituais:
+calculateRisk()
+calculateETA()
+forecastDemand()
+optimizeAllocation()
+
+
+
+Action
+
+Action altera estado:
+
+Action(
+  actor,
+  object,
+  parameters,
+  expected_state
+)
+
+
+Retorna:
+
+authorized?
+validated?
+committed?
+external_writeback?
+new_state?
+
+
+
+Action definition
+action_id
+input_object_types
+parameter_schema
+preconditions
+authorization_policy
+validation
+transaction
+side_effects
+postconditions
+compensation
+audit_requirements
+
+
+
+Regra essencial
+
+LLM ou interface nunca escreve diretamente no banco.
+
+Sempre:
+
+USER / AGENT
+  ↓
+ACTION
+  ↓
+AUTHORIZATION
+  ↓
+VALIDATION
+  ↓
+TRANSACTION
+  ↓
+WRITE-BACK
+  ↓
+AUDIT
+
+
+
+Optimistic concurrency
+
+Action recebe:
+
+expected_object_version = 51
+
+
+Mas atual é:
+
+52
+
+
+Não escrever silenciosamente.
+
+Retornar conflito.
+
+
+Idempotency
+
+Toda action externa:
+
+idempotency_key
+
+
+para impedir:
+
+retry → execução duplicada
+
+
+
+Compensation
+
+Para efeitos externos:
+
+STEP A succeeded
+STEP B succeeded
+STEP C failed
+
+
+precisa existir estratégia:
+
+retry C
+ou
+compensate B
+ou
+manual resolution
+
+
+
+Workflow Engine
+trigger
+  ↓
+step A
+  ↓
+condition
+ ↙      ↘
+B       C
+↓       ↓
+D ←───────┘
+
+
+Suportar:
+
+   ●​    state;
+   ●​    timeout;
+   ●​    retry;
+   ●​    approval;
+   ●​    branching;
+   ●​    wait;
+   ●​    external event;
+   ●​    compensation.
+
+
+Testes
+
+   ●​    precondition;
+   ●​    postcondition;
+   ●​    unauthorized action;
+   ●​    duplicate action;
+   ●​    stale object;
+   ●​    partial external failure;
+   ●​    workflow restart;
+   ●​    cycle detection;
+   ●​    timeout;
+   ●​    retry;
+   ●​    manual approval;
+   ●​    audit trail.
+
+
+Gate
+
+A plataforma deve conseguir:
+
+observe state
+→ calculate
+→ decide
+→ execute authorized action
+→ observe resulting state
+Esse é o primeiro momento em que ela realmente se torna operacional.
+
+
+
+
+FASE 9 — SEARCH + APPLICATIONS
+
+Depois do core.
+
+
+Patent families
+
+Search Around
+
+   ●​ US 9,031,981.
+   ●​ US 9,798,768.
+
+Large-scale investigation
+
+   ●​    US 8,799,240.
+   ●​    US 9,201,159.
+   ●​    US 9,639,578.
+   ●​    US 9,852,144.
+   ●​    US 10,423,582.
+
+Search
+
+   ●​    US 8,868,537.
+   ●​    US 9,262,529 — simple web search.
+   ●​    US 10,726,032 — search templates.
+   ●​    US 9,619,557 — key-phrase characterization.
+
+Filter chains
+
+   ●​ US 8,041,714.
+   ●​ US 8,280,880.
+
+Natural language
+
+   ●​ US 11,238,102.
+
+Data-management visualization
+
+   ●​ US 9,639,580.
+
+Mobile
+
+   ●​ US 9,727,376 — tasks.
+   ●​ US 10,037,314 / US 10,997,363 / US 11,494,549 — reports.
+   ●​ US 9,380,431 — teams.
+
+Geospatial
+
+   ●​ US 10,270,727.
+    ●​ US 8,085,268 — geodetic polygon.
+    ●​ US 9,041,708 — viewsheds.
+
+Specialized analytics useful only when required
+
+    ●​ US 8,484,115 / US 9,378,524 — time-series.
+    ●​ US 8,034,971 / US 8,326,727 — dynamic date sets.
+    ●​ US 8,484,549 / US 9,727,981 — sensitivity analysis.
+
+
+Search architecture
+
+Não fazer:
+
+UI → SQL
+
+
+Fazer:
+
+UI
+↓
+Query API
+↓
+Ontology Query Planner
+├→ Object Store
+├→ Search Index
+├→ Graph
+└→ Federation
+
+
+
+Index
+
+Indexar:
+
+object
+properties
+links
+labels
+keywords
+permissions
+ontology type
+timestamps
+geospatial fields
+
+
+
+Permission-aware indexing
+
+Problema:
+
+search pode revelar algo que object API bloquearia.
+
+Então o security model também deve atingir:
+search hit
+autocomplete
+facet count
+suggestion
+snippet
+ranking
+
+
+
+Application architecture
+
+Aplicativos não guardam cópia própria de toda lógica.
+
+Eles consomem:
+
+Ontology API
+Action API
+Function API
+Search API
+Workflow API
+
+
+Assim você pode criar dezenas de aplicações em cima do mesmo modelo operacional.
+
+
+Testes
+
+    ●​   graph traversal;
+    ●​   pattern query;
+    ●​   search relevance;
+    ●​   index freshness;
+    ●​   permission leakage;
+    ●​   pagination;
+    ●​   1M/10M/100M objects;
+    ●​   p95 latency;
+    ●​   stale index;
+    ●​   mobile offline;
+    ●​   NL query grounding.
+
+
+Gate
+
+Construir duas interfaces completamente diferentes sobre a mesma Ontology sem duplicar lógica de
+negócio.
+
+
+
+
+FASE 10 — AIP + AGENTS + MODEL OPERATIONS
+
+Essa parte da blueprint precisa ser ampliada porque o portfólio recente da Palantir cresceu bastante.
+
+O arquivo já inclui US 12,405,983, Profile-Based AI e AI System User Interfaces.
+US 12,405,983 foi concedida em 2 de setembro de 2025 e possui publicações/continuations
+relacionadas, incluindo US20250278421A1 e US20250363154A1.
+
+
+Famílias recentes relevantes
+
+LLM ↔ Ontology
+
+   ●​ US 12,405,983.
+   ●​ US20250278421A1.
+   ●​ US20250363154A1.
+
+User/Profile AI
+
+   ●​ US20240419658A1.
+
+AI UI
+
+   ●​ EP4443310A1.
+
+Agent Evaluation
+
+   ●​ US20250199932A1.
+   ●​ EP4571511A1.
+
+Agent Ops
+
+   ●​ US20250110786A1.
+
+State-machine-backed LLM agents
+
+   ●​ US20250110753A1.
+   ●​ EP4530883.
+
+Model integration
+
+   ●​ US20240403103A1.
+
+Model evaluation
+
+   ●​ US20240420258A1.
+
+Permission-aware LLM output
+
+   ●​ US20240403396A1.
+
+LLM-assisted error analysis
+
+   ●​ US20250147832A1.
+   ●​ US 12,487,876.
+   ●​ US20260127063A1.
+
+LLM + Ontology-assisted ML
+   ●​ US20250384290A1.
+   ●​ EP4668176A1.
+
+Cross-application AI assistant
+
+   ●​ US20260017123A1.
+
+NL-controlled multidimensional visualizations
+
+   ●​ US20260065540A1.
+
+Few-shot example selection
+
+   ●​ US20260127387A1.
+   ●​ EP4738182A1.
+
+
+Arquitetura
+User
+ ↓
+AI Gateway
+ ↓
+Identity + Context
+ ↓
+Policy
+ ↓
+Agent Runtime
+ ↓
+Planner
+ ↓
+Tool Registry
+ ├ Ontology Query
+ ├ Function
+ ├ Action
+ ├ Search
+ └ Workflow
+ ↓
+Result
+ ↓
+Policy filtering
+ ↓
+Response
+
+
+
+Tool Registry
+
+LLM não recebe credenciais soltas.
+
+Ferramenta:
+
+tool_id
+input_schema
+output_schema
+required_permission
+risk_level
+read/write
+timeout
+rate_limit
+
+
+
+State-machine agent
+
+Não deixar um agente crítico improvisar indefinidamente.
+
+START
+↓
+UNDERSTAND
+↓
+GATHER_DATA
+↓
+ANALYZE
+↓
+PROPOSE_ACTION
+↓
+APPROVAL?
+↓
+EXECUTE
+↓
+VERIFY
+↓
+DONE
+
+
+Cada state determina:
+
+allowed_tools
+prompt
+transition_conditions
+maximum_iterations
+approval_policy
+
+
+
+Context builder
+user identity
++ role
++ permissions
++ object context
++ conversation
++ workflow state
++ available tools
++ organizational policies
+
+
+→ prompt/context autorizado.
+AI nunca é a autoridade
+
+Authority permanece em:
+
+Policy Engine
+Action Engine
+Ontology
+
+
+LLM apenas propõe ou invoca interfaces autorizadas.
+
+
+Evaluation Framework
+
+Criar suíte versionada:
+
+eval_case
+input
+context
+allowed_tools
+expected facts
+expected action
+forbidden actions
+rubric
+result
+model_version
+prompt_version
+agent_version
+
+
+
+Métricas
+task success
+groundedness
+tool-selection accuracy
+action accuracy
+permission violations
+hallucination rate
+latency
+cost
+human override
+recovery rate
+
+
+
+Adversarial tests
+
+Obrigatórios:
+
+    ●​   prompt injection;
+    ●​   data exfiltration attempts;
+    ●​   unauthorized tool;
+    ●​   fake instructions dentro de documento;
+    ●​   poisoned search result;
+    ●​   stale context;
+    ●​   conflicting facts;
+    ●​   infinite tool loop;
+    ●​   action duplication;
+    ●​   tool timeout;
+    ●​   model outage.
+
+
+High-risk action gate
+Agent proposes
+    ↓
+simulate
+    ↓
+validate
+    ↓
+policy
+    ↓
+human approval if required
+    ↓
+execute
+    ↓
+verify
+
+
+
+Gate
+
+Trocar o modelo LLM por outro e comprovar que:
+
+    ●​   Ontology continua funcionando;
+    ●​   Actions continuam funcionando;
+    ●​   permissions continuam funcionando;
+    ●​   workflows continuam funcionando.
+
+Se trocar o modelo destrói o sistema, você criou um chatbot, não uma plataforma operacional.
+
+
+
+
+FASE 11 — CLOSED LOOP + PRODUCTION HARDENING
+
+Agora juntar tudo.
+
+
+Teste E2E obrigatório
+1. novo dado aparece no sistema fonte
+2. connector detecta
+3. event é persistido
+4. dataset recebe nova versão
+5. pipeline incremental executa
+6. lineage registra dependência
+7. entity resolution encontra entidade
+8. ontology atualiza object
+9. function recalcula
+10. workflow detecta condição
+11. agent/usuário decide
+12. action é autorizada
+13. write-back acontece
+14. sistema fonte muda
+15. connector recebe novo estado
+16. ontology converge
+17. audit mostra todo o ciclo
+
+
+Esse teste vale muito mais do que centenas de telas.
+
+
+
+
+TESTES SISTÊMICOS
+
+
+Chaos testing
+
+Desligar deliberadamente:
+
+connector
+message broker
+storage node
+search index
+graph
+action worker
+LLM
+external API
+
+
+e verificar degradação.
+
+
+Disaster Recovery
+
+Definir:
+
+RPO
+RTO
+backup
+restore
+cross-region strategy
+key recovery
+configuration recovery
+
+
+
+Load
+
+Testar separadamente:
+
+events/sec
+objects
+relationships
+dataset size
+concurrent users
+queries/sec
+actions/sec
+agent tool calls/sec
+
+
+
+Replay
+
+Pegar uma janela histórica e reconstruir a plataforma do zero.
+
+O estado reconstruído deve ser equivalente.
+
+
+
+
+CONTRATOS CENTRAIS DA PLATAFORMA
+
+Eu congelaria estas interfaces antes de criar muitas aplicações:
+
+Connector API
+Dataset API
+Transformation API
+Lineage API
+Policy API
+Entity Resolution API
+Ontology API
+Object Query API
+Function API
+Action API
+Workflow API
+Search API
+Agent Tool API
+Evaluation API
+Deployment API
+
+
+Esses contratos são a verdadeira espinha dorsal.
+
+
+
+
+O QUE NÃO DEVE VIRAR CORE
+
+Há várias patentes Palantir que existem, mas são aplicações verticais ou funcionalidades
+especializadas, e não fundação necessária para recriar o modelo operacional.
+
+Exemplos encontrados:
+
+    ●​   US 9,129,219 / US 9,836,694 — crime-risk analysis.
+    ●​   US 9,501,202 — genomic workflow.
+    ●​   US 9,431,507 — distributed acoustic sensing.
+    ●​   US 9,872,083 / US 10,708,669 — media/ad insertion.
+    ●​   US 8,494,941 — financial-instrument similarity.
+    ●​   US 9,830,157 / US 9,676,662 — image/event metadata.
+    ●​   US 9,606,647 — gesture management.
+    ●​   US 11,706,090 — computer-network troubleshooting.
+
+Eles mostram aplicações possíveis sobre a plataforma, mas não devem bloquear o
+desenvolvimento da Ontology, Actions ou AIP.
+
+
+
+
+DESIGN PATENTS
+
+Outro erro seria interpretar design patents como arquitetura de backend.
+
+O portfólio público também contém muitos patents de aparência de interfaces, por exemplo:
+
+D781869
+D796550
+D802000
+D802016
+D803246
+D808991
+D810101
+D810760
+D811424
+D822705
+D826269
+D834039
+D883301
+D883997
+D888082
+D891471
+D894199
+D894944
+D894958
+D899447
+D908714
+D910047
+D914032
+D916757
+D916789
+D919645
+D920345
+D928807
+D930010
+D933674
+D933675
+D933676
+D934290
+D941318
+D946615
+D953345
+D957409
+D963692
+D977494
+D1083953
+
+
+A página atual da Justia confirma, por exemplo, D919645 até D1083953 ao lado dos utility patents
+recentes.
+
+Esses patents devem entrar numa trilha separada:
+
+       UX clean-room / não copiar aparência.
+
+Eles não são requisitos técnicos do backend.
+
+
+
+
+ORDEM REAL DE DESENVOLVIMENTO
+
+Não recomendo montar vinte microsserviços no primeiro mês.
+
+A sequência de implementação deveria ser:
+
+MILESTONE A
+F0 mínimo
++ 1 connector
++ immutable raw storage
+
+MILESTONE B
+versioning
++ transformation
++ lineage
+
+MILESTONE C
+entity resolution
++ ontology mínima
+
+MILESTONE D
+function
++ uma action
++ write-back
+
+MILESTONE E
+segunda fonte de dados
++ links entre objects
++ authorization granular
+
+MILESTONE F
+replication/offline/federation
+
+MILESTONE G
+operational application
+MILESTONE H
+LLM read-only sobre Ontology
+
+MILESTONE I
+agent → function
+
+MILESTONE J
+agent → proposed action
+
+MILESTONE K
+authorized agent action
+
+MILESTONE L
+closed-loop autonomy
+
+
+
+
+PRIMEIRO VERTICAL SLICE QUE EU CONSTRUIRIA
+
+Não tente provar cada camada isoladamente primeiro.
+
+Construa uma fatia vertical mínima:
+
+SOURCE A
+  +
+SOURCE B
+  ↓
+CONNECT
+  ↓
+VERSION
+  ↓
+TRANSFORM
+  ↓
+LINEAGE
+  ↓
+RESOLVE ENTITY
+  ↓
+ONTOLOGY
+  ↓
+FUNCTION
+  ↓
+ACTION
+  ↓
+WRITE BACK
+
+
+Somente depois generalize cada engine.
+
+Isso evita passar um ano construindo infraestrutura sem provar que a arquitetura fecha o ciclo.
+DEFINITION OF DONE DA PLATAFORMA
+
+A plataforma só está funcionalmente próxima do modelo que estamos estudando quando todas estas
+propriedades coexistirem:
+
+1. Integra sistemas sem substituí-los.
+
+2. Mantém dados/versionamentos históricos reproduzíveis.
+
+3. Processa transformações incrementalmente.
+
+4. Conhece lineage completo.
+
+5. Aplica autorização de ponta a ponta.
+
+6. Reconcilia identidades entre fontes.
+
+7. Transforma dados físicos em objetos semânticos.
+
+8. Relaciona objetos em um operational graph.
+
+9. Expõe Functions sobre esse modelo.
+
+10. Expõe Actions capazes de alterar o mundo externo.
+
+11. Mantém auditabilidade dessas mudanças.
+
+12. Permite que aplicações diferentes usem o mesmo modelo.
+
+13. Permite que LLMs consultem a Ontology sem acesso irrestrito aos dados.
+
+14. Permite que agentes invoquem somente ferramentas permitidas.
+
+15. Avalia agentes automaticamente.
+
+16. Pode executar uma Action, observar a consequência e atualizar novamente a Ontology.
+
+Esse item 16 é o fechamento:
+
+DATA
+↓
+MODEL OF WORLD
+↓
+UNDERSTANDING
+↓
+DECISION
+↓
+ACTION
+↓
+WORLD CHANGES
+↓
+NEW DATA
+Esse é o objetivo arquitetural final.
+
+
+
+
+REGRA PARA AS PATENTES
+
+Não implemente uma patente pensando:
+
+       “vou copiar o mecanismo descrito no claim.”
+
+Use-as como mapa de problemas que a Palantir precisou resolver:
+
+patent
+ ↓
+technical problem
+ ↓
+invariant
+ ↓
+independent architecture
+ ↓
+tests
+
+
+Isso é especialmente importante porque várias famílias ainda aparecem como ativas ou possuem
+aplicações recentes/pending; por exemplo, Google Patents lista US 12,405,983 como ativa e
+US20250165857 como pending, embora a própria base ressalve que seu status não constitui
+conclusão jurídica.
+
+Para produto comercial, a implementação deve ser independente e uma análise de
+freedom-to-operate precisa ser feita por profissional de propriedade intelectual antes de copiar
+mecanismos cobertos por claims ativos.
+

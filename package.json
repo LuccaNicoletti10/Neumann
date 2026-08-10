@@ -1,0 +1,34 @@
+{
+  "name": "neumann",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plataforma operacional — monorepo (PASSO 1–4+)",
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "dev:up": "docker compose up -d",
+    "dev:down": "docker compose down",
+    "cbs": "pnpm --filter common-build-system cli",
+    "docs": "pnpm --filter dynamic-documentation cli",
+    "alc": "pnpm --filter auto-logging-config cli",
+    "metrics": "pnpm --filter metrics-collection cli",
+    "iam": "pnpm --filter passo03-iam-auth-monitoring cli",
+    "sec": "pnpm --filter passo03-security-config-secrets cli",
+    "ldpc": "pnpm --filter ldpc-transceiver cli",
+    "psm": "pnpm --filter periodic-search-manager cli",
+    "fqs": "pnpm --filter fair-query-scheduler cli",
+    "bfs": "pnpm --filter bounded-fair-scheduler cli",
+    "obs": "pnpm --filter observability cli",
+    "bus": "pnpm --filter event-bus cli",
+    "gate:bloco1": "pnpm --filter observability cli -- check && pnpm --filter event-bus cli -- gate"
+  },
+  "devDependencies": {
+    "turbo": "2.1.1",
+    "typescript": "5.5.4"
+  }
+}

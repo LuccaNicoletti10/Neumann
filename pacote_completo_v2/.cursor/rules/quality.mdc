@@ -1,0 +1,15 @@
+---
+description: Padrões de qualidade de código — SEMPRE aplicar
+alwaysApply: true
+---
+# QUALIDADE (anti-código-lixo)
+
+- TypeScript strict. PROIBIDO `any` (use `unknown` + zod parse na fronteira).
+- Toda entrada externa validada com zod (request, evento, config, payload de connector).
+- Funções > 50 linhas ou arquivos > 300 linhas: dividir.
+- Erros: tipados (DeniedError, ConflictError, ValidationError), nunca string solta; nunca swallow de exceção vazio.
+- Migrations SQL: numeradas, idempotentes quando possível, NUNCA editar migration já aplicada — criar nova.
+- Testes: unit (Vitest) para lógica; integração (Testcontainers com Postgres/MinIO reais) para store/connector/pipeline. Mock de banco é PROIBIDO nos testes de invariante.
+- Nomes: contratos em PascalCase (DatasetStore), arquivos kebab-case, tabelas snake_case.
+- Nada de código morto, feature flag sem uso, ou abstração "para o futuro" (YAGNI).
+- Logs: estruturados (pino), sem dados sensíveis, sempre com trace_id + principal.

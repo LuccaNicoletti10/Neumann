@@ -1,0 +1,41 @@
+{
+  "name": "event-bus",
+  "version": "1.0.0",
+  "description": "Transactional outbox + LISTEN/NOTIFY + job queue with retry (TM0.3 / PASSO 4)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "event-bus": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "cli": "node dist/cli.js"
+  },
+  "dependencies": {
+    "pg": "^8.12.0",
+    "pg-boss": "^10.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "@types/pg": "^8.11.6",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.0"
+  }
+}

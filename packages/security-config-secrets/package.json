@@ -1,0 +1,31 @@
+{
+  "name": "passo03-security-config-secrets",
+  "version": "1.0.0",
+  "description": "Passo 3: gestao de seguranca de software (scan CI), config de ambiente remota via GUI e secrets age-style com separacao CODE/CONFIG/SECRETS/POLICY",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "passo03": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "start": "node dist/server/index.js serve --port 3000"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "pino": "^9.4.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.19.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.1"
+  }
+}

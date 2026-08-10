@@ -1,0 +1,18 @@
+[
+  {
+    "id": "GHSA-35jh-r3h4-6jhm",
+    "packageName": "lodash",
+    "affectedRanges": [">=4.0.0 <4.17.21"],
+    "severity": "high",
+    "title": "Prototype pollution in lodash",
+    "fixedIn": "4.17.21"
+  },
+  {
+    "id": "GHSA-p6mc-m468-83gw",
+    "packageName": "lodash",
+    "affectedRanges": ["4.17.20"],
+    "severity": "critical",
+    "title": "Command injection via lodash template",
+    "fixedIn": "4.17.21"
+  }
+]

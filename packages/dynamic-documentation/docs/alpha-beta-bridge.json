@@ -1,0 +1,15 @@
+{
+  "id": "alpha-beta-bridge",
+  "title": "Ponte Alpha ↔ Beta",
+  "requires": ["alpha", "beta"],
+  "body": "Quando Alpha e Beta estão instalados juntos, o pipeline de ingestão dispara jobs Beta automaticamente.",
+  "subsections": [
+    {
+      "id": "bridge-config",
+      "title": "Configuração da ponte",
+      "body": "Defina `ALPHA_TO_BETA_TOPIC` nos dois serviços.",
+      "service": "alpha",
+      "versions": ">=1.0.0"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "beta-ops",
+  "title": "Operação do Beta",
+  "service": "beta",
+  "body": "O serviço Beta orquestra jobs em lote.",
+  "subsections": [
+    {
+      "id": "beta-ops-schedule",
+      "title": "Agendamento",
+      "body": "Use `beta schedule` para definir cadências."
+    }
+  ]
+}

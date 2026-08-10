@@ -1,0 +1,14 @@
+---
+description: Invariantes de segurança — SEMPRE aplicar
+alwaysApply: true
+---
+# SEGURANÇA (invariantes não negociáveis)
+
+1. Toda leitura de recurso passa por PolicyEngine.authorize(). Sem exceção, mesmo em "código temporário".
+2. LLM e UI NUNCA executam SQL/write direto. Sempre via Action API.
+3. Secrets: NUNCA em código, teste, fixture, log ou commit. Usar o secrets manager do M0.
+4. Todo evento/log/audit carrega principal + trace_id.
+5. Actions externas exigem idempotencyKey + expectedObjectVersions.
+6. Inputs de connector/payload: tratar como hostis (validar, limitar tamanho, sanitizar).
+7. Queries: sempre parametrizadas (nunca concatenação de string com input).
+8. Se uma task parecer exigir quebrar um destes invariantes: PARE e proponha ADR.

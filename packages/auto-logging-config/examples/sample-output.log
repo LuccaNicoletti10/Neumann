@@ -1,0 +1,10 @@
+user alice logged in with code 200
+user bob logged in with code 403
+connecting to database at db.internal:5432
+startup complete in 1.25 seconds
+job job-42 finished in 873 ms
+job job-99 failed: timeout waiting for lock
+hello, alice!
+hello, carol!!
+this line matches no known logging pattern
+another completely unknown output line

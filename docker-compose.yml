@@ -1,0 +1,51 @@
+# BLOCO 1 / M0 — stack de fundação (Postgres outbox, Jaeger, Prometheus, Grafana)
+# Uso: pnpm dev:up   |   pnpm dev:down
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: neumann
+      POSTGRES_PASSWORD: neumann
+      POSTGRES_DB: neumann
+    ports:
+      - "5432:5432"
+    volumes:
+      - neumann_pg:/var/lib/postgresql/data
+      - ./infra/sql/0001_outbox.sql:/docker-entrypoint-initdb.d/0001_outbox.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neumann -d neumann"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318"   # OTLP HTTP
+      - "4317:4317"   # OTLP gRPC
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  neumann_pg:

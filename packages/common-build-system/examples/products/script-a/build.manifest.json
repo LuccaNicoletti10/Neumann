@@ -1,0 +1,12 @@
+{
+  "name": "script-a",
+  "version": "1.0.0",
+  "type": "script",
+  "deps": [],
+  "steps": [
+    { "name": "generate-message", "cmd": "node gen.js" },
+    { "name": "generate-meta", "cmd": "node gen-meta.js" },
+    { "name": "test-message", "cmd": "node test.js" }
+  ],
+  "outputs": ["out"]
+}

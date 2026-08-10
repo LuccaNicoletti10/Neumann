@@ -1,0 +1,29 @@
+{
+  "name": "periodic-search-manager",
+  "version": "1.0.0",
+  "description": "Implementação funcional independente de um gerenciador de buscas periódicas sobre múltiplas fontes de dados, com detecção de novos dados, notificação de usuários/times e armazenamento de resultados/alertas (inspirado funcionalmente na patente US 10,572,487 B1).",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "psm": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "start": "node dist/cli.js serve --port 3000"
+  },
+  "dependencies": {
+    "fastify": "^4.28.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.0.0"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "auto-logging-config",
+  "version": "1.0.0",
+  "description": "Configuracao automatica de infraestrutura de logging a partir de codigo-fonte (implementacao funcional independente baseada na US 11,681,606 B2)",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "cli": "node dist/cli.js",
+    "api": "node dist/server/index.js"
+  },
+  "dependencies": {
+    "fastify": "^4.28.0",
+    "pino": "^9.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

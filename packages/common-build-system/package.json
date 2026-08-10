@@ -1,0 +1,25 @@
+{
+  "name": "common-build-system",
+  "version": "1.0.0",
+  "description": "Common Build System para monorepo — implementação independente baseada no comportamento da patente US 10,001,982",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "cli": "node dist/cli.js",
+    "api": "node dist/server/index.js"
+  },
+  "dependencies": {
+    "fastify": "4.28.1",
+    "pino": "9.3.2",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "typescript": "5.5.4",
+    "vitest": "2.0.5"
+  }
+}

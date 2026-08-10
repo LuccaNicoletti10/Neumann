@@ -1,0 +1,11 @@
+---
+description: Regras de contratos — SEMPRE aplicar
+alwaysApply: true
+---
+# CONTRATOS SÃO INTANGÍVEIS
+
+1. Tudo em `packages/contracts/v1/` é IMUTÁVEL dentro de uma release.
+2. Se uma task parecer exigir mudança de contrato: PARE. Não edite. Proponha um ADR em `docs/adr/` e aguarde decisão.
+3. Implementações importam tipos SOMENTE de `@platform/contracts`. Nunca importe `internals/` de outro módulo.
+4. Todo contrato tem golden fixtures em `packages/testing`. Se o shape mudar, o CI quebra — isso é intencional.
+5. Prompts de implementação devem citar o contrato: "implemente X conforme packages/contracts/v1/<arquivo>.ts, sem alterar a interface".

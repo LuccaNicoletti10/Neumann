@@ -1,0 +1,21 @@
+---
+description: Arquitetura e invariantes — SEMPRE aplicar
+alwaysApply: true
+---
+# ARQUITETURA (ordem corrigida M0–M9)
+
+O loop do produto: SOURCE → CONNECT → VERSION → TRANSFORM → LINEAGE → RESOLVE → ONTOLOGY → FUNCTION → ACTION → WRITE-BACK → (fonte muda) → novo evento.
+
+## Invariantes (todo código deve respeitar)
+- Todo evento/log carrega `principal`, `trace_id`, `policy_tags`.
+- Versão de dataset commitada é IMUTÁVEL; alteração = nova versão com parentVersion.
+- Toda leitura de objeto passa por `PolicyEngine.authorize()`. Sem exceção.
+- LLM/UI NUNCA escrevem no banco. Sempre via Action (authorize→validate→tx→write-back→audit).
+- Connector NUNCA importa nada da Ontology.
+- Transformação é determinística: mesmo input → mesmo content_hash. Sem NOW() sem seed.
+
+## Stack fixa (não trocar sem ADR)
+TypeScript/Node 22 · pnpm+Turborepo · Postgres 16 · MinIO+Parquet · DuckDB · outbox+pg-boss · Fastify+Zod · better-auth · Next.js+shadcn · pino+OTel · Vitest+Testcontainers.
+
+## NÃO construir agora (cortes explícitos)
+Federation/pushdown, offline/replication, edge/SCADA, multi-tenant, microsserviços/Kafka/K8s, DSL própria, workflow engine genérico, agentes com write, ML de ER, mobile/geoespacial.

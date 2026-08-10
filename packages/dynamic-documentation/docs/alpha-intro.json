@@ -1,0 +1,19 @@
+{
+  "id": "alpha-intro",
+  "title": "Introdução ao Alpha",
+  "service": "alpha",
+  "body": "O serviço Alpha é o componente de ingestão da plataforma.",
+  "subsections": [
+    {
+      "id": "alpha-intro-quickstart",
+      "title": "Quickstart",
+      "body": "Suba o Alpha com `alpha start` e aponte para a fonte de dados."
+    },
+    {
+      "id": "alpha-intro-v2",
+      "title": "Recursos exclusivos do Alpha v2",
+      "body": "Na v2 o Alpha ganha CDC nativo e checkpoints incrementais.",
+      "versions": ">=2.0.0"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+---
+description: Processo de trabalho do agente — SEMPRE aplicar
+alwaysApply: true
+---
+# PROCESSO OBRIGATÓRIO (não pule etapas)
+
+1. ANTES de codar: leia README.md (fase atual) + a seção do marco atual em docs/referencia/TUDO_EM_UM.md.
+2. PROíBIDO gerar código sem plano aprovado: proponha as tasks da fase e ESPERE "aprovado".
+3. UMA task por vez. Escopo da task = o que está escrito nela. Se descobrir trabalho extra, registre em "PENDÊNCIAS" no fim da resposta — NÃO faça.
+4. Toda task termina com: testes escritos + `pnpm test` VERDE + commit com mensagem "task NNN: <descrição>".
+5. Se o teste não passa, NÃO termine a sessão dizendo "continuo depois". Corrija ou reverta.
+6. Se algo estiver ambíguo: PERGUNTE antes de assumir. Assunção errada = código lixo.
+7. PROIBIDO: criar arquivos fora da estrutura do monorepo, adicionar dependências sem justificar, comentários óbvios, TODO sem data/dono.
+8. Ao terminar cada fase (M0, M1...): atualize o checklist do README.md.

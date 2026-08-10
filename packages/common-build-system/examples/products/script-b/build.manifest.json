@@ -1,0 +1,11 @@
+{
+  "name": "script-b",
+  "version": "1.0.0",
+  "type": "script",
+  "deps": ["script-a"],
+  "steps": [
+    { "name": "generate", "cmd": "node gen.js" },
+    { "name": "test-output", "cmd": "node test.js" }
+  ],
+  "outputs": ["out"]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "passo03-iam-auth-monitoring",
+  "version": "1.0.0",
+  "description": "Nucleo de Identidade (IAM) do Passo 3 + monitoramento de tentativas de autenticacao (implementacao funcional independente inspirada na US 8,763,078 B1)",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "start": "tsx src/server/index.ts"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "pino": "^9.3.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.2",
+    "typescript": "5.5.4",
+    "vitest": "^2.0.5"
+  }
+}
