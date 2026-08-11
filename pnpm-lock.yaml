@@ -52,6 +52,21 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/cli-script-debugger:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/common-build-system:
     dependencies:
       fastify:
@@ -73,6 +88,62 @@ importers:
       vitest:
         specifier: 2.0.5
         version: 2.0.5(@types/node@20.14.15)
+
+  packages/connector-postgres:
+    dependencies:
+      connector-sdk:
+        specifier: workspace:*
+        version: link:../connector-sdk
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/connector-sdk:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/contracts:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
 
   packages/dynamic-documentation:
     dependencies:
@@ -105,6 +176,21 @@ importers:
         specifier: ^2.1.1
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/entity-assignment-debugger:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/event-bus:
     dependencies:
       pg:
@@ -127,7 +213,41 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/external-content-exporter:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/fair-query-scheduler:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/history-preserving-pipeline:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@types/node':
         specifier: 20.14.15
@@ -167,6 +287,21 @@ importers:
         specifier: ^2.0.5
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/inline-tag-sync:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/ldpc-transceiver:
     devDependencies:
       '@types/node':
@@ -181,6 +316,21 @@ importers:
       vitest:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.14.15)
+
+  packages/link-consistency-validator:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.14.15)
 
   packages/metrics-collection:
     dependencies:
@@ -272,6 +422,21 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/schema-registry:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/security-config-secrets:
     dependencies:
       fastify:
@@ -295,6 +460,36 @@ importers:
         version: 5.5.4
       vitest:
         specifier: ^2.1.1
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/tagging-interface-panel:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/validation-result-notifier:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.0
         version: 2.1.9(@types/node@20.14.15)
 
 packages:

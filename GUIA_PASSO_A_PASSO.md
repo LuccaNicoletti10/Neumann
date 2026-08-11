@@ -37,23 +37,26 @@
 ---
 
 ## BLOCO 2 — CONECTAR O MUNDO EXTERNO (dado entrando)
-<!-- BLOCO 1 fechado: Passos 1–4 + gates TM0.5/TM0.3 + compose (Jaeger/Grafana/Postgres) -->
+<!-- Passo 5: patentes US 8.930.897 / 9.984.152 / 10.572.529 / 11.100.154 em LCV/EAD/VRN/CSD; core Connector API + SDK em packages/contracts + packages/connector-sdk. -->
 
 ### PASSO 5 — Connector SDK (a interface que tudo usa)
+<!-- ENTREGUE: packages/contracts (Connector API) + packages/connector-sdk (helpers, CheckpointStore, runSnapshot/runIncremental, event factory). -->
 **Construir:** interface `discover / schema / snapshot / read(cursor) / checkpoint / health` + `capabilities[]`. Regra: connector NUNCA conhece a Ontology.
 **Patentes:**
 - **US 8,930,897** — serve para: transformar fontes externas para um object model associado a uma ontology e **validar o transformation script contra os parâmetros da ontology**.
 - **US 9,984,152 / US 10,572,529 / US 11,100,154** — servem para: continuações dessa integração fonte→object model (variantes e melhorias do mesmo mecanismo).
-**Gate:** nova fonte conecta via SDK sem alterar o core. *(tasks 009–010)*
+**Gate:** nova fonte conecta via SDK sem alterar o core. *(tasks 009–010)* — `pnpm csdk -- demo`
 
 ### PASSO 6 — Envelope canônico + primeiro connector (Postgres)
+<!-- ENTREGUE: CanonicalEvent congelado em packages/contracts; connector Postgres + gate T1.3 em packages/connector-postgres. Patentes de tagging (US 10.552.524 / 10.809.888 / 2014/0282121) em inline-tag-sync / external-content-exporter / tagging-interface-panel. -->
 **Construir:** `CanonicalEvent` (event_id, source_system, source_object, source_primary_key, schema_version, occurred_at, ingested_at, connector_id, checkpoint, principal, **policy_tags**, payload_hash, payload) + connector Postgres com snapshot + polling `updated_at` + checkpoint persistente.
 **Patentes:**
 - **US 10,809,888 / US20140282121** — servem para: tagging de conteúdo externo (daí nascem os `policy_tags` no envelope).
 - **US 10,552,524** — serve para: inline document tagging + sincronização de objetos (marcação no momento da ingestão).
-**Gate:** T1.3 — matar no evento 10.000, reiniciar, continuar do checkpoint certo. *(tasks 011–013)*
+**Gate:** T1.3 — matar no evento 10.000, reiniciar, continuar do checkpoint certo. *(tasks 011–013)* — `pnpm gate:t1.3` / `pnpm cpg -- gate-t1.3`
 
 ### PASSO 7 — Schema Registry + classificador de drift
+<!-- Entregue em packages/schema-registry (registry + drift T1.4 + discover US 9,330,120). -->
 **Construir:** registro de source/tabela/coluna/tipo/hints/keys/primeira e última observação + classificador: compatible / coercible / breaking / unknown.
 **Patentes:**
 - **US 9,330,120** — serve para: importação visual/assistida de dados — descoberta automática de schema de fontes novas.
@@ -70,6 +73,7 @@
 - **US 9,483,506** — serve para: continuação do history-preserving (variantes de armazenamento histórico).
 - **US 9,946,738** — serve para: pipeline versionado/universal (input_versions[] + transformation_id por versão).
 **Gate:** versão commitada rejeita mutação; duplicate commit → mesma versão. *(tasks 017–020)*
+<!-- entregue: packages/contracts (DatasetStore/CommitInput) + packages/history-preserving-pipeline (hpp/ds); storage memória/FS; MinIO/Postgres reais e Passos 9–10 ficam para depois -->
 
 ### PASSO 9 — Delta tree com compactação
 **Construir:** BASE + Δ1 + Δ2 + ... + Combined Δ1-10 + Combined Δ1-1000 (compactações intermediárias).

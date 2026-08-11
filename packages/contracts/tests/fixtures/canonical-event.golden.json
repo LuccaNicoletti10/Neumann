@@ -1,0 +1,21 @@
+{
+  "checkpoint": "snap:people:1",
+  "connector_id": "pg-crm",
+  "event_id": "evt-1",
+  "ingested_at": "2024-01-01T00:00:01.000Z",
+  "occurred_at": "2024-01-01T00:00:00.000Z",
+  "payload": {
+    "email": "ada@example.com",
+    "id": 1,
+    "name": "Ada Lovelace"
+  },
+  "payload_hash": "8c499ebf96ee14a8d457db7d40d88b60a79a6a6b845e4f8156c87df35449c22f",
+  "policy_tags": [
+    "pii.email"
+  ],
+  "principal": "sa:ingest",
+  "schema_version": "1",
+  "source_object": "people",
+  "source_primary_key": "1",
+  "source_system": "crm"
+}

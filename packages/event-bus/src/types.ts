@@ -11,6 +11,11 @@ export interface OutboxRecord {
   attempts: number;
 }
 
+/**
+ * Shape alinhado ao contrato congelado em `packages/contracts` (CanonicalEvent v1).
+ * Diferença deliberada: aqui `checkpoint` admite `null` (pré-checkpoint no outbox);
+ * no contrato congelado o campo é `string` (vazia quando ausente).
+ */
 export interface CanonicalEvent {
   event_id: string;
   source_system: string;
