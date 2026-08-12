@@ -4,47 +4,53 @@
 
 > **Postura do repo (kernel-first):** este guia constrói a **plataforma genérica** — contratos, connectors, memória imutável, transform, ontology, ER, actions.  
 > **Não** construir aplicação de domínio (indústria, produção, SCADA, “operador”) até o dono trazer a app + dados.  
-> Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).
+> Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).  
+> **Status:** Blocos **1–4 entregues** (Passos 1–14). Próximo = **Bloco 5 / Passo 15** (lineage).
 
 ---
 
-## BLOCO 1 — FUNDAÇÃO (fazer primeiro, tudo depende disso)
+## BLOCO 1 — FUNDAÇÃO (ENTREGUE)
+<!-- ENTREGUE: Passos 1–4. Pacotes: common-build-system, dynamic-documentation, auto-logging-config, metrics-collection, observability, iam-auth-monitoring, security-config-secrets, event-bus, fair-query-scheduler, bounded-fair-scheduler (+ ldpc/psm de suporte). Gate: pnpm gate:bloco1 -->
 
 ### PASSO 1 — Monorepo + build reproduzível
+<!-- ENTREGUE: packages/common-build-system + packages/dynamic-documentation; monorepo pnpm/turbo. -->
 **Construir:** pnpm workspaces + Turborepo + TypeScript strict; mesmo commit → mesmo hash de artefato.
 **Patentes desta etapa:**
 - **US 10,001,982** — serve para: build system único compartilhado por todos os serviços (grafo de dependências → build → testes → scan → artefato → manifest assinado).
 - **US 10,509,647** — serve para: documentação gerada dinamicamente do próprio código (OpenAPI dos schemas).
-**Gate:** 2 builds do mesmo commit → mesmo hash. *(tasks 001–002)*
+**Gate:** 2 builds do mesmo commit → mesmo hash. *(tasks 001–002)* — `pnpm cbs` / `pnpm docs`
 
 ### PASSO 2 — Observabilidade obrigatória
+<!-- ENTREGUE: packages/observability + auto-logging-config + metrics-collection; Jaeger/Grafana via docker-compose. -->
 **Construir:** pino + OpenTelemetry; todo log com `principal`, `trace_id`, versão, deployment_id, operação, duração, resultado; Jaeger + Grafana.
 **Patentes:**
 - **US 11,681,606** — serve para: configuração automática da infraestrutura de logging a partir do código.
 - **US 11,870,666** — serve para: coleta e classificação de métricas de uso de deployments.
-**Gate:** 100% das requisições com trace_id + actor + latência. *(task 015)*
+**Gate:** 100% das requisições com trace_id + actor + latência. *(task 015)* — `pnpm obs -- check`
 
 ### PASSO 3 — Identidade (IAM) + secrets
+<!-- ENTREGUE: packages/iam-auth-monitoring + packages/security-config-secrets. -->
 **Construir:** better-auth atrás de `IdentityProvider` interno; tabela `principals`; service accounts; SOPS+age para secrets; separação CODE/CONFIG/SECRETS/POLICY.
 **Patentes:**
 - **US 8,763,078** — serve para: monitoramento de tentativas de autenticação (métricas e alertas de auth).
 - **EP4660856A2/A3** — serve para: gestão de segurança de software (scan de dependências no CI).
 - **US20250298632A1** — serve para: configuração de ambientes computacionais separada do artefato.
-**Gate:** login funciona; todo request carrega principal. *(tasks 003–006)*
+**Gate:** login funciona; todo request carrega principal. *(tasks 003–006)* — `pnpm iam` / `pnpm sec`
 
 ### PASSO 4 — Event bus (outbox Postgres)
+<!-- ENTREGUE: packages/event-bus + fair-query-scheduler + bounded-fair-scheduler. -->
 **Construir:** tabela outbox transacional + LISTEN/NOTIFY + pg-boss (jobs com prioridade).
 **Patentes:**
 - **US 9,092,482 / US 9,715,526** — servem para: escalonamento justo de trabalho (fair scheduling entre jobs/tenants).
-**Gate:** evento commitado na transação é entregue ao consumer; restart não perde job. *(tasks 007–008)*
+**Gate:** evento commitado na transação é entregue ao consumer; restart não perde job. *(tasks 007–008)* — `pnpm bus -- gate` / `pnpm fqs` / `pnpm bfs`
 
 ---
 
-## BLOCO 2 — CONECTAR O MUNDO EXTERNO (dado entrando)
-<!-- Passo 5: patentes US 8.930.897 / 9.984.152 / 10.572.529 / 11.100.154 em LCV/EAD/VRN/CSD; core Connector API + SDK em packages/contracts + packages/connector-sdk. -->
+## BLOCO 2 — CONECTAR O MUNDO EXTERNO (ENTREGUE)
+<!-- ENTREGUE: Passos 5–7. Core: contracts, connector-sdk, connector-postgres, schema-registry. Patentes de suporte: LCV/EAD/VRN/CSD + ITS/ECE/TIP. -->
 
 ### PASSO 5 — Connector SDK (a interface que tudo usa)
-<!-- ENTREGUE: packages/contracts (Connector API) + packages/connector-sdk (helpers, CheckpointStore, runSnapshot/runIncremental, event factory). -->
+<!-- ENTREGUE: packages/contracts (Connector API) + packages/connector-sdk; patentes US 8.930.897 / 9.984.152 / 10.572.529 / 11.100.154 em LCV/EAD/VRN/CSD. -->
 **Construir:** interface `discover / schema / snapshot / read(cursor) / checkpoint / health` + `capabilities[]`. Regra: connector NUNCA conhece a Ontology.
 **Patentes:**
 - **US 8,930,897** — serve para: transformar fontes externas para um object model associado a uma ontology e **validar o transformation script contra os parâmetros da ontology**.
@@ -52,81 +58,90 @@
 **Gate:** nova fonte conecta via SDK sem alterar o core. *(tasks 009–010)* — `pnpm csdk -- demo`
 
 ### PASSO 6 — Envelope canônico + primeiro connector (Postgres)
-<!-- ENTREGUE: CanonicalEvent congelado em packages/contracts; connector Postgres + gate T1.3 em packages/connector-postgres. Patentes de tagging (US 10.552.524 / 10.809.888 / 2014/0282121) em inline-tag-sync / external-content-exporter / tagging-interface-panel. -->
+<!-- ENTREGUE: CanonicalEvent em contracts; connector-postgres (gate T1.3; SqlClient injetável/memória). Tagging: ITS/ECE/TIP. -->
 **Construir:** `CanonicalEvent` (event_id, source_system, source_object, source_primary_key, schema_version, occurred_at, ingested_at, connector_id, checkpoint, principal, **policy_tags**, payload_hash, payload) + connector Postgres com snapshot + polling `updated_at` + checkpoint persistente.
 **Patentes:**
 - **US 10,809,888 / US20140282121** — servem para: tagging de conteúdo externo (daí nascem os `policy_tags` no envelope).
 - **US 10,552,524** — serve para: inline document tagging + sincronização de objetos (marcação no momento da ingestão).
-**Gate:** T1.3 — matar no evento 10.000, reiniciar, continuar do checkpoint certo. *(tasks 011–013)* — `pnpm gate:t1.3` / `pnpm cpg -- gate-t1.3`
+**Gate:** T1.3 — matar no evento 10.000, reiniciar, continuar do checkpoint certo. *(tasks 011–013)* — `pnpm gate:t1.3`  
+**Nota kernel:** adapter `pg` real fica para quando houver fonte Postgres de app; o gate usa SqlClient injetável.
 
 ### PASSO 7 — Schema Registry + classificador de drift
-<!-- Entregue em packages/schema-registry (registry + drift T1.4 + discover US 9,330,120). -->
+<!-- ENTREGUE: packages/schema-registry (registry + drift T1.4 + discover US 9,330,120). -->
 **Construir:** registro de source/tabela/coluna/tipo/hints/keys/primeira e última observação + classificador: compatible / coercible / breaking / unknown.
 **Patentes:**
 - **US 9,330,120** — serve para: importação visual/assistida de dados — descoberta automática de schema de fontes novas.
-**Gate:** T1.4 — adicionar/remover/alterar coluna → classificação correta e resposta adequada. *(tasks 014, 016)*
+**Gate:** T1.4 — adicionar/remover/alterar coluna → classificação correta e resposta adequada. *(tasks 014, 016)* — `pnpm sr -- demo`
 
 ---
 
-## BLOCO 3 — MEMÓRIA IMUTÁVEL (o cofre versionado)
+## BLOCO 3 — MEMÓRIA IMUTÁVEL (ENTREGUE)
+<!-- ENTREGUE: Passos 8–10. Pacotes: history-preserving-pipeline, delta-storage, multi-row-transactions (+ tipos em contracts). Storage default: memória/FS. MinIO/Postgres reais = upgrade futuro, não bloqueia o gate. -->
 
 ### PASSO 8 — Dataset Store imutável
-**Construir:** Dataset → DatasetVersion 1..N; versão commitada é imutável; alteração = nova versão com parent_version; Parquet no MinIO + manifest no Postgres + content-hash sha256; campos reservados `policy_id` e `lineage_ref`.
+<!-- ENTREGUE: contracts DatasetStore/CommitInput + packages/history-preserving-pipeline (hpp/ds). -->
+**Construir:** Dataset → DatasetVersion 1..N; versão commitada é imutável; alteração = nova versão com parent_version; content-hash sha256; campos reservados `policy_id` e `lineage_ref`. (Parquet/MinIO + manifest Postgres = caminho de produção futuro; kernel valida em memória/FS.)
 **Patentes:**
 - **US 9,229,952** — serve para: pipeline que preserva histórico (cada estado reconstruível).
 - **US 9,483,506** — serve para: continuação do history-preserving (variantes de armazenamento histórico).
 - **US 9,946,738** — serve para: pipeline versionado/universal (input_versions[] + transformation_id por versão).
-**Gate:** versão commitada rejeita mutação; duplicate commit → mesma versão. *(tasks 017–020)*
-<!-- entregue: packages/contracts (DatasetStore/CommitInput) + packages/history-preserving-pipeline (hpp/ds); storage memória/FS; MinIO/Postgres reais e Passos 9–10 ficam para depois -->
+**Gate:** versão commitada rejeita mutação; duplicate commit → mesma versão. *(tasks 017–020)* — `pnpm hpp -- demo`
 
 ### PASSO 9 — Delta tree com compactação
+<!-- ENTREGUE: contracts delta-tree + packages/delta-storage. -->
 **Construir:** BASE + Δ1 + Δ2 + ... + Combined Δ1-10 + Combined Δ1-1000 (compactações intermediárias).
 **Patentes:**
 - **US 11,397,717** — serve para: armazenar deltas individuais E deltas combinados/hierárquicos para reconstruir estados eficientemente.
 - **US 9,367,463 / US 9,652,291** — servem para: zero-copy/caching — leitura sem copiar dados desnecessariamente.
-**Gate:** reconstrução byte-for-byte de qualquer versão; compactação não altera resultado. *(tasks 021–023)*
-<!-- entregue: packages/contracts (delta-tree types) + packages/delta-storage (fanout combined + zero-copy cache); Token Ring/B+Tree/ACID do paste Java fora do escopo -->
+**Gate:** reconstrução byte-for-byte de qualquer versão; compactação não altera resultado. *(tasks 021–023)* — `pnpm delta -- demo`
 
 ### PASSO 10 — Time travel, diff, transações, replay
+<!-- ENTREGUE: contracts TimeTravelStore + packages/multi-row-transactions (mrtx/tt). -->
 **Construir:** `snapshot(dataset, timestamp)` determinístico, `diff(v1,v2)`, commit atômico multi-linha, `replay()`.
 **Patentes:**
 - **US 8,504,542** — serve para: transações multi-linha (commit atômico de várias linhas).
 - **US 9,619,507** — serve para: protocolo de leitura transacional (leitura consistente durante commits).
-**Gate:** "estado do dataset X às 14:37:22 de ontem" → resposta determinística; crash entre write e commit não corrompe; leitura durante commit é consistente. *(tasks 024–026)*
-<!-- entregue: packages/contracts (TimeTravelStore) + packages/multi-row-transactions (mrtx/tt); MVCC + lease locks + snapshot isolation em memória -->
+**Gate:** "estado do dataset X às 14:37:22 de ontem" → resposta determinística; crash entre write e commit não corrompe; leitura durante commit é consistente. *(tasks 024–026)* — `pnpm mrtx -- demo`
 
 ---
 
-## BLOCO 4 — TRANSFORMAÇÃO (raw → informação confiável)
+## BLOCO 4 — TRANSFORMAÇÃO (ENTREGUE)
+<!-- ENTREGUE: Passos 11–14. Pacotes: transformation-runner, incremental-pipeline-scheduler, data-quality, execution-sandbox. -->
 
 ### PASSO 11 — Transformation runner (SQL versionado, DuckDB)
+<!-- ENTREGUE: contracts TransformProgram + packages/transformation-runner (xform/tr). Executor kernel = memória; SQL versionado dialeto DuckDB; binary DuckDB = upgrade. privateTable declarado no DSL (execução multi-programa = Passo 12). Sem GUI/ontology (Bloco 6). -->
 **Construir:** transformações como SQL versionado executado no DuckDB sobre Parquet/Postgres; mesmo input → mesmo content-hash (sem NOW() sem seed).
 **Patentes:**
 - **US 9,576,015 / US 9,965,534** — servem para: DSL de transformações (filter/join/derive/validate/output como pipeline declarativo).
 - **US20170068698A1** — serve para: aplicação relacionada à DSL.
 - **US 9,922,108 / US 10,776,382** — servem para: mecanismos de transformação de dados.
-**Gate:** determinismo comprovado por hash. *(tasks 027–030)*
+**Gate:** determinismo comprovado por hash. *(tasks 027–030)* — `pnpm xform -- demo`
 
 ### PASSO 12 — DAG + scheduler incremental
+<!-- ENTREGUE: contracts PipelineEdge/BuildJobSpec + packages/incremental-pipeline-scheduler (ips/dagsched). Sem SQL UI / workers Spark / RMI. -->
 **Construir:** grafo de dependências derivado de inputs/outputs declarados; detecção de ciclo; novo commit → enfileira SÓ descendentes afetados.
 **Patentes:**
 - **US 11,314,698** — serve para: determinar dependências entre datasets e **iniciar builds automaticamente quando os inputs necessários ficam disponíveis**, sem esperar datasets irrelevantes.
-**Gate:** mudar 1 input → reconstrói exata e somente os outputs dependentes. *(tasks 031–033)*
+**Gate:** mudar 1 input → reconstrói exata e somente os outputs dependentes. *(tasks 031–033)* — `pnpm ips -- demo`
 
 ### PASSO 13 — Data quality + regras + quarentena
+<!-- ENTREGUE: contracts QualityRule/QuarantineRecord/CompositeDatasetDef + packages/data-quality (dq). Sem NLP query UI; US11314698 = Passo 12. -->
 **Construir:** completeness, uniqueness, validity, consistency, freshness, drift por dataset; regras (condition/severity/action/scope/version/owner); linhas violadas → quarentena com motivo.
 **Patentes:**
 - **US 11,429,572** — serve para: limpeza de dados baseada em regras (rules-based cleaning).
 - **US 9,542,446 / US 10,678,860** — servem para: datasets compostos (joins declarados como inputs múltiplos de uma transformação).
-**Gate:** qualidade calculada pós-run; violação vai para quarentena com motivo. *(tasks 034–035)*
+**Gate:** qualidade calculada pós-run; violação vai para quarentena com motivo. *(tasks 034–035)* — `pnpm dq -- demo`
 
 ### PASSO 14 — Sandbox de execução
+<!-- ENTREGUE: contracts SandboxPolicy/AuditEvent + packages/execution-sandbox (sandbox/sbx). Host-API sandbox (FS/net/CPU); não isolamento OS/VM. Sem Swing IDE / template UI. -->
 **Construir:** CPU/memória/timeout limitados, filesystem e rede restritos, identidade registrada, audit de execução.
 **Patentes:**
 - **US20250265045A1** — serve para: execução de código dentro de pipeline de processamento de dados.
-**Gate:** tentativas de escape bloqueadas. *(task 036)*
+**Gate:** tentativas de escape bloqueadas. *(task 036)* — `pnpm sandbox -- demo`
 
 ---
+
+## ▶ PRÓXIMO — BLOCO 5 / PASSO 15
 
 ## BLOCO 5 — LINEAGE + SEGURANÇA (a espinha dorsal da confiança)
 
@@ -390,11 +405,11 @@
 ## RESUMO DA ORDEM (colar na parede)
 
 ```
-BLOCO 1  Fundação (build, logs, IAM, event bus)        → passos 1–4
-BLOCO 2  Connect (SDK, envelope, schema registry)      → passos 5–7
-BLOCO 3  Store imutável (versões, deltas, time travel) → passos 8–10
-BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14
-BLOCO 5  Lineage + Policy + Audit                      → passos 15–16
+BLOCO 1  Fundação (build, logs, IAM, event bus)        → passos 1–4   ✓ ENTREGUE
+BLOCO 2  Connect (SDK, envelope, schema registry)      → passos 5–7   ✓ ENTREGUE
+BLOCO 3  Store imutável (versões, deltas, time travel) → passos 8–10  ✓ ENTREGUE
+BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14  ✓ ENTREGUE
+BLOCO 5  Lineage + Policy + Audit                      → passos 15–16  ◀ PRÓXIMO
 BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19
 BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22
 BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ★ CICLO DA PLATAFORMA

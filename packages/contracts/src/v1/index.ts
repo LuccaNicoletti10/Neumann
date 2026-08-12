@@ -57,3 +57,46 @@ export {
   type TimeTravelStore,
   buildGoldenSnapshotRequest,
 } from './time-travel.js';
+
+export {
+  type IncrementalStatus,
+  type IncrementalComputability,
+  type TransformOpKind,
+  type TransformStep,
+  type TransformProgram,
+  type TransformRunResult,
+  buildGoldenTransformStep,
+} from './transform.js';
+
+export {
+  type DatasetKind,
+  type BuildStatus,
+  type DependencyKind,
+  type PipelineDatasetDef,
+  type PipelineEdge,
+  type BuildJobSpec,
+  type ScheduleTickResult,
+  buildGoldenPipelineEdge,
+} from './pipeline-dag.js';
+
+export {
+  type QualityDimension,
+  type RuleSeverity,
+  type RuleActionKind,
+  type QualityRule,
+  type RuleCondition,
+  type QualityScore,
+  type QualityReport,
+  type QuarantineRecord,
+  type CompositeDatasetDef,
+  buildGoldenQualityRule,
+} from './data-quality.js';
+
+export {
+  type SandboxDenyReason,
+  type SandboxPolicy,
+  type SandboxIdentity,
+  type SandboxAuditEvent,
+  type SandboxRunResult,
+  buildGoldenSandboxPolicy,
+} from './sandbox.js';

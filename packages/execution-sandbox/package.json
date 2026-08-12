@@ -1,7 +1,7 @@
 {
-  "name": "contracts",
+  "name": "execution-sandbox",
   "version": "1.0.0",
-  "description": "Contratos congelados v1 — Blocos 2–4 (CanonicalEvent, Connector, DatasetStore, Delta, TimeTravel, Transform, PipelineDag, Quality, Sandbox).",
+  "description": "Sandbox de execução: CPU/memória/timeout, FS/rede restritos, identidade + audit (US20250265045A1).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,22 +9,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./v1": {
-      "types": "./dist/v1/index.d.ts",
-      "import": "./dist/v1/index.js"
     }
   },
   "bin": {
-    "contracts": "./dist/cli.js"
+    "execution-sandbox": "./dist/cli.js",
+    "sandbox": "./dist/cli.js",
+    "sbx": "./dist/cli.js"
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "engines": {
-    "node": ">=20"
-  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -34,6 +27,9 @@
     "start": "node dist/cli.js"
   },
   "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "20.14.15",
     "tsx": "^4.16.0",

@@ -1,131 +1,94 @@
 # NEUMANN — kernel da plataforma (monorepo)
 
 **Postura:** construir as **bases** (contratos, ingestão, memória imutável, transform, ontology, actions).  
-**Não** construir aplicação de domínio (indústria, produção, SCADA, “operador”) até você trazer a app + dados.  
+**Não** construir aplicação de domínio até você trazer a app + dados.  
 Spec ativa: [`GUIA_PASSO_A_PASSO.md`](GUIA_PASSO_A_PASSO.md) · código em `packages/` · legado em `_archive/legacy-docs/`.
 
-| Pacote | Patente / papel |
-|---|---|
-| `packages/common-build-system` | US 10,001,982 — build reproduzível |
-| `packages/dynamic-documentation` | US 10,509,647 — docs dinâmicas |
-| `packages/auto-logging-config` | US 11,681,606 — logging a partir do código |
-| `packages/metrics-collection` | US 11,870,666 — métricas de uso |
-| `packages/iam-auth-monitoring` | US 8,763,078 — IAM + monitoramento de auth |
-| `packages/security-config-secrets` | EP4660856 + US20250298632A1 — scan CI, config remota, secrets age |
-| `packages/ldpc-transceiver` | CA3111603 — TX/RX LDPC + QAM (64 testes) |
-| `packages/periodic-search-manager` | US 10,572,487 B1 — buscas periódicas multi-fonte (40 testes) |
-| `packages/fair-query-scheduler` | US 9,092,482 B2 — fair scheduling (Passo 4) |
-| `packages/bounded-fair-scheduler` | US 9,715,526 B2 — fair scheduling bounded (Passo 4) |
-| `packages/observability` | Passo 2 — pino + OTel; gate TM0.5 (100% requests) |
-| `packages/event-bus` | Passo 4 — outbox + NOTIFY + jobs; gate TM0.3 |
-| `packages/link-consistency-validator` | US 8,930,897 — links script↔ontologia (49 testes) |
-| `packages/entity-assignment-debugger` | US 9,984,152 — atribuição entidade (56 testes) |
-| `packages/validation-result-notifier` | US 10,572,529 — results + canais (69 testes) |
-| `packages/cli-script-debugger` | US 11,100,154 — debug via CLI/config (80 testes) |
-| `packages/inline-tag-sync` | US 10,552,524 — tags in-line + sync documento↔objeto (76 testes) |
-| `packages/external-content-exporter` | US 10,809,888 — bookmarklet + export conteúdo externo (85 testes) |
-| `packages/tagging-interface-panel` | US 2014/0282121 — painel tagging + ontologia/parsers (109 testes) |
-| `packages/schema-registry` | PASSO 7 — registry + drift T1.4 + discover US 9,330,120 |
-| `packages/contracts` | BLOCO 2–3 — CanonicalEvent + Connector + DatasetStore (v1) |
-| `packages/connector-sdk` | PASSO 5 — helpers, CheckpointStore, runSnapshot/runIncremental |
-| `packages/connector-postgres` | PASSO 6 — Postgres snapshot + CDC + gate T1.3 |
-| `packages/history-preserving-pipeline` | PASSO 8 — Dataset Store imutável + build catalog (US 9,229,952 / 9,483,506 / 9,946,738) |
-| `packages/delta-storage` | PASSO 9 — Delta tree + combined + zero-copy (US 11,397,717 / 9,367,463 / 9,652,291) |
-| `packages/multi-row-transactions` | PASSO 10 — Multi-row tx + snapshot isolation + time travel (US 8,504,542 / 9,619,507) |
+## Status
+
+| Bloco | Passos | Status |
+|---|---|---|
+| 1 Fundação | 1–4 | **ENTREGUE** |
+| 2 Connect | 5–7 | **ENTREGUE** |
+| 3 Memória imutável | 8–10 | **ENTREGUE** |
+| 4 Transform | 11–14 | **ENTREGUE** |
+| 5 Lineage + segurança | 15+ | próximo |
+
+**Notas kernel (não bloqueiam o gate):** storage Passo 8 em memória/FS (MinIO/Postgres = upgrade); connector Postgres com SqlClient injetável; Passo 11 executor = memória + SQL versionado (DuckDB nativo = upgrade); Passo 14 sandbox = host API guard (não isolamento OS/VM).
 
 ```bash
 pnpm install && pnpm build && pnpm test
 pnpm gate:bloco1          # TM0.5 + TM0.3
+pnpm gate:t1.3            # connector Postgres checkpoint
 pnpm dev:up               # Postgres + Jaeger + Prometheus + Grafana
 ```
 
-## BLOCO 1 — status
+## Pacotes (Blocos 1–4)
 
-| Passo | Gate | Como validar |
-|---|---|---|
-| 1 Build | 2 builds → mesmo hash | `pnpm --filter common-build-system test` |
-| 2 Observabilidade | 100% requests com trace_id+actor+latência | `pnpm obs -- check` |
-| 3 IAM + secrets | login + principal | `pnpm iam` / `pnpm sec` |
-| 4 Event bus + fair sched | outbox entrega; restart não perde job | `pnpm bus -- gate` + `pnpm fqs` / `pnpm bfs` |
+| Pacote | Papel |
+|---|---|
+| `common-build-system` / `dynamic-documentation` | Passo 1 |
+| `observability` / `auto-logging-config` / `metrics-collection` | Passo 2 |
+| `iam-auth-monitoring` / `security-config-secrets` | Passo 3 |
+| `event-bus` / `fair-query-scheduler` / `bounded-fair-scheduler` | Passo 4 |
+| `contracts` / `connector-sdk` | Passo 5 |
+| `connector-postgres` + ITS/ECE/TIP | Passo 6 |
+| `schema-registry` | Passo 7 |
+| `history-preserving-pipeline` | Passo 8 |
+| `delta-storage` | Passo 9 |
+| `multi-row-transactions` | Passo 10 |
+| `transformation-runner` | Passo 11 |
+| `incremental-pipeline-scheduler` | Passo 12 |
+| `data-quality` | Passo 13 |
+| `execution-sandbox` | Passo 14 |
+| LCV / EAD / VRN / CSD | patentes de suporte Passo 5 |
+| `ldpc-transceiver` / `periodic-search-manager` | pacotes de suporte Bloco 1 |
 
-## PASSO 3 — Gate IAM
+## Validar Blocos 1–4
 
 ```bash
+# Bloco 1
+pnpm --filter common-build-system test
+pnpm obs -- check
+pnpm iam -- help
+pnpm sec -- help
+pnpm bus -- gate
+pnpm fqs -- demo && pnpm bfs -- demo
+
+# Bloco 2
+pnpm contracts -- demo
+pnpm csdk -- demo
+pnpm gate:t1.3
+pnpm sr -- demo
+pnpm lcv -- demo && pnpm ead -- demo && pnpm vrn -- demo && pnpm csd -- demo
+pnpm its -- demo && pnpm ece -- demo && pnpm tip -- demo
+
+# Bloco 3
+pnpm hpp -- demo
+pnpm delta -- demo
+pnpm mrtx -- demo
+
+# Bloco 4
+pnpm xform -- demo
+pnpm ips -- demo
+pnpm dq -- demo
+pnpm sandbox -- demo
+```
+
+## Detalhes opcionais (IAM / secrets / suporte)
+
+```bash
+# IAM
 cd packages/iam-auth-monitoring
 pnpm cli register --email admin@example.com --password secret123 --admin
 pnpm cli serve --port 3000
-# POST /login → GET /me com Bearer (todo request carrega principal)
-```
 
-## PASSO 3 — Gate segurança / secrets
-
-```bash
+# Secrets
 cd packages/security-config-secrets
 pnpm cli scan-deps --lockfile fixtures/sample-lock.json --db advisories/sample.json --fail-on high
 pnpm cli secrets keygen
-AGE_SECRET_KEY=... pnpm cli secrets set prod DB_PASSWORD --value s3cret
-pnpm cli guard fixtures/sample-repo
-```
 
-## ldpc-transceiver (CA3111603)
-
-```bash
+# LDPC / PSM
 pnpm --filter ldpc-transceiver test
-pnpm ldpc -- simulate --snr 12 --mod 16QAM --preset qc648 --frames 5
-pnpm ldpc -- serve --port 8080
-```
-
-## periodic-search-manager (US 10,572,487)
-
-```bash
 pnpm --filter periodic-search-manager test
-pnpm psm -- serve --port 3000
-```
-
-## PASSO 4 — Fair scheduling
-
-```bash
-pnpm --filter fair-query-scheduler test
-pnpm fqs -- demo
-pnpm --filter bounded-fair-scheduler test
-pnpm bfs -- demo
-```
-
-## PASSO 5 — Connector SDK + transformation/ontologia (BLOCO 2)
-
-```bash
-pnpm --filter contracts test
-pnpm contracts -- demo
-pnpm --filter connector-sdk test
-pnpm csdk -- demo
-pnpm --filter link-consistency-validator test          # 49
-pnpm lcv -- demo
-pnpm --filter entity-assignment-debugger test          # 56
-pnpm ead -- demo
-pnpm --filter validation-result-notifier test          # 69
-pnpm vrn -- demo
-pnpm --filter cli-script-debugger test                 # 80
-pnpm csd -- demo
-```
-
-## PASSO 6 — Envelope canônico + Postgres + tagging
-
-```bash
-pnpm --filter connector-postgres test                  # inclui gate T1.3
-pnpm cpg -- demo
-pnpm gate:t1.3                                         # abort @ 10k, restart, 15k unique
-pnpm --filter inline-tag-sync test                     # 76
-pnpm its -- demo
-pnpm --filter external-content-exporter test           # 85
-pnpm ece -- demo
-pnpm --filter tagging-interface-panel test             # 109
-pnpm tip -- demo
-pnpm --filter schema-registry test                     # PASSO 7 / T1.4
-pnpm sr -- demo
-pnpm --filter history-preserving-pipeline test         # PASSO 8
-pnpm hpp -- demo
-pnpm --filter delta-storage test                       # PASSO 9
-pnpm delta -- demo
-pnpm --filter multi-row-transactions test              # PASSO 10
-pnpm mrtx -- demo
 ```

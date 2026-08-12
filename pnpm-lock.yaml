@@ -145,6 +145,25 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/data-quality:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/delta-storage:
     dependencies:
       contracts:
@@ -232,6 +251,25 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/execution-sandbox:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/external-content-exporter:
     devDependencies:
       '@types/node':
@@ -304,6 +342,25 @@ importers:
         version: 5.5.4
       vitest:
         specifier: ^2.0.5
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/incremental-pipeline-scheduler:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
   packages/inline-tag-sync:
@@ -501,6 +558,25 @@ importers:
         version: 2.1.9(@types/node@20.14.15)
 
   packages/tagging-interface-panel:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/transformation-runner:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@types/node':
         specifier: 20.14.15

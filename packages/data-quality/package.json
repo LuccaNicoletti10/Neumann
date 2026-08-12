@@ -1,7 +1,7 @@
 {
-  "name": "contracts",
+  "name": "data-quality",
   "version": "1.0.0",
-  "description": "Contratos congelados v1 — Blocos 2–4 (CanonicalEvent, Connector, DatasetStore, Delta, TimeTravel, Transform, PipelineDag, Quality, Sandbox).",
+  "description": "Quality metrics + rules-based cleaning + quarantine + composite joins (US 11,429,572 / US 9,542,446 / US 10,678,860).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,22 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./v1": {
-      "types": "./dist/v1/index.d.ts",
-      "import": "./dist/v1/index.js"
     }
   },
   "bin": {
-    "contracts": "./dist/cli.js"
+    "data-quality": "./dist/cli.js",
+    "dq": "./dist/cli.js"
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "engines": {
-    "node": ">=20"
-  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -34,6 +26,9 @@
     "start": "node dist/cli.js"
   },
   "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "20.14.15",
     "tsx": "^4.16.0",

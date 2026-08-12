@@ -1,7 +1,7 @@
 {
-  "name": "contracts",
+  "name": "transformation-runner",
   "version": "1.0.0",
-  "description": "Contratos congelados v1 — Blocos 2–4 (CanonicalEvent, Connector, DatasetStore, Delta, TimeTravel, Transform, PipelineDag, Quality, Sandbox).",
+  "description": "DSL de transformações versionadas + execução determinística (US 9,576,015 / 9,965,534 / US20170068698A1 / 9,922,108 / 10,776,382).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,14 +9,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./v1": {
-      "types": "./dist/v1/index.d.ts",
-      "import": "./dist/v1/index.js"
     }
   },
   "bin": {
-    "contracts": "./dist/cli.js"
+    "transformation-runner": "./dist/cli.js",
+    "xform": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -34,6 +31,9 @@
     "start": "node dist/cli.js"
   },
   "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "20.14.15",
     "tsx": "^4.16.0",
