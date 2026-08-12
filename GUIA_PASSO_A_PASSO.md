@@ -2,10 +2,11 @@
 ## Cada passo diz: O QUE construir → QUAIS patentes servem para essa etapa → PARA QUE cada uma serve → GATE (como saber que terminou)
 ## Uso com o Cursor: "Execute o PASSO N do GUIA_PASSO_A_PASSO.md"
 
-> **Postura do repo (kernel-first):** este guia constrói a **plataforma genérica** — contratos, connectors, memória imutável, transform, ontology, ER, actions.  
-> **Não** construir aplicação de domínio (indústria, produção, SCADA, “operador”) até o dono trazer a app + dados.  
+> **Postura do repo (dataset-first / kernel genérico):** provar a plataforma com **qualquer dataset** (vendas, contábil, máquina, CSV, Postgres — o domínio não importa).  
+> Fluxo: ingestão → memória imutável → transform → qualidade → lineage/policy → ontologia → …  
+> **Não** é app de fábrica, planejamento, forecasting nem vertical de negócio. Especialização na empresa só **depois** dos gates em datasets de teste, e sempre como app em cima do kernel.  
 > Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).  
-> **Status:** Blocos **1–4 entregues** (Passos 1–14). Próximo = **Bloco 5 / Passo 15** (lineage).
+> **Status:** Blocos **1–6 entregues** + **Passo 20** (ER). Próximo = **Passo 21** (auditoria + canonical).
 
 ---
 
@@ -80,7 +81,7 @@
 
 ### PASSO 8 — Dataset Store imutável
 <!-- ENTREGUE: contracts DatasetStore/CommitInput + packages/history-preserving-pipeline (hpp/ds). -->
-**Construir:** Dataset → DatasetVersion 1..N; versão commitada é imutável; alteração = nova versão com parent_version; content-hash sha256; campos reservados `policy_id` e `lineage_ref`. (Parquet/MinIO + manifest Postgres = caminho de produção futuro; kernel valida em memória/FS.)
+**Construir:** Dataset → DatasetVersion 1..N; versão commitada é imutável; alteração = nova versão com parent_version; content-hash sha256; campos reservados `policy_id` e `lineage_ref`. (Parquet/MinIO + manifest Postgres = upgrade de storage; kernel valida em memória/FS.)
 **Patentes:**
 - **US 9,229,952** — serve para: pipeline que preserva histórico (cada estado reconstruível).
 - **US 9,483,506** — serve para: continuação do history-preserving (variantes de armazenamento histórico).
@@ -141,11 +142,11 @@
 
 ---
 
-## ▶ PRÓXIMO — BLOCO 5 / PASSO 15
-
-## BLOCO 5 — LINEAGE + SEGURANÇA (a espinha dorsal da confiança)
+## BLOCO 5 — LINEAGE + SEGURANÇA (ENTREGUE)
+<!-- ENTREGUE: Passos 15–16. Pacotes: data-lineage, policy-engine (+ contracts lineage/policy/audit). -->
 
 ### PASSO 15 — Lineage por versão (grafo dataset→transform→dataset)
+<!-- ENTREGUE: contracts lineage + packages/data-lineage (lineage/dl). Grafo versão=nó / derivação=aresta; upstream/downstream; invalid+propagate; completude. Sem GUI / EPID (Passo 16) / lineage colunar (Passo 27). -->
 **Construir:** toda pipeline_run grava `input_versions[] → output_version` + hash + duration; `upstream()/downstream()`; completude 100%.
 **Patentes:**
 - **US 9,996,595** — serve para: proveniência total como **grafo onde datasets/versions são nós e derivações são arestas**.
@@ -153,21 +154,25 @@
 - **US20140114907** — serve para: tracking de proveniência.
 - **US20150012477** — serve para: data lineage.
 - **US 10,027,551** — serve para: lineage (continuação da família).
-**Gate:** 100% dos outputs produtivos apontam para seus inputs. *(tasks 037–039)*
+**Gate:** 100% dos outputs produtivos apontam para seus inputs. *(tasks 037–039)* — `pnpm lineage -- demo`
 
 ### PASSO 16 — Policy engine `authorize()` + audit hash-chained
+<!-- ENTREGUE: contracts policy/audit + packages/policy-engine (policy/authz). EPID node graph; authorize allow/deny/partial; secured read sem count; create admissions; audit hash chain + redact + tamper. Sem pods/K8s/ingress. -->
 **Construir:** `authorize(principal, resource, operation, context) → allow/deny/partial`; enforcement em TODA leitura; audit com hash chain (cada entrada referencia o hash da anterior); security matrix em toda API (allowed/denied/partial).
 **Patentes:**
 - **US 10,432,469** — serve para: controle de acesso baseado em nós (permissão granular por recurso).
 - **US 10,397,229** — serve para: permissões de criação de recursos.
 - **US20150188715** — serve para: **audit log verificável e redigível** (detectar adulteração).
-**Gate:** usuário sem permissão não vê objeto NEM o count; adulteração do audit é detectada. *(tasks 040–045)*
+**Gate:** usuário sem permissão não vê objeto NEM o count; adulteração do audit é detectada. *(tasks 040–045)* — `pnpm policy -- demo`
 
 ---
 
-## BLOCO 6 — ONTOLOGY (o coração: dados físicos → mundo semântico)
+## ▶ PRÓXIMO — PASSO 21
+
+## BLOCO 6 — ONTOLOGY (ENTREGUE)
 
 ### PASSO 17 — Ontology Registry (ObjectType/PropertyType/LinkType versionados)
+<!-- ENTREGUE: contracts ontology + packages/ontology-registry (onto). Versionamento imutável; SEMÂNTICA×CINÉTICA; rollback. Sem mapping/projetor (Passo 18) / GUI / domínio financeiro. -->
 **Construir:** registry com versionamento (mudança = nova ontology_version, nunca update in-place); separação SEMÂNTICA (o que existe) × CINÉTICA (o que pode acontecer).
 **Patentes:**
 - **US 7,962,495** — serve para: ontologia dinâmica (fundação: camada lógica separada dos dados físicos).
@@ -178,9 +183,10 @@
 - **US 10,872,067** — serve para: dynamic ontology (continuação).
 - **US20100070426** — serve para: modelagem de objetos (Object/Property types).
 - **US 9,229,966** — serve para: object modeling (continuação).
-**Gate:** criar ObjectType, versionar, rollback de ontology. *(tasks 046–049)*
+**Gate:** criar ObjectType, versionar, rollback de ontology. *(tasks 046–049)* — `pnpm onto -- demo`
 
 ### PASSO 18 — Mapping versionado + Projetor + Object API
+<!-- ENTREGUE: contracts object-platform + packages/object-platform (obj). Mapping versionado; projetor→objects/history/provenance; Object API via authorize(). Sem GUI / multi-DB / NVK NLP / vector-clock completo. -->
 **Construir:** mapping dataset→ObjectType (JSON declarativo, versionado); projetor (versão de dataset → upsert em objects + object_history append-only + provenance); Object API (`getObject(at?)/queryObjects/traverseLinks/getHistory/getProvenance`) — toda leitura via authorize().
 **Patentes:**
 - **US 8,930,897** — serve para: reorganizar fontes no object model; mapear propriedades físicas → propriedades de objetos; definir relacionamentos entre objetos (a mesma patente do Passo 5 — ela liga connector à ontology).
@@ -188,22 +194,24 @@
 - **EP3425537A1** — serve para: object platform (família europeia).
 - **US 11,816,156** — serve para: índice/query sobre ontology.
 - **US 12,561,339** — serve para: interface de query unificada sobre múltiplos bancos baseados em ontology.
-**Gate:** operação funciona só pelas APIs, sem UI. *(tasks 050–055)*
+**Gate:** operação funciona só pelas APIs, sem UI. *(tasks 050–055)* — `pnpm obj -- demo`
 
 ### PASSO 19 — Links + Knowledge Graph
+<!-- ENTREGUE: contracts knowledge-graph + packages/knowledge-graph (kg). Multi-hop + integrity + migration + remote refs + CTE SQL. Sem GUI/LLM/TypeDB/domínio vertical. -->
 **Construir:** links tipados materializados (FK cruzada entre fontes); `traverseLinks` com Postgres recursive CTE; grafo vivo Object→Link→Object.
 **Patentes:**
 - **US20250077899A1** — serve para: knowledge graph (grafo de conhecimento da plataforma).
 - **US 9,378,526** — serve para: referências remotas entre objetos.
 - **US 9,621,676** — serve para: remote object references (continuação).
 - **US 9,906,623** — serve para: remote object references (continuação).
-**Gate:** traversal multi-hop; integridade referencial; link migration em nova versão. *(tasks 056–058)*
+**Gate:** traversal multi-hop; integridade referencial; link migration em nova versão. *(tasks 056–058)* — `pnpm kg -- demo`
 
 ---
 
 ## BLOCO 7 — ENTITY RESOLUTION (quem é quem entre as fontes)
 
 ### PASSO 20 — Pipeline de ER: normalização → blocking → scoring
+<!-- ENTREGUE: contracts entity-resolution + packages/entity-resolution (er). Normalize→block→score + soft clusters. Sem audit persistido / gold set / GUI (Passos 21–22). -->
 **Construir:** normalização (lowercase, sem acentos, CNPJ só dígitos); blocking por chave exata + nome normalizado (nunca O(n²)); scoring por regras ponderadas com thresholds match/no-match/review.
 **Patentes:**
 - **US 8,554,719** — serve para: resolução de entidades (fundação da família).
@@ -211,7 +219,7 @@
 - **US 9,846,731** — serve para: entity resolution (continuação).
 - **US 12,229,154** — serve para: **Focused Probabilistic Entity Resolution** — P(same_entity | features).
 - **US20140280252** — serve para: comparar/associar objetos.
-**Gate:** "ACME LTDA" (A) + "Acme Ltda." (B) → 1 objeto Customer. *(tasks 059–063)*
+**Gate:** "ACME LTDA" (A) + "Acme Ltda." (B) → 1 objeto Customer. *(tasks 059–063)* — `pnpm er -- demo`
 
 ### PASSO 21 — Auditoria de matches + canonical entities
 **Construir:** persistir candidate, score, features, model_version, decision, reason, review, timestamp; merge para canonical sem destruir original; link source→canonical.
@@ -233,11 +241,12 @@
 ## BLOCO 8 — FUNCTIONS + ACTIONS (dados provocando mudança no mundo)
 
 ### PASSO 23 — Function registry
-**Construir:** `f(objects) → result` — nunca altera estado (calculateRisk, forecastDemand, optimizeAllocation); versionada, testável, registrada.
+**Construir:** `f(objects) → result` — nunca altera estado (ex.: `scoreRecord`, `aggregateMetrics`, `deriveFlags`); versionada, testável, registrada.
 **Patentes:** (camada cinética — definida pela separação semântico/cinético das Dynamic Ontology patents do Passo 17).
 **Gate:** function pura, versionada, invocável via API. *(tasks 071–073)*
 
 ### PASSO 24 — Action engine (o momento mais importante)
+<!-- MILESTONE: packages/action-engine + platform-api /api/v2 + ObjectRepository/LinkRepository + ObjectSet algebra. Domain-neutral test: Customer/SalesOrder/Product + approve-sales-order. -->
 **Construir:** ActionDef (input_object_types, parameter_schema, preconditions, authorization_policy, validation, transaction, side_effects, postconditions, compensation, audit_requirements); pipeline FIXO: **authorize → validate → tx → write-back → audit**; `expectedObjectVersions` (optimistic concurrency); `idempotencyKey`; LLM/UI NUNCA escrevem direto.
 **Patentes:**
 - **US 8,429,194** — serve para: workflows sobre documentos/objetos (fundação da família de workflow).
@@ -307,14 +316,14 @@
 - **US 11,238,102** — serve para: busca em linguagem natural.
 **Gate:** permission leakage = 0; index freshness medido; p95 no alvo. *(tasks 106–115)*
 
-### PASSO 30 — APIs de exploração genéricas (SEM app de domínio)
-<!-- ADIADO: 1ª app / UIs de produto só quando o dono trouxer a aplicação + dados. -->
-**Construir (kernel):** queries de padrão no grafo; APIs de leitura de objetos/links; **não** entregar app operacional nem UI de domínio neste passo.
-**Quando houver app:** o dono define a aplicação; 2 UIs podem reutilizar a mesma Ontology sem duplicar lógica — fora do core até ordem explícita.
+### PASSO 30 — APIs de exploração genéricas (SEM app de negócio)
+<!-- ADIADO: 1ª app / UIs só depois dos gates em datasets de teste + pedido explícito. -->
+**Construir (kernel):** queries de padrão no grafo; APIs de leitura de objetos/links; **não** entregar app vertical nem UI de negócio neste passo.
+**Quando houver app:** entra em `apps/<nome>/` sobre a mesma Ontology — fora do core.
 **Patentes (referência, usar sob demanda):**
-- **US 8,799,240** e continuações — investigação / exploração em larga escala (capacidade de plataforma, não produto vertical).
+- **US 8,799,240** e continuações — exploração em larga escala (capacidade de plataforma).
 - **US 9,639,580 / US 9,280,532 / US 9,880,993** — visualização / rich objects (só se a app pedida exigir).
-**Gate (kernel):** Query/API de objetos + grafo sem vazar permissão; **sem** app de domínio no monorepo. *(tasks 116–125 — parte app suspensa)*
+**Gate (kernel):** Query/API de objetos + grafo sem vazar permissão; **sem** app de negócio no core. *(tasks 116–125 — parte app suspensa)*
 
 ### PASSO 31 — Federation (quando houver fonte que não pode ser copiada)
 **Construir:** federation planner → pushdown query → fonte → representação temporária → materialização opcional.
@@ -324,12 +333,12 @@
 - **US 11,681,690** — serve para: federation (continuação).
 **Gate:** T1.5 — consultar registro remoto sem copiá-lo. *(tasks 126–130)*
 
-### PASSO 32 — Edge / dispositivo remoto (SOMENTE sob demanda explícita)
-<!-- NÃO é o default do projeto. Só construir se o dono pedir uma fonte edge concreta. -->
-**Construir (se pedido):** connector edge via o mesmo SDK (`capabilities[]`) — telemetria entra como `CanonicalEvent`.
+### PASSO 32 — Fonte remota / edge (SOMENTE sob demanda explícita)
+<!-- NÃO é o default. Só se houver fonte concreta que exija connector edge. -->
+**Construir (se pedido):** connector via o mesmo SDK (`capabilities[]`) — eventos entram como `CanonicalEvent`.
 **Patentes (opcionais):**
-- **US 11,799,877 / US 12,261,861 / US20250233873A1** — integração com sistemas de controle / edge (só com fonte real).
-**Gate:** dados do dispositivo entram pelo mesmo envelope canônico; **zero** camada “industrial” no core. *(tasks 131–135)*
+- **US 11,799,877 / US 12,261,861 / US20250233873A1** — integração edge (só com fonte real).
+**Gate:** dados remotos entram pelo mesmo envelope canônico; **zero** camada de domínio no core. *(tasks 131–135)*
 
 ---
 
@@ -409,9 +418,9 @@ BLOCO 1  Fundação (build, logs, IAM, event bus)        → passos 1–4   ✓ 
 BLOCO 2  Connect (SDK, envelope, schema registry)      → passos 5–7   ✓ ENTREGUE
 BLOCO 3  Store imutável (versões, deltas, time travel) → passos 8–10  ✓ ENTREGUE
 BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14  ✓ ENTREGUE
-BLOCO 5  Lineage + Policy + Audit                      → passos 15–16  ◀ PRÓXIMO
-BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19
-BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22
+BLOCO 5  Lineage + Policy + Audit                      → passos 15–16  ✓ ENTREGUE
+BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19  ✓ ENTREGUE
+BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22  ◀ Passo 20 ✓; 21 próximo
 BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ★ CICLO DA PLATAFORMA
 BLOCO 9  Security hardening                            → passos 27–28
 BLOCO 10 Search + APIs (+Federation; Edge só se pedido)→ passos 29–32
@@ -420,9 +429,11 @@ BLOCO 12 AIP (4 degraus + evals)                       → passos 35–37
 BLOCO 13 Closed-loop E2E + hardening                   → passos 38–39
 ```
 
-**Kernel-first:** app de domínio e dados reais entram sob pasta `apps/<nome>/` (ou equivalente) **somente** quando o dono trouxer fontes — nunca no core.
+**Dataset-first:** validar cada bloco com datasets de teste genéricos. App real da empresa (qualquer vertical) entra em `apps/<nome>/` **só depois** — nunca no core.
 
-**Não vira core (verticais futuras sobre a plataforma, não fundação):**
+**Ordem obrigatória daqui pra frente:** Passo 21 (auditoria/canonical) → demais.
+
+**Não vira core (patentes verticais — ficam fora da fundação):**
 US 9,129,219 / 9,836,694 (crime-risk) · US 9,501,202 (genomic) · US 9,431,507 (acoustic sensing) · US 9,872,083 / 10,708,669 (media/ads) · US 8,494,941 (financial similarity) · US 9,830,157 / 9,676,662 (image metadata) · US 9,606,647 (gestures) · US 11,706,090 (network troubleshooting).
 
 **Design patents (aparência de UI, trilha separada):** D781869, D796550, D802000, D802016, D803246, D808991, D810101, D810760, D811424, D822705, D826269, D834039, D883301, D883997, D888082, D891471, D894199, D894944, D894958, D899447, D908714, D910047, D914032, D916757, D916789, D919645, D920345, D928807, D930010, D933674, D933675, D933676, D934290, D941318, D946615, D953345, D957409, D963692, D977494, D1083953.

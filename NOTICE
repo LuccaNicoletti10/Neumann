@@ -1,0 +1,27 @@
+NEUMANN
+Copyright contributors to the NEUMANN project.
+
+This product includes ideas and API shapes adapted from OpenFoundry
+(https://github.com/Przyval/openfoundry), licensed under the Apache License 2.0.
+
+OpenFoundry
+Copyright 2024 OpenFoundry Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Materially adapted areas (reimplemented for Neumann durable/in-memory stores;
+not a verbatim copy of OpenFoundry services):
+
+- ObjectSet algebra (BASE, FILTER, UNION, INTERSECT, SUBTRACT, STATIC, SEARCH_AROUND)
+- Foundry-like /api/v2 ontology-scoped object, link, objectSet, and action routes
+- ActionType parameter / lifecycle shapes

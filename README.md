@@ -1,8 +1,37 @@
-# NEUMANN — kernel da plataforma (monorepo)
+# NEUMANN — enterprise operational data & decision platform
 
-**Postura:** construir as **bases** (contratos, ingestão, memória imutável, transform, ontology, actions).  
-**Não** construir aplicação de domínio até você trazer a app + dados.  
-Spec ativa: [`GUIA_PASSO_A_PASSO.md`](GUIA_PASSO_A_PASSO.md) · código em `packages/` · legado em `_archive/legacy-docs/`.
+Neumann is a **generic Foundry-inspired platform kernel**, not a production planner or any vertical application.
+
+```
+DATA → DATASETS / PIPELINES → ONTOLOGY → OBJECTS / LINKS / OBJECTSETS
+    → FUNCTIONS → ACTIONS → APPLICATIONS / AGENTS → WRITEBACK → NEW DATA
+```
+
+Domain concepts (forecast, netting, scheduling, SKUs, machines, ERP systems, …) belong only in **`apps/`**, never in `packages/`.
+
+```
+applications  →  platform
+```
+
+Spec: [`GUIA_PASSO_A_PASSO.md`](GUIA_PASSO_A_PASSO.md) · apps boundary: [`apps/README.md`](apps/README.md) · attribution: [`NOTICE`](NOTICE)
+
+## Architecture (modular monolith)
+
+| Layer | Packages |
+|---|---|
+| Contracts | `contracts` |
+| Connect / memory / transform | connectors, HPP, delta, transforms, quality, sandbox |
+| Lineage + policy | `data-lineage`, `policy-engine` |
+| Ontology | `ontology-registry` |
+| Objects + links | `object-platform` (ObjectRepository / LinkRepository + PG adapters) |
+| ObjectSets | `object-set` (BASE · FILTER · UNION · INTERSECT · SUBTRACT · STATIC · SEARCH_AROUND) |
+| Actions | `action-engine` (authorize → validate → criteria → rules → side effects → audit) |
+| HTTP `/api/v2` | `platform-api` |
+| Applications | `apps/*` (consumers only) |
+
+Persistence: in-memory for gates; PostgreSQL schema in `infra/sql/0002_objects_platform.sql` with `createPgObjectRepository` / `createPgLinkRepository`.
+
+API shapes adapted from [OpenFoundry](https://github.com/Przyval/openfoundry) (Apache-2.0) — see `NOTICE`. OpenFoundry’s `/tmp` JSON stores are **not** used.
 
 ## Status
 
@@ -12,18 +41,37 @@ Spec ativa: [`GUIA_PASSO_A_PASSO.md`](GUIA_PASSO_A_PASSO.md) · código em `pack
 | 2 Connect | 5–7 | **ENTREGUE** |
 | 3 Memória imutável | 8–10 | **ENTREGUE** |
 | 4 Transform | 11–14 | **ENTREGUE** |
-| 5 Lineage + segurança | 15+ | próximo |
+| 5 Lineage + segurança | 15–16 | **ENTREGUE** |
+| 6 Ontology | 17–19 | **ENTREGUE** |
+| 7 Entity Resolution | 20–22 | **Passo 20 ENTREGUE**; 21–22 próximo |
+| 8 Functions + Actions | 23–24 | **Action engine + `/api/v2` milestone** |
 
-**Notas kernel (não bloqueiam o gate):** storage Passo 8 em memória/FS (MinIO/Postgres = upgrade); connector Postgres com SqlClient injetável; Passo 11 executor = memória + SQL versionado (DuckDB nativo = upgrade); Passo 14 sandbox = host API guard (não isolamento OS/VM).
+## Quick start
 
 ```bash
 pnpm install && pnpm build && pnpm test
-pnpm gate:bloco1          # TM0.5 + TM0.3
-pnpm gate:t1.3            # connector Postgres checkpoint
-pnpm dev:up               # Postgres + Jaeger + Prometheus + Grafana
+pnpm --filter platform-api test   # Customer / SalesOrder / Product + ObjectSet + Action
+pnpm gate:bloco1
+pnpm gate:t1.3
+pnpm dev:up                       # Postgres (+ objects schema) + Jaeger + Prometheus + Grafana
 ```
 
-## Pacotes (Blocos 1–4)
+### `/api/v2` (platform-api)
+
+```
+/api/v2/ontologies
+/api/v2/ontologies/{ontology}/objectTypes
+/api/v2/ontologies/{ontology}/objects/{objectType}
+/api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}
+/api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}/links/{linkType}
+/api/v2/ontologies/{ontology}/objectSets/loadObjects
+/api/v2/ontologies/{ontology}/objectSets/aggregate
+/api/v2/ontologies/{ontology}/actionTypes
+/api/v2/ontologies/{ontology}/actions/{action}/validate
+/api/v2/ontologies/{ontology}/actions/{action}/apply
+```
+
+## Packages
 
 | Pacote | Papel |
 |---|---|
@@ -41,54 +89,23 @@ pnpm dev:up               # Postgres + Jaeger + Prometheus + Grafana
 | `incremental-pipeline-scheduler` | Passo 12 |
 | `data-quality` | Passo 13 |
 | `execution-sandbox` | Passo 14 |
+| `data-lineage` | Passo 15 |
+| `policy-engine` | Passo 16 |
+| `ontology-registry` | Passo 17 |
+| `object-platform` | Passo 18 + Object/Link repositories |
+| `knowledge-graph` | Passo 19 |
+| `entity-resolution` | Passo 20 |
+| `object-set` | ObjectSet algebra |
+| `action-engine` | Generic ActionExecutor |
+| `platform-api` | Foundry-like `/api/v2` |
 | LCV / EAD / VRN / CSD | patentes de suporte Passo 5 |
-| `ldpc-transceiver` / `periodic-search-manager` | pacotes de suporte Bloco 1 |
+| `ldpc-transceiver` / `periodic-search-manager` | suporte Bloco 1 |
 
-## Validar Blocos 1–4
-
-```bash
-# Bloco 1
-pnpm --filter common-build-system test
-pnpm obs -- check
-pnpm iam -- help
-pnpm sec -- help
-pnpm bus -- gate
-pnpm fqs -- demo && pnpm bfs -- demo
-
-# Bloco 2
-pnpm contracts -- demo
-pnpm csdk -- demo
-pnpm gate:t1.3
-pnpm sr -- demo
-pnpm lcv -- demo && pnpm ead -- demo && pnpm vrn -- demo && pnpm csd -- demo
-pnpm its -- demo && pnpm ece -- demo && pnpm tip -- demo
-
-# Bloco 3
-pnpm hpp -- demo
-pnpm delta -- demo
-pnpm mrtx -- demo
-
-# Bloco 4
-pnpm xform -- demo
-pnpm ips -- demo
-pnpm dq -- demo
-pnpm sandbox -- demo
-```
-
-## Detalhes opcionais (IAM / secrets / suporte)
+## Validate
 
 ```bash
-# IAM
-cd packages/iam-auth-monitoring
-pnpm cli register --email admin@example.com --password secret123 --admin
-pnpm cli serve --port 3000
-
-# Secrets
-cd packages/security-config-secrets
-pnpm cli scan-deps --lockfile fixtures/sample-lock.json --db advisories/sample.json --fail-on high
-pnpm cli secrets keygen
-
-# LDPC / PSM
-pnpm --filter ldpc-transceiver test
-pnpm --filter periodic-search-manager test
+pnpm onto -- demo && pnpm obj -- demo && pnpm kg -- demo && pnpm er -- demo
+pnpm --filter object-set test
+pnpm --filter action-engine test
+pnpm --filter platform-api test
 ```

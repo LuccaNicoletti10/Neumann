@@ -1,0 +1,40 @@
+{
+  "name": "platform-api",
+  "version": "1.0.0",
+  "description": "Foundry-like /api/v2 gateway — ontologies, objects, links, objectSets, actions.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "action-engine": "workspace:*",
+    "contracts": "workspace:*",
+    "fastify": "^4.28.0",
+    "object-platform": "workspace:*",
+    "object-set": "workspace:*",
+    "ontology-registry": "workspace:*",
+    "policy-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "action-engine",
+  "version": "1.0.0",
+  "description": "Generic ActionExecutor — authorize → validate → criteria → rules → side effects → audit (Passo 24).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*",
+    "object-platform": "workspace:*",
+    "policy-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

@@ -1,18 +1,20 @@
 {
   "name": "contracts",
   "version": "1.0.0",
-  "description": "Contratos congelados v1 — Blocos 2–4 (CanonicalEvent, Connector, DatasetStore, Delta, TimeTravel, Transform, PipelineDag, Quality, Sandbox).",
+  "description": "Contratos congelados v1 — platform kernel (datasets … ontology, objects, ObjectSets, actions).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./v1": {
       "types": "./dist/v1/index.d.ts",
-      "import": "./dist/v1/index.js"
+      "import": "./dist/v1/index.js",
+      "default": "./dist/v1/index.js"
     }
   },
   "bin": {

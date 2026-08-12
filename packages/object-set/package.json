@@ -1,0 +1,32 @@
+{
+  "name": "object-set",
+  "version": "1.0.0",
+  "description": "ObjectSet algebra — BASE/FILTER/UNION/INTERSECT/SUBTRACT/STATIC/SEARCH_AROUND (Foundry-inspired; OpenFoundry Apache-2.0 adapted).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*",
+    "object-platform": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

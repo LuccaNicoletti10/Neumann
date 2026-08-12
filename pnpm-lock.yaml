@@ -7,13 +7,63 @@ settings:
 importers:
 
   .:
+    dependencies:
+      action-engine:
+        specifier: workspace:*
+        version: link:packages/action-engine
+      contracts:
+        specifier: workspace:*
+        version: link:packages/contracts
+      entity-resolution:
+        specifier: workspace:*
+        version: link:packages/entity-resolution
+      knowledge-graph:
+        specifier: workspace:*
+        version: link:packages/knowledge-graph
+      object-platform:
+        specifier: workspace:*
+        version: link:packages/object-platform
+      object-set:
+        specifier: workspace:*
+        version: link:packages/object-set
+      ontology-registry:
+        specifier: workspace:*
+        version: link:packages/ontology-registry
+      platform-api:
+        specifier: workspace:*
+        version: link:packages/platform-api
     devDependencies:
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
       turbo:
         specifier: 2.1.1
         version: 2.1.1
       typescript:
         specifier: 5.5.4
         version: 5.5.4
+
+  packages/action-engine:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+      object-platform:
+        specifier: workspace:*
+        version: link:../object-platform
+      policy-engine:
+        specifier: workspace:*
+        version: link:../policy-engine
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
 
   packages/auto-logging-config:
     dependencies:
@@ -145,6 +195,25 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/data-lineage:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/data-quality:
     dependencies:
       contracts:
@@ -215,6 +284,25 @@ importers:
         version: 2.1.9(@types/node@20.14.15)
 
   packages/entity-assignment-debugger:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/entity-resolution:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@types/node':
         specifier: 20.14.15
@@ -378,6 +466,25 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/knowledge-graph:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/ldpc-transceiver:
     devDependencies:
       '@types/node':
@@ -452,6 +559,44 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/object-platform:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/object-set:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+      object-platform:
+        specifier: workspace:*
+        version: link:../object-platform
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/observability:
     dependencies:
       '@opentelemetry/api':
@@ -495,6 +640,25 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/ontology-registry:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/periodic-search-manager:
     dependencies:
       fastify:
@@ -515,6 +679,62 @@ importers:
         version: 5.5.4
       vitest:
         specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/platform-api:
+    dependencies:
+      action-engine:
+        specifier: workspace:*
+        version: link:../action-engine
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+      fastify:
+        specifier: ^4.28.0
+        version: 4.28.1
+      object-platform:
+        specifier: workspace:*
+        version: link:../object-platform
+      object-set:
+        specifier: workspace:*
+        version: link:../object-set
+      ontology-registry:
+        specifier: workspace:*
+        version: link:../ontology-registry
+      policy-engine:
+        specifier: workspace:*
+        version: link:../policy-engine
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
+  packages/policy-engine:
+    dependencies:
+      contracts:
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
   packages/schema-registry:

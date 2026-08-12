@@ -1,8 +1,8 @@
 # Archive — docs legados (não usar como spec)
 
-Material histórico / blueprints / packs duplicados.
+Material histórico / blueprints / packs duplicados. **Congelado — não seguir.**
 
-**Spec ativa do projeto:** `/GUIA_PASSO_A_PASSO.md` + `/packages/*` + `/README.md`.
+**Spec ativa:** `/GUIA_PASSO_A_PASSO.md` + `/packages/*` + `/README.md`.
 
-Postura: construir o **kernel** da plataforma (contratos, ingestão, memória, ontology genérica, actions).  
-Aplicação e dados de domínio entram só quando o dono do repo trouxer fontes concretas — sem amarrar o core a indústria, produção ou SCADA.
+Postura atual: kernel genérico validado com **datasets de teste** (qualquer domínio).  
+Sem app de fábrica, planejamento, forecasting ou vertical no core. Especialização na empresa só depois dos gates.

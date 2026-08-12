@@ -2,7 +2,7 @@
   "name": "neumann",
   "private": true,
   "version": "0.1.0",
-  "description": "NEUMANN kernel — Blocos 1–4 entregues (Passos 1–14); próximo Bloco 5 / Passo 15",
+  "description": "NEUMANN — enterprise operational data & decision platform (Foundry-inspired kernel)",
   "packageManager": "pnpm@10.20.0",
   "engines": {
     "node": ">=20"
@@ -50,11 +50,39 @@
     "dq": "pnpm --filter data-quality cli",
     "sandbox": "pnpm --filter execution-sandbox cli",
     "sbx": "pnpm --filter execution-sandbox cli",
+    "lineage": "pnpm --filter data-lineage cli",
+    "dl": "pnpm --filter data-lineage cli",
+    "policy": "pnpm --filter policy-engine cli",
+    "authz": "pnpm --filter policy-engine cli",
+    "onto": "pnpm --filter ontology-registry cli",
+    "ontology": "pnpm --filter ontology-registry cli",
+    "obj": "pnpm --filter object-platform cli",
+    "objects": "pnpm --filter object-platform cli",
+    "kg": "pnpm --filter knowledge-graph cli",
+    "links": "pnpm --filter knowledge-graph cli",
+    "er": "pnpm --filter entity-resolution cli",
+    "resolve": "pnpm --filter entity-resolution cli",
+    "object-set": "pnpm --filter object-set test",
+    "actions": "pnpm --filter action-engine test",
+    "api": "pnpm --filter platform-api cli",
+    "demo:sales": "tsx scripts/demo-sales-gd.ts",
     "gate:bloco1": "pnpm --filter observability cli -- check && pnpm --filter event-bus cli -- gate",
-    "gate:t1.3": "pnpm --filter connector-postgres cli -- gate-t1.3"
+    "gate:t1.3": "pnpm --filter connector-postgres cli -- gate-t1.3",
+    "gate:platform": "pnpm --filter object-set test && pnpm --filter platform-api test"
   },
   "devDependencies": {
+    "tsx": "^4.16.0",
     "turbo": "2.1.1",
     "typescript": "5.5.4"
+  },
+  "dependencies": {
+    "action-engine": "workspace:*",
+    "contracts": "workspace:*",
+    "entity-resolution": "workspace:*",
+    "knowledge-graph": "workspace:*",
+    "object-platform": "workspace:*",
+    "object-set": "workspace:*",
+    "ontology-registry": "workspace:*",
+    "platform-api": "workspace:*"
   }
 }

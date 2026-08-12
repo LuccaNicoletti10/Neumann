@@ -24,3 +24,9 @@ psm-data/
 .bfs-state.json
 package-lock.json
 **/package-lock.json
+# exports reais de cliente (PII) — não versionar
+datasets/sales-gd/*.csv
+datasets/sales-gd/*.xlsx
+datasets/sales-gd/*.xls
+# resultado gerado localmente (pode ter PII do export)
+datasets/sales-gd/resultado/
