@@ -2,7 +2,7 @@
   "name": "neumann",
   "private": true,
   "version": "0.1.0",
-  "description": "Plataforma operacional — monorepo (PASSO 1–8+)",
+  "description": "Plataforma operacional — monorepo (PASSO 1–10+)",
   "packageManager": "pnpm@10.20.0",
   "engines": {
     "node": ">=20"
@@ -40,6 +40,9 @@
     "connector-postgres": "pnpm --filter connector-postgres cli",
     "hpp": "pnpm --filter history-preserving-pipeline cli",
     "ds": "pnpm --filter history-preserving-pipeline cli",
+    "delta": "pnpm --filter delta-storage cli",
+    "mrtx": "pnpm --filter multi-row-transactions cli",
+    "tt": "pnpm --filter multi-row-transactions cli",
     "gate:bloco1": "pnpm --filter observability cli -- check && pnpm --filter event-bus cli -- gate",
     "gate:t1.3": "pnpm --filter connector-postgres cli -- gate-t1.3"
   },

@@ -33,5 +33,6 @@ const v = pipe.commitTransaction(tx.id);
 
 ## Fora deste pacote
 
-- Passo 9 (delta tree), Passo 10 (`snapshot(at)` / replay)
+- Passo 9 → `packages/delta-storage`
+- Passo 10 (`snapshot(at)` / replay)
 - MinIO/Postgres reais (interfaces prontas; impl memória/FS)

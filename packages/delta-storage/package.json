@@ -1,7 +1,7 @@
 {
-  "name": "contracts",
+  "name": "delta-storage",
   "version": "1.0.0",
-  "description": "Contratos congelados v1 — CanonicalEvent, Connector, DatasetStore, DeltaTree, TimeTravel (BLOCO 2–3).",
+  "description": "Delta tree com compactação hierárquica + zero-copy cache (US 11,397,717 / US 9,367,463 / US 9,652,291).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,14 +9,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./v1": {
-      "types": "./dist/v1/index.d.ts",
-      "import": "./dist/v1/index.js"
     }
   },
   "bin": {
-    "contracts": "./dist/cli.js"
+    "delta-storage": "./dist/cli.js",
+    "delta": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -34,6 +31,9 @@
     "start": "node dist/cli.js"
   },
   "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "20.14.15",
     "tsx": "^4.16.0",

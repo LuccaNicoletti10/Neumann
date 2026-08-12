@@ -2,6 +2,10 @@
 ## Cada passo diz: O QUE construir → QUAIS patentes servem para essa etapa → PARA QUE cada uma serve → GATE (como saber que terminou)
 ## Uso com o Cursor: "Execute o PASSO N do GUIA_PASSO_A_PASSO.md"
 
+> **Postura do repo (kernel-first):** este guia constrói a **plataforma genérica** — contratos, connectors, memória imutável, transform, ontology, ER, actions.  
+> **Não** construir aplicação de domínio (indústria, produção, SCADA, “operador”) até o dono trazer a app + dados.  
+> Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).
+
 ---
 
 ## BLOCO 1 — FUNDAÇÃO (fazer primeiro, tudo depende disso)
@@ -81,6 +85,7 @@
 - **US 11,397,717** — serve para: armazenar deltas individuais E deltas combinados/hierárquicos para reconstruir estados eficientemente.
 - **US 9,367,463 / US 9,652,291** — servem para: zero-copy/caching — leitura sem copiar dados desnecessariamente.
 **Gate:** reconstrução byte-for-byte de qualquer versão; compactação não altera resultado. *(tasks 021–023)*
+<!-- entregue: packages/contracts (delta-tree types) + packages/delta-storage (fanout combined + zero-copy cache); Token Ring/B+Tree/ACID do paste Java fora do escopo -->
 
 ### PASSO 10 — Time travel, diff, transações, replay
 **Construir:** `snapshot(dataset, timestamp)` determinístico, `diff(v1,v2)`, commit atômico multi-linha, `replay()`.
@@ -88,6 +93,7 @@
 - **US 8,504,542** — serve para: transações multi-linha (commit atômico de várias linhas).
 - **US 9,619,507** — serve para: protocolo de leitura transacional (leitura consistente durante commits).
 **Gate:** "estado do dataset X às 14:37:22 de ontem" → resposta determinística; crash entre write e commit não corrompe; leitura durante commit é consistente. *(tasks 024–026)*
+<!-- entregue: packages/contracts (TimeTravelStore) + packages/multi-row-transactions (mrtx/tt); MVCC + lease locks + snapshot isolation em memória -->
 
 ---
 
@@ -163,16 +169,16 @@
 **Construir:** mapping dataset→ObjectType (JSON declarativo, versionado); projetor (versão de dataset → upsert em objects + object_history append-only + provenance); Object API (`getObject(at?)/queryObjects/traverseLinks/getHistory/getProvenance`) — toda leitura via authorize().
 **Patentes:**
 - **US 8,930,897** — serve para: reorganizar fontes no object model; mapear propriedades físicas → propriedades de objetos; definir relacionamentos entre objetos (a mesma patente do Passo 5 — ela liga connector à ontology).
-- **US 10,691,729** — serve para: plataforma de objetos (object platform operacional).
+- **US 10,691,729** — serve para: plataforma de objetos (object platform).
 - **EP3425537A1** — serve para: object platform (família europeia).
 - **US 11,816,156** — serve para: índice/query sobre ontology.
 - **US 12,561,339** — serve para: interface de query unificada sobre múltiplos bancos baseados em ontology.
 **Gate:** operação funciona só pelas APIs, sem UI. *(tasks 050–055)*
 
-### PASSO 19 — Links + Knowledge Graph operacional
+### PASSO 19 — Links + Knowledge Graph
 **Construir:** links tipados materializados (FK cruzada entre fontes); `traverseLinks` com Postgres recursive CTE; grafo vivo Object→Link→Object.
 **Patentes:**
-- **US20250077899A1** — serve para: knowledge graph (grafo de conhecimento operacional).
+- **US20250077899A1** — serve para: knowledge graph (grafo de conhecimento da plataforma).
 - **US 9,378,526** — serve para: referências remotas entre objetos.
 - **US 9,621,676** — serve para: remote object references (continuação).
 - **US 9,906,623** — serve para: remote object references (continuação).
@@ -286,17 +292,14 @@
 - **US 11,238,102** — serve para: busca em linguagem natural.
 **Gate:** permission leakage = 0; index freshness medido; p95 no alvo. *(tasks 106–115)*
 
-### PASSO 30 — Investigação em larga escala + aplicações
-**Construir:** queries de padrão no grafo; 1ª app operacional (object explorer + visão grafo); 2 UIs diferentes sobre a mesma Ontology, zero lógica duplicada.
-**Patentes:**
-- **US 8,799,240** — serve para: investigação em larga escala.
-- **US 9,201,159 / US 9,639,578 / US 9,852,144 / US 10,423,582** — servem para: large-scale investigation (continuações).
-- **US 9,639,580** — serve para: visualização de gerenciamento de dados.
-- **US 9,280,532 / US 9,880,993** — servem para: rich objects / integração com planilhas (objetos ricos nas apps).
-- **US 9,727,376 / US 10,037,314 / US 10,997,363 / US 11,494,549 / US 9,380,431** — servem para: mobile tasks/reports/teams (quando mobile entrar).
-- **US 10,270,727 / US 8,085,268 / US 9,041,708** — servem para: geoespacial (geodetic polygon, viewsheds — só se necessário).
-- **US 8,484,115 / US 9,378,524 / US 8,034,971 / US 8,326,727 / US 8,484,549 / US 9,727,981** — servem para: analytics especializadas (time-series, dynamic date sets, sensitivity — só se necessário).
-**Gate:** 2 interfaces completamente diferentes, mesma Ontology, sem duplicar lógica. *(tasks 116–125)*
+### PASSO 30 — APIs de exploração genéricas (SEM app de domínio)
+<!-- ADIADO: 1ª app / UIs de produto só quando o dono trouxer a aplicação + dados. -->
+**Construir (kernel):** queries de padrão no grafo; APIs de leitura de objetos/links; **não** entregar app operacional nem UI de domínio neste passo.
+**Quando houver app:** o dono define a aplicação; 2 UIs podem reutilizar a mesma Ontology sem duplicar lógica — fora do core até ordem explícita.
+**Patentes (referência, usar sob demanda):**
+- **US 8,799,240** e continuações — investigação / exploração em larga escala (capacidade de plataforma, não produto vertical).
+- **US 9,639,580 / US 9,280,532 / US 9,880,993** — visualização / rich objects (só se a app pedida exigir).
+**Gate (kernel):** Query/API de objetos + grafo sem vazar permissão; **sem** app de domínio no monorepo. *(tasks 116–125 — parte app suspensa)*
 
 ### PASSO 31 — Federation (quando houver fonte que não pode ser copiada)
 **Construir:** federation planner → pushdown query → fonte → representação temporária → materialização opcional.
@@ -306,13 +309,12 @@
 - **US 11,681,690** — serve para: federation (continuação).
 **Gate:** T1.5 — consultar registro remoto sem copiá-lo. *(tasks 126–130)*
 
-### PASSO 32 — Edge / SCADA / IoT (se houver demanda)
-**Construir:** connector edge usando o mesmo SDK (capabilities[]).
-**Patentes:**
-- **US 11,799,877** — serve para: integração SCADA (mundo físico).
-- **US 12,261,861** — serve para: SCADA (continuação).
-- **US20250233873A1** — serve para: SCADA (continuação).
-**Gate:** dados de dispositivo entram pelo mesmo envelope canônico. *(tasks 131–135)*
+### PASSO 32 — Edge / dispositivo remoto (SOMENTE sob demanda explícita)
+<!-- NÃO é o default do projeto. Só construir se o dono pedir uma fonte edge concreta. -->
+**Construir (se pedido):** connector edge via o mesmo SDK (`capabilities[]`) — telemetria entra como `CanonicalEvent`.
+**Patentes (opcionais):**
+- **US 11,799,877 / US 12,261,861 / US20250233873A1** — integração com sistemas de controle / edge (só com fonte real).
+**Gate:** dados do dispositivo entram pelo mesmo envelope canônico; **zero** camada “industrial” no core. *(tasks 131–135)*
 
 ---
 
@@ -395,15 +397,17 @@ BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14
 BLOCO 5  Lineage + Policy + Audit                      → passos 15–16
 BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19
 BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22
-BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ★ PRODUTO FUNCIONA AQUI
+BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ★ CICLO DA PLATAFORMA
 BLOCO 9  Security hardening                            → passos 27–28
-BLOCO 10 Search + Apps (+Federation/Edge)              → passos 29–32
+BLOCO 10 Search + APIs (+Federation; Edge só se pedido)→ passos 29–32
 BLOCO 11 Replication + Offline                         → passos 33–34
 BLOCO 12 AIP (4 degraus + evals)                       → passos 35–37
 BLOCO 13 Closed-loop E2E + hardening                   → passos 38–39
 ```
 
-**Não vira core (apps futuras sobre a plataforma, não fundação):**
+**Kernel-first:** app de domínio e dados reais entram sob pasta `apps/<nome>/` (ou equivalente) **somente** quando o dono trouxer fontes — nunca no core.
+
+**Não vira core (verticais futuras sobre a plataforma, não fundação):**
 US 9,129,219 / 9,836,694 (crime-risk) · US 9,501,202 (genomic) · US 9,431,507 (acoustic sensing) · US 9,872,083 / 10,708,669 (media/ads) · US 8,494,941 (financial similarity) · US 9,830,157 / 9,676,662 (image metadata) · US 9,606,647 (gestures) · US 11,706,090 (network troubleshooting).
 
 **Design patents (aparência de UI, trilha separada):** D781869, D796550, D802000, D802016, D803246, D808991, D810101, D810760, D811424, D822705, D826269, D834039, D883301, D883997, D888082, D891471, D894199, D894944, D894958, D899447, D908714, D910047, D914032, D916757, D916789, D919645, D920345, D928807, D930010, D933674, D933675, D933676, D934290, D941318, D946615, D953345, D957409, D963692, D977494, D1083953.

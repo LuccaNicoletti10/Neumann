@@ -35,3 +35,25 @@ export {
   assertCommitInput,
   buildGoldenCommitInput,
 } from './dataset-store.js';
+
+export {
+  type DeltaKind,
+  type DeltaRef,
+  type DeltaOp,
+  type IndividualDelta,
+  type CombinedDelta,
+  type BaseSnapshot,
+  type MinimalDeltaSet,
+  buildGoldenDeltaOps,
+} from './delta-tree.js';
+
+export {
+  type LogicalTimestamp,
+  type RowId,
+  type TxStatus,
+  type SnapshotRequest,
+  type SnapshotResult,
+  type ReplayResult,
+  type TimeTravelStore,
+  buildGoldenSnapshotRequest,
+} from './time-travel.js';

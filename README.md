@@ -1,4 +1,8 @@
-# NEUMANN — monorepo (fundação + pacotes de patentes)
+# NEUMANN — kernel da plataforma (monorepo)
+
+**Postura:** construir as **bases** (contratos, ingestão, memória imutável, transform, ontology, actions).  
+**Não** construir aplicação de domínio (indústria, produção, SCADA, “operador”) até você trazer a app + dados.  
+Spec ativa: [`GUIA_PASSO_A_PASSO.md`](GUIA_PASSO_A_PASSO.md) · código em `packages/` · legado em `_archive/legacy-docs/`.
 
 | Pacote | Patente / papel |
 |---|---|
@@ -26,6 +30,8 @@
 | `packages/connector-sdk` | PASSO 5 — helpers, CheckpointStore, runSnapshot/runIncremental |
 | `packages/connector-postgres` | PASSO 6 — Postgres snapshot + CDC + gate T1.3 |
 | `packages/history-preserving-pipeline` | PASSO 8 — Dataset Store imutável + build catalog (US 9,229,952 / 9,483,506 / 9,946,738) |
+| `packages/delta-storage` | PASSO 9 — Delta tree + combined + zero-copy (US 11,397,717 / 9,367,463 / 9,652,291) |
+| `packages/multi-row-transactions` | PASSO 10 — Multi-row tx + snapshot isolation + time travel (US 8,504,542 / 9,619,507) |
 
 ```bash
 pnpm install && pnpm build && pnpm test
@@ -118,4 +124,8 @@ pnpm --filter schema-registry test                     # PASSO 7 / T1.4
 pnpm sr -- demo
 pnpm --filter history-preserving-pipeline test         # PASSO 8
 pnpm hpp -- demo
+pnpm --filter delta-storage test                       # PASSO 9
+pnpm delta -- demo
+pnpm --filter multi-row-transactions test              # PASSO 10
+pnpm mrtx -- demo
 ```

@@ -1,7 +1,7 @@
 {
-  "name": "contracts",
+  "name": "multi-row-transactions",
   "version": "1.0.0",
-  "description": "Contratos congelados v1 — CanonicalEvent, Connector, DatasetStore, DeltaTree, TimeTravel (BLOCO 2–3).",
+  "description": "Multi-row transactions + snapshot isolation + time travel (US 8,504,542 / US 9,619,507).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,14 +9,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./v1": {
-      "types": "./dist/v1/index.d.ts",
-      "import": "./dist/v1/index.js"
     }
   },
   "bin": {
-    "contracts": "./dist/cli.js"
+    "multi-row-transactions": "./dist/cli.js",
+    "mrtx": "./dist/cli.js",
+    "tt": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -34,6 +32,9 @@
     "start": "node dist/cli.js"
   },
   "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "20.14.15",
     "tsx": "^4.16.0",
