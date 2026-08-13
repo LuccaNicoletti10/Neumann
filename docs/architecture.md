@@ -54,7 +54,21 @@ Bearer token → IdentityProvider → Principal → PolicyEngine → resource ac
 
 ```
 authorize → validate → submission criteria → UnitOfWork(rules)
-  → COMMIT → outbox side effects → audit / operational events
+  → ActionExecution + object/link mutations + operational events
+  + audit entry + outbox insert
+  → COMMIT
 ```
 
 External webhooks/writeback **after** commit, via outbox workers.
+
+Production `createPostgresPlatformContext({ sql, transaction, authorize })` is fail-closed: missing `authorize` is a startup error. Memory/tests pass `allowAll` explicitly.
+
+## Package classification
+
+**CORE PLATFORM / CRITICAL PATH** (`pnpm gate:core`):
+`contracts`, `api-errors`, `pagination`, `object-platform`, `ontology-registry`, `object-set`, `knowledge-graph`, `action-engine`, `policy-engine`, `connector-sdk`, `connector-postgres`, `event-bus`, `observability`, `platform-api`
+
+**OPTIONAL / EXPERIMENTAL / SUPPORT** (CI completo ainda valida):
+`ldpc-transceiver`, `external-content-exporter`, `tagging-interface-panel`, `periodic-search-manager`, `fair-query-scheduler`, `bounded-fair-scheduler`, `cli-script-debugger`, `entity-assignment-debugger`, `inline-tag-sync`, `link-consistency-validator`, `validation-result-notifier`, and other Bloco 1–4 support packages.
+
+Do not delete optional packages. A broken experimental package must not block `pnpm gate:core`.

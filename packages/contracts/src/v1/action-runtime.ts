@@ -71,6 +71,28 @@ export interface ActionExecution {
   auditEntryId?: string;
 }
 
+export interface ActionExecutionClaimResult {
+  /** True when this caller inserted the row and must run the action. */
+  claimed: boolean;
+  execution: ActionExecution;
+}
+
+/** Durable ActionExecution + idempotency (unique key in PostgreSQL). */
+export interface ActionExecutionStore {
+  save(execution: ActionExecution): Promise<void>;
+  get(id: ActionExecutionId): Promise<ActionExecution | undefined>;
+  findByIdempotencyKey(
+    ontologyId: OntologyId,
+    actionApiName: string,
+    idempotencyKey: string,
+  ): Promise<ActionExecution | undefined>;
+  /**
+   * Insert PENDING execution claiming the idempotency key.
+   * Concurrent claims: exactly one `claimed: true`.
+   */
+  claim(execution: ActionExecution): Promise<ActionExecutionClaimResult>;
+}
+
 /**
  * ActionExecutor lifecycle:
  * request → authorize → validate parameters → submission criteria
@@ -79,7 +101,7 @@ export interface ActionExecution {
 export interface ActionExecutor {
   getActionType(ontologyId: OntologyId, apiName: string): ActionTypeDef | undefined;
   registerActionType(ontologyId: OntologyId, def: ActionTypeDef): void;
-  validate(req: ActionValidateRequest): Promise<ActionValidateResult> | ActionValidateResult;
-  apply(req: ActionApplyRequest): Promise<ActionApplyResult> | ActionApplyResult;
-  getExecution(id: ActionExecutionId): ActionExecution | undefined;
+  validate(req: ActionValidateRequest): Promise<ActionValidateResult>;
+  apply(req: ActionApplyRequest): Promise<ActionApplyResult>;
+  getExecution(id: ActionExecutionId): Promise<ActionExecution | undefined>;
 }

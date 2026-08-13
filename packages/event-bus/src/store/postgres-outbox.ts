@@ -10,36 +10,32 @@ import {
 
 const { Pool } = pg;
 
+/**
+ * @deprecated Do not auto-create a second outbox. Official schema is
+ * `infra/sql/0001_outbox.sql` (`outbox_events`). Kept as IF NOT EXISTS
+ * matching that migration so `init()` stays compatible.
+ */
 export const OUTBOX_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS business_data (
-  id SERIAL PRIMARY KEY,
-  table_name TEXT NOT NULL,
-  row_data JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS outbox (
-  event_id UUID PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS outbox_events (
+  event_id TEXT PRIMARY KEY,
   topic TEXT NOT NULL,
   ordering_key TEXT NOT NULL,
   payload JSONB NOT NULL,
   principal TEXT NOT NULL,
-  tenant_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
   trace_id TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   published_at TIMESTAMPTZ,
-  attempts INT NOT NULL DEFAULT 0
+  attempts INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS outbox_unpublished_idx
-  ON outbox (created_at)
+CREATE INDEX IF NOT EXISTS outbox_events_unpublished_idx
+  ON outbox_events (created_at)
   WHERE published_at IS NULL;
-`;
 
-interface PendingBusiness {
-  table: string;
-  row: Record<string, unknown>;
-}
+CREATE INDEX IF NOT EXISTS outbox_events_key_idx
+  ON outbox_events (ordering_key, created_at);
+`;
 
 interface PendingOutbox {
   eventId: string;
@@ -57,14 +53,31 @@ export class PostgresOutboxStore implements OutboxStore {
   private readonly emitter = new EventEmitter();
   private readonly listener: pg.Pool;
   private listening = false;
+  private readonly schema?: string;
 
-  constructor(connectionString: string) {
+  constructor(connectionString: string, opts?: { schema?: string }) {
     this.pool = new Pool({ connectionString });
     this.listener = new Pool({ connectionString });
+    if (opts?.schema) this.schema = opts.schema;
+  }
+
+  private async withSearchPath(client: pg.PoolClient): Promise<void> {
+    if (this.schema) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(this.schema)) {
+        throw new Error(`invalid schema: ${this.schema}`);
+      }
+      await client.query(`SET search_path TO "${this.schema}"`);
+    }
   }
 
   async init(): Promise<void> {
-    await this.pool.query(OUTBOX_SCHEMA_SQL);
+    const client = await this.pool.connect();
+    try {
+      await this.withSearchPath(client);
+      await client.query(OUTBOX_SCHEMA_SQL);
+    } finally {
+      client.release();
+    }
     if (!this.listening) {
       const client = await this.listener.connect();
       await client.query(`LISTEN ${OUTBOX_NOTIFY_CHANNEL}`);
@@ -78,15 +91,15 @@ export class PostgresOutboxStore implements OutboxStore {
   }
 
   begin(): OutboxTransaction {
-    const pendingBusiness: PendingBusiness[] = [];
     const pendingOutbox: PendingOutbox[] = [];
     let committed = false;
     let crashed = false;
 
     return {
-      writeBusiness: (table, row) => {
+      writeBusiness: () => {
         if (committed || crashed) throw new Error('transaction closed');
-        pendingBusiness.push({ table, row });
+        // Domain writes belong on ObjectRepository / ActionExecutionStore /
+        // AuditRepository — not a generic business_data table.
       },
 
       insertOutbox: (record) => {
@@ -108,16 +121,11 @@ export class PostgresOutboxStore implements OutboxStore {
         committed = true;
         const client = await this.pool.connect();
         try {
+          await this.withSearchPath(client);
           await client.query('BEGIN');
-          for (const { table, row } of pendingBusiness) {
-            await client.query(
-              'INSERT INTO business_data (table_name, row_data) VALUES ($1, $2)',
-              [table, row],
-            );
-          }
           for (const record of pendingOutbox) {
             await client.query(
-              `INSERT INTO outbox
+              `INSERT INTO outbox_events
                 (event_id, topic, ordering_key, payload, principal, tenant_id, trace_id, attempts)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
               [
@@ -131,7 +139,10 @@ export class PostgresOutboxStore implements OutboxStore {
                 record.attempts,
               ],
             );
-            await client.query(`NOTIFY ${OUTBOX_NOTIFY_CHANNEL}, $1`, [record.eventId]);
+            await client.query(`SELECT pg_notify($1, $2)`, [
+              OUTBOX_NOTIFY_CHANNEL,
+              record.eventId,
+            ]);
           }
           await client.query('COMMIT');
         } catch (err) {
@@ -143,7 +154,7 @@ export class PostgresOutboxStore implements OutboxStore {
       },
 
       rollback: () => {
-        if (committed || crashed) throw new Error('transaction closed');
+        if (crashed) throw new Error('transaction closed');
         committed = true;
       },
 
@@ -154,45 +165,55 @@ export class PostgresOutboxStore implements OutboxStore {
     };
   }
 
-  listUnpublished(): OutboxRecord[] {
-    throw new Error('use listUnpublishedAsync for PostgresOutboxStore');
+  async listUnpublished(): Promise<OutboxRecord[]> {
+    return this.listUnpublishedAsync();
   }
 
   async listUnpublishedAsync(): Promise<OutboxRecord[]> {
-    const result = await this.pool.query(
-      `SELECT event_id, topic, ordering_key, payload, principal, tenant_id, trace_id,
-              created_at, published_at, attempts
-       FROM outbox
-       WHERE published_at IS NULL
-       ORDER BY created_at ASC`,
-    );
-    return result.rows.map(rowToRecord);
+    const client = await this.pool.connect();
+    try {
+      await this.withSearchPath(client);
+      const result = await client.query(
+        `SELECT event_id, topic, ordering_key, payload, principal, tenant_id, trace_id,
+                created_at, published_at, attempts
+         FROM outbox_events
+         WHERE published_at IS NULL
+         ORDER BY created_at ASC`,
+      );
+      return result.rows.map(rowToRecord);
+    } finally {
+      client.release();
+    }
   }
 
   async markPublished(eventId: string): Promise<void> {
-    await this.pool.query(
-      'UPDATE outbox SET published_at = NOW() WHERE event_id = $1',
-      [eventId],
-    );
+    const client = await this.pool.connect();
+    try {
+      await this.withSearchPath(client);
+      await client.query(
+        'UPDATE outbox_events SET published_at = NOW() WHERE event_id = $1',
+        [eventId],
+      );
+    } finally {
+      client.release();
+    }
   }
 
   async incrementAttempts(eventId: string): Promise<void> {
-    await this.pool.query(
-      'UPDATE outbox SET attempts = attempts + 1 WHERE event_id = $1',
-      [eventId],
-    );
+    const client = await this.pool.connect();
+    try {
+      await this.withSearchPath(client);
+      await client.query(
+        'UPDATE outbox_events SET attempts = attempts + 1 WHERE event_id = $1',
+        [eventId],
+      );
+    } finally {
+      client.release();
+    }
   }
 
   getBusinessRows(_table: string): Record<string, unknown>[] {
-    throw new Error('use getBusinessRowsAsync for PostgresOutboxStore');
-  }
-
-  async getBusinessRowsAsync(table: string): Promise<Record<string, unknown>[]> {
-    const result = await this.pool.query(
-      'SELECT row_data FROM business_data WHERE table_name = $1 ORDER BY id ASC',
-      [table],
-    );
-    return result.rows.map((r) => r.row_data as Record<string, unknown>);
+    return [];
   }
 
   onNotify(listener: (eventId: string) => void): () => void {

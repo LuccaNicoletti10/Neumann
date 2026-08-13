@@ -70,7 +70,7 @@ function splitCsvLine(line: string): string[] {
   return out;
 }
 
-function main(): number {
+async function main(): Promise<number> {
   const log = console.log;
   if (!existsSync(clientesPath) || !existsSync(fatPath)) {
     console.error(`CSVs não encontrados em ${dataDir}`);
@@ -86,32 +86,32 @@ function main(): number {
     clock: ontoClock('2024-06-01T12:00:00.000Z'),
     nextId: ontoIds(),
   });
-  const o = onto.createOntology({ name: 'sales-gd', createdBy: 'demo' });
-  onto.addPropertyType(o.id, { id: 'pt.name', displayName: 'Name', baseType: 'string' });
-  onto.addPropertyType(o.id, { id: 'pt.email', displayName: 'Email', baseType: 'string' });
-  onto.addPropertyType(o.id, { id: 'pt.status', displayName: 'Status', baseType: 'string' });
-  onto.addPropertyType(o.id, { id: 'pt.state', displayName: 'State', baseType: 'string' });
-  onto.addPropertyType(o.id, { id: 'pt.amount', displayName: 'Amount', baseType: 'number' });
-  onto.addPropertyType(o.id, { id: 'pt.qty', displayName: 'Qty', baseType: 'number' });
-  onto.addPropertyType(o.id, { id: 'pt.order_no', displayName: 'OrderNo', baseType: 'string' });
-  onto.addObjectType(o.id, {
+  const o = await onto.createOntology({ name: 'sales-gd', createdBy: 'demo' });
+  await onto.addPropertyType(o.id, { id: 'pt.name', displayName: 'Name', baseType: 'string' });
+  await onto.addPropertyType(o.id, { id: 'pt.email', displayName: 'Email', baseType: 'string' });
+  await onto.addPropertyType(o.id, { id: 'pt.status', displayName: 'Status', baseType: 'string' });
+  await onto.addPropertyType(o.id, { id: 'pt.state', displayName: 'State', baseType: 'string' });
+  await onto.addPropertyType(o.id, { id: 'pt.amount', displayName: 'Amount', baseType: 'number' });
+  await onto.addPropertyType(o.id, { id: 'pt.qty', displayName: 'Qty', baseType: 'number' });
+  await onto.addPropertyType(o.id, { id: 'pt.order_no', displayName: 'OrderNo', baseType: 'string' });
+  await onto.addObjectType(o.id, {
     id: 'ot.customer',
     displayName: 'Customer',
     propertyTypeIds: ['pt.name', 'pt.email', 'pt.status', 'pt.state'],
   });
-  onto.addObjectType(o.id, {
+  await onto.addObjectType(o.id, {
     id: 'ot.invoice',
     displayName: 'Invoice',
     propertyTypeIds: ['pt.name', 'pt.amount', 'pt.qty', 'pt.order_no', 'pt.state'],
   });
-  onto.addLinkType(o.id, {
+  await onto.addLinkType(o.id, {
     id: 'lt.invoice_of',
     displayName: 'invoice_of',
     sourceObjectTypeId: 'ot.invoice',
     targetObjectTypeId: 'ot.customer',
     cardinality: 'N:1',
   });
-  const ov = onto.commit({ ontologyId: o.id });
+  const ov = await onto.commit({ ontologyId: o.id });
   log(`  ontology ${ov.id} customer+invoice+link`);
 
   const platform = createObjectPlatform({
@@ -347,4 +347,6 @@ function main(): number {
   return ok ? 0 : 1;
 }
 
-process.exitCode = main();
+void main().then((code) => {
+  process.exitCode = code;
+});

@@ -22,37 +22,37 @@ export interface CliDeps {
   error?: (message: string) => void;
 }
 
-export function runDemo(log: (message: string) => void = console.log): number {
+export async function runDemo(log: (message: string) => void = console.log): Promise<number> {
   const reg = createOntologyRegistry({
     clock: createDeterministicClock('2024-06-01T12:00:00.000Z'),
     nextId: createIdGenerator(),
   });
 
   log('== 1. create ontology + SEMÂNTICA (Property/Object/Link) ==');
-  const onto = reg.createOntology({
+  const onto = await reg.createOntology({
     name: 'kernel-demo',
     description: 'generic dataset ontology',
     createdBy: 'platform',
   });
-  reg.addPropertyType(onto.id, {
+  await reg.addPropertyType(onto.id, {
     id: 'pt.name',
     displayName: 'Name',
     baseType: 'string',
     validators: [{ kind: 'required' }],
   });
-  reg.addPropertyType(onto.id, {
+  await reg.addPropertyType(onto.id, {
     id: 'pt.email',
     displayName: 'Email',
     baseType: 'string',
     validators: [{ kind: 'regex', pattern: '^[^@]+@[^@]+$' }],
   });
-  reg.addObjectType(onto.id, {
+  await reg.addObjectType(onto.id, {
     id: 'ot.customer',
     displayName: 'Customer',
     baseType: 'ot.entity',
     propertyTypeIds: ['pt.name', 'pt.email'],
   });
-  reg.addLinkType(onto.id, {
+  await reg.addLinkType(onto.id, {
     id: 'lt.customer_of',
     displayName: 'customer_of',
     sourceObjectTypeId: 'ot.customer',
@@ -61,45 +61,45 @@ export function runDemo(log: (message: string) => void = console.log): number {
   });
 
   log('== 2. CINÉTICA (Action/Function stubs) ==');
-  reg.addActionType(onto.id, {
+  await reg.addActionType(onto.id, {
     id: 'act.reclassify',
     displayName: 'ReclassifyCustomer',
     inputObjectTypeIds: ['ot.customer'],
   });
-  reg.addFunctionType(onto.id, {
+  await reg.addFunctionType(onto.id, {
     id: 'fn.score',
     displayName: 'scoreRecord',
     inputObjectTypeIds: ['ot.customer'],
   });
 
   log('== 3. commit v1 ==');
-  const v1 = reg.commit({ ontologyId: onto.id, createdBy: 'platform' });
+  const v1 = await reg.commit({ ontologyId: onto.id, createdBy: 'platform' });
   log(`  v1=${v1.id} n=${v1.versionNumber} hash=${v1.contentHash.slice(0, 12)}…`);
   log(`  objectTypes=${Object.keys(v1.objectTypes).join(',')}`);
 
   log('== 4. evoluir draft → commit v2 ==');
-  reg.openDraft(onto.id);
-  reg.addPropertyType(onto.id, {
+  await reg.openDraft(onto.id);
+  await reg.addPropertyType(onto.id, {
     id: 'pt.region',
     displayName: 'Region',
     baseType: 'string',
   });
   // ObjectType mutável só no draft: re-add via openDraft already has ot.customer —
   // replace by adding new type Account.
-  reg.addObjectType(onto.id, {
+  await reg.addObjectType(onto.id, {
     id: 'ot.account',
     displayName: 'Account',
     propertyTypeIds: ['pt.name', 'pt.region'],
   });
-  const v2 = reg.commit({ ontologyId: onto.id, createdBy: 'platform' });
+  const v2 = await reg.commit({ ontologyId: onto.id, createdBy: 'platform' });
   log(`  v2=${v2.id} n=${v2.versionNumber} hash=${v2.contentHash.slice(0, 12)}…`);
-  const d = reg.diff(v1.id, v2.id);
+  const d = await reg.diff(v1.id, v2.id);
   log(`  diff added OT=${d.addedObjectTypes.join(',')} PT=${d.addedPropertyTypes.join(',')}`);
 
   log('== 5. rollback → v3 conteúdo = v1 (histórico preservado) ==');
-  const v3 = reg.rollback(onto.id, v1.id, 'platform');
+  const v3 = await reg.rollback(onto.id, v1.id, 'platform');
   log(`  v3=${v3.id} n=${v3.versionNumber} hash=${v3.contentHash.slice(0, 12)}…`);
-  const versions = reg.listVersions(onto.id);
+  const versions = await reg.listVersions(onto.id);
   log(`  versions=${versions.map((v) => `v${v.versionNumber}`).join(',')}`);
 
   // Imutabilidade: tentar mutar snapshot deve falhar (frozen).

@@ -37,11 +37,13 @@ export interface OperationalEvent {
 }
 
 export interface OperationalEventStore {
-  append(event: Omit<OperationalEvent, 'id' | 'at'> & { id?: string; at?: string }): OperationalEvent;
+  append(
+    event: Omit<OperationalEvent, 'id' | 'at'> & { id?: string; at?: string },
+  ): Promise<OperationalEvent>;
   list(filter?: {
     ontologyId?: OntologyId;
     kind?: OperationalEventKind;
     objectId?: ObjectRecordId;
     limit?: number;
-  }): OperationalEvent[];
+  }): Promise<OperationalEvent[]>;
 }

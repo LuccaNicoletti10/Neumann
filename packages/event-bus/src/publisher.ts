@@ -48,7 +48,7 @@ export class OutboxPublisher {
 
   async tick(): Promise<void> {
     if (!this.running) return;
-    const records = this.store.listUnpublished();
+    const records = await this.store.listUnpublished();
     for (const record of records) {
       await this.deliver(record);
     }
@@ -77,7 +77,8 @@ export class OutboxPublisher {
 
   private async runDelivery(record: OutboxRecord): Promise<void> {
     await this.withKeyLock(record.key, async () => {
-      const latest = this.store.listUnpublished().find((r) => r.eventId === record.eventId);
+      const unpublished = await this.store.listUnpublished();
+      const latest = unpublished.find((r) => r.eventId === record.eventId);
       if (!latest) return;
       try {
         await this.handler(latest);

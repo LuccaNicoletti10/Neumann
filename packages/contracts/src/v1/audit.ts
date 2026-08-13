@@ -37,19 +37,47 @@ export interface AuditVerifyResult {
   reason?: string;
 }
 
-/** Contrato do audit log. */
+/** Input for a chained append (hashes computed atomically by the repository). */
+export interface AuditAppendInput {
+  id: AuditEntryId;
+  messageType: AuditMessageType;
+  eventData: string | null;
+  metadata: Record<string, string>;
+  salt: string | null;
+  at: string;
+  principal?: string;
+}
+
+/**
+ * Durable audit persistence. `appendChained` MUST determine previousSummaryHash
+ * atomically (transaction + lock). Never SELECT last hash → compute → INSERT
+ * without concurrency protection.
+ */
+export interface AuditRepository {
+  appendChained(input: AuditAppendInput): Promise<AuditEntry>;
+  redact(entryId: AuditEntryId): Promise<AuditEntry>;
+  list(): Promise<readonly AuditEntry[]>;
+  head(): Promise<AuditEntry | undefined>;
+  getById(entryId: AuditEntryId): Promise<AuditEntry | undefined>;
+}
+
+/** Contrato do audit log. Memory adapters may resolve immediately; callers always await. */
 export interface AuditLog {
-  begin(): AuditEntry;
-  append(eventData: string, metadata?: Record<string, string>, principal?: string): AuditEntry;
+  begin(): Promise<AuditEntry>;
+  append(
+    eventData: string,
+    metadata?: Record<string, string>,
+    principal?: string,
+  ): Promise<AuditEntry>;
   /** Sela o segmento atual (commit). */
-  commit(note?: string): AuditEntry;
+  commit(note?: string): Promise<AuditEntry>;
   /** Redige entrada: remove eventData/salt, preserva hashes da cadeia. */
-  redact(entryId: AuditEntryId): AuditEntry;
-  verify(): AuditVerifyResult;
-  /** Detecta adulteração se alguém alterar summaryHash/logHash. */
+  redact(entryId: AuditEntryId): Promise<AuditEntry>;
+  verify(): Promise<AuditVerifyResult>;
+  /** Detecta adulteração se alguém alterar summaryHash/logHash. Pure / sync. */
   detectTamper(mutated: readonly AuditEntry[]): AuditVerifyResult;
-  list(): readonly AuditEntry[];
-  head(): AuditEntry | undefined;
+  list(): Promise<readonly AuditEntry[]>;
+  head(): Promise<AuditEntry | undefined>;
 }
 
 export function buildGoldenAuditEntry(): AuditEntry {

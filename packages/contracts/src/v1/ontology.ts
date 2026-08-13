@@ -227,32 +227,36 @@ export interface CommitOntologyInput {
   createdBy?: string;
 }
 
-/** Contrato OntologyRegistry (Passo 17). */
+/** Contrato OntologyRegistry (Passo 17). Callers always await (PG is durable). */
 export interface OntologyRegistry {
-  createOntology(input: CreateOntologyInput): Ontology;
-  getOntology(ontologyId: OntologyId): Ontology | undefined;
+  createOntology(input: CreateOntologyInput): Promise<Ontology>;
+  getOntology(ontologyId: OntologyId): Promise<Ontology | undefined>;
   /** List all ontologies (persisted). */
-  listOntologies(): Ontology[];
+  listOntologies(): Promise<Ontology[]>;
   /** Abre draft a partir da latest (ou vazio). */
-  openDraft(ontologyId: OntologyId): OntologyDraft;
-  getDraft(ontologyId: OntologyId): OntologyDraft | undefined;
-  addPropertyType(ontologyId: OntologyId, def: PropertyTypeDef): void;
-  addObjectType(ontologyId: OntologyId, def: ObjectTypeDef): void;
-  addLinkType(ontologyId: OntologyId, def: LinkTypeDef): void;
-  addActionType(ontologyId: OntologyId, def: ActionTypeDef): void;
-  addFunctionType(ontologyId: OntologyId, def: FunctionTypeDef): void;
+  openDraft(ontologyId: OntologyId): Promise<OntologyDraft>;
+  getDraft(ontologyId: OntologyId): Promise<OntologyDraft | undefined>;
+  addPropertyType(ontologyId: OntologyId, def: PropertyTypeDef): Promise<void>;
+  addObjectType(ontologyId: OntologyId, def: ObjectTypeDef): Promise<void>;
+  addLinkType(ontologyId: OntologyId, def: LinkTypeDef): Promise<void>;
+  addActionType(ontologyId: OntologyId, def: ActionTypeDef): Promise<void>;
+  addFunctionType(ontologyId: OntologyId, def: FunctionTypeDef): Promise<void>;
   /** Commit = nova OntologyVersion imutável. */
-  commit(input: CommitOntologyInput): OntologyVersion;
-  getVersion(versionId: OntologyVersionId): OntologyVersion | undefined;
-  getLatestVersion(ontologyId: OntologyId): OntologyVersion | undefined;
-  listVersions(ontologyId: OntologyId): OntologyVersion[];
+  commit(input: CommitOntologyInput): Promise<OntologyVersion>;
+  getVersion(versionId: OntologyVersionId): Promise<OntologyVersion | undefined>;
+  getLatestVersion(ontologyId: OntologyId): Promise<OntologyVersion | undefined>;
+  listVersions(ontologyId: OntologyId): Promise<OntologyVersion[]>;
   /**
    * Rollback: cria NOVA versão cujo conteúdo = snapshot da target
    * (não reescreve histórico).
    */
-  rollback(ontologyId: OntologyId, targetVersionId: OntologyVersionId, createdBy?: string): OntologyVersion;
+  rollback(
+    ontologyId: OntologyId,
+    targetVersionId: OntologyVersionId,
+    createdBy?: string,
+  ): Promise<OntologyVersion>;
   /** Diff superficial entre duas versões. */
-  diff(a: OntologyVersionId, b: OntologyVersionId): OntologyDiff;
+  diff(a: OntologyVersionId, b: OntologyVersionId): Promise<OntologyDiff>;
 }
 
 export interface OntologyDiff {

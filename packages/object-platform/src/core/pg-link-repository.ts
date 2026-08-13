@@ -10,11 +10,11 @@ import type {
   LinkTypeId,
   ObjectTypeId,
   OntologyId,
+  SqlClient,
 } from 'contracts';
 
 import { createSystemClock, createUuidIdGenerator } from './determinism.js';
 import type { Clock, IdGenerator } from './types.js';
-import type { SqlClient } from './pg-object-repository.js';
 
 export interface CreatePgLinkRepositoryOptions {
   sql: SqlClient;

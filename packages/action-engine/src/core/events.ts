@@ -1,6 +1,6 @@
 /**
  * action-engine — src/core/events.ts
- * In-memory OperationalEventStore.
+ * In-memory OperationalEventStore (tests/demos only).
  */
 
 import type { OperationalEvent, OperationalEventStore } from 'contracts';
@@ -14,7 +14,7 @@ export function createMemoryOperationalEventStore(opts: {
   const events: OperationalEvent[] = [];
 
   return {
-    append(partial) {
+    async append(partial) {
       const event: OperationalEvent = {
         id: partial.id ?? opts.nextId('opev'),
         at: partial.at ?? opts.clock(),
@@ -33,7 +33,7 @@ export function createMemoryOperationalEventStore(opts: {
       events.push(event);
       return event;
     },
-    list(filter) {
+    async list(filter) {
       let out = [...events];
       if (filter?.ontologyId) {
         out = out.filter((e) => e.ontologyId === filter.ontologyId);

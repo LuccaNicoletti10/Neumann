@@ -83,6 +83,6 @@ describe('ActionExecutor', () => {
     });
     expect(r.status).toBe('SUCCEEDED');
     expect((await objects.get('o1', 'ot.order', '1'))?.properties.status).toBe('ok');
-    expect(audit.list().some((e) => e.id === r.auditEntryId)).toBe(true);
+    expect((await audit.list()).some((e) => e.id === r.auditEntryId)).toBe(true);
   });
 });

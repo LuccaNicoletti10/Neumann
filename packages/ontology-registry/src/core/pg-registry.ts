@@ -1,6 +1,7 @@
 /**
- * ontology-registry — src/core/registry.ts
- * OntologyRegistry: draft → commit (nova versão) → rollback (nova versão = snapshot antigo).
+ * ontology-registry — src/core/pg-registry.ts
+ * PostgreSQL OntologyRegistry. Committed versions survive restart.
+ * Drafts are session-local (uncommitted work is not durable).
  */
 
 import {
@@ -19,6 +20,7 @@ import {
   type OntologyVersion,
   type OntologyVersionId,
   type PropertyTypeDef,
+  type SqlClient,
 } from 'contracts';
 
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
@@ -34,19 +36,49 @@ import {
 } from './maps.js';
 import type { CreateOntologyRegistryOptions } from './types.js';
 
-export function createOntologyRegistry(
-  opts: CreateOntologyRegistryOptions = {},
+export interface CreatePgOntologyRegistryOptions extends CreateOntologyRegistryOptions {
+  sql: SqlClient;
+}
+
+function rowToOntology(row: Record<string, unknown>): Ontology {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    description: row.description == null ? undefined : String(row.description),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    latestVersionId: row.latest_version_id == null ? undefined : String(row.latest_version_id),
+  };
+}
+
+function rowToVersion(row: Record<string, unknown>): OntologyVersion {
+  const snapshot = (row.snapshot as Omit<OntologyDraft, 'ontologyId' | 'baseVersionId'>) ?? emptyMaps();
+  return freezeVersion({
+    id: String(row.id),
+    ontologyId: String(row.ontology_id),
+    versionNumber: Number(row.version_number),
+    parentVersionId: row.parent_version_id == null ? undefined : String(row.parent_version_id),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    createdBy: String(row.created_by),
+    contentHash: String(row.content_hash),
+    status: 'COMMITTED',
+    objectTypes: structuredClone(snapshot.objectTypes ?? {}),
+    propertyTypes: structuredClone(snapshot.propertyTypes ?? {}),
+    linkTypes: structuredClone(snapshot.linkTypes ?? {}),
+    actionTypes: structuredClone(snapshot.actionTypes ?? {}),
+    functionTypes: structuredClone(snapshot.functionTypes ?? {}),
+  });
+}
+
+export function createPgOntologyRegistry(
+  opts: CreatePgOntologyRegistryOptions,
 ): OntologyRegistry {
+  const { sql } = opts;
   const clock = opts.clock ?? createDeterministicClock();
   const nextId = opts.nextId ?? createIdGenerator();
-
-  const ontologies = new Map<OntologyId, Ontology>();
-  const versions = new Map<OntologyVersionId, OntologyVersion>();
-  const versionsByOntology = new Map<OntologyId, OntologyVersionId[]>();
   const drafts = new Map<OntologyId, OntologyDraft>();
 
-  function requireOntology(id: OntologyId): Ontology {
-    const o = ontologies.get(id);
+  async function requireOntology(id: OntologyId): Promise<Ontology> {
+    const o = await registry.getOntology(id);
     if (!o) throw new Error(`ontologia desconhecida: ${id}`);
     return o;
   }
@@ -57,16 +89,16 @@ export function createOntologyRegistry(
     return d;
   }
 
-  function commitMaps(
+  async function commitMaps(
     ontologyId: OntologyId,
     maps: Omit<OntologyDraft, 'ontologyId' | 'baseVersionId'>,
     parentVersionId: OntologyVersionId | undefined,
     createdBy: string,
-  ): OntologyVersion {
+  ): Promise<OntologyVersion> {
     validateDraft({ ontologyId, baseVersionId: parentVersionId, ...maps });
-    const o = requireOntology(ontologyId);
-    const list = versionsByOntology.get(ontologyId) ?? [];
-    const versionNumber = list.length + 1;
+    await requireOntology(ontologyId);
+    const existing = await registry.listVersions(ontologyId);
+    const versionNumber = existing.length + 1;
     const contentHash = hashCanonical(contentPayload(maps));
     const version = freezeVersion({
       id: nextId('ov'),
@@ -83,11 +115,26 @@ export function createOntologyRegistry(
       actionTypes: structuredClone(maps.actionTypes),
       functionTypes: structuredClone(maps.functionTypes),
     });
-
-    versions.set(version.id, version);
-    list.push(version.id);
-    versionsByOntology.set(ontologyId, list);
-    o.latestVersionId = version.id;
+    await sql.query(
+      `INSERT INTO platform_ontology_versions (
+         id, ontology_id, version_number, parent_version_id,
+         created_at, created_by, content_hash, status, snapshot
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,'COMMITTED',$8::jsonb)`,
+      [
+        version.id,
+        ontologyId,
+        versionNumber,
+        parentVersionId ?? null,
+        version.createdAt,
+        createdBy,
+        contentHash,
+        JSON.stringify(contentPayload(maps)),
+      ],
+    );
+    await sql.query(
+      `UPDATE platform_ontologies SET latest_version_id = $1 WHERE id = $2`,
+      [version.id, ontologyId],
+    );
     drafts.delete(ontologyId);
     return version;
   }
@@ -100,32 +147,36 @@ export function createOntologyRegistry(
         description: input.description,
         createdAt: clock(),
       };
-      ontologies.set(ontology.id, ontology);
-      versionsByOntology.set(ontology.id, []);
-      drafts.set(ontology.id, {
-        ontologyId: ontology.id,
-        ...emptyMaps(),
-      });
+      await sql.query(
+        `INSERT INTO platform_ontologies (id, name, description, created_at)
+         VALUES ($1,$2,$3,$4)`,
+        [ontology.id, ontology.name, ontology.description ?? null, ontology.createdAt],
+      );
+      drafts.set(ontology.id, { ontologyId: ontology.id, ...emptyMaps() });
       return ontology;
     },
 
     async getOntology(ontologyId) {
-      return ontologies.get(ontologyId);
+      const result = await sql.query(
+        `SELECT * FROM platform_ontologies WHERE id = $1`,
+        [ontologyId],
+      );
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      return row ? rowToOntology(row) : undefined;
     },
 
     async listOntologies() {
-      return [...ontologies.values()];
+      const result = await sql.query(
+        `SELECT * FROM platform_ontologies ORDER BY created_at ASC`,
+      );
+      return (result.rows as Record<string, unknown>[]).map(rowToOntology);
     },
 
     async openDraft(ontologyId) {
-      requireOntology(ontologyId);
+      await requireOntology(ontologyId);
       const latest = await registry.getLatestVersion(ontologyId);
       const draft: OntologyDraft = latest
-        ? {
-            ontologyId,
-            baseVersionId: latest.id,
-            ...mapsFromVersion(latest),
-          }
+        ? { ontologyId, baseVersionId: latest.id, ...mapsFromVersion(latest) }
         : { ontologyId, ...emptyMaps() };
       drafts.set(ontologyId, draft);
       return draft;
@@ -177,48 +228,52 @@ export function createOntologyRegistry(
 
     async commit(input: CommitOntologyInput): Promise<OntologyVersion> {
       const d = requireDraft(input.ontologyId);
-      const maps = cloneDraftMaps(d);
       return commitMaps(
         input.ontologyId,
-        maps,
+        cloneDraftMaps(d),
         d.baseVersionId,
         input.createdBy ?? 'system',
       );
     },
 
     async getVersion(versionId) {
-      return versions.get(versionId);
+      const result = await sql.query(
+        `SELECT * FROM platform_ontology_versions WHERE id = $1`,
+        [versionId],
+      );
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      return row ? rowToVersion(row) : undefined;
     },
 
     async getLatestVersion(ontologyId) {
-      const o = ontologies.get(ontologyId);
+      const o = await registry.getOntology(ontologyId);
       if (!o?.latestVersionId) return undefined;
-      return versions.get(o.latestVersionId);
+      return registry.getVersion(o.latestVersionId);
     },
 
     async listVersions(ontologyId) {
-      const ids = versionsByOntology.get(ontologyId) ?? [];
-      return ids.map((id) => versions.get(id)!);
+      const result = await sql.query(
+        `SELECT * FROM platform_ontology_versions
+         WHERE ontology_id = $1
+         ORDER BY version_number ASC`,
+        [ontologyId],
+      );
+      return (result.rows as Record<string, unknown>[]).map(rowToVersion);
     },
 
     async rollback(ontologyId, targetVersionId, createdBy = 'system') {
-      requireOntology(ontologyId);
-      const target = versions.get(targetVersionId);
+      await requireOntology(ontologyId);
+      const target = await registry.getVersion(targetVersionId);
       if (!target || target.ontologyId !== ontologyId) {
         throw new Error(`versão alvo inválida: ${targetVersionId}`);
       }
       const latest = await registry.getLatestVersion(ontologyId);
-      return commitMaps(
-        ontologyId,
-        mapsFromVersion(target),
-        latest?.id,
-        createdBy,
-      );
+      return commitMaps(ontologyId, mapsFromVersion(target), latest?.id, createdBy);
     },
 
     async diff(aId, bId): Promise<OntologyDiff> {
-      const a = versions.get(aId);
-      const b = versions.get(bId);
+      const a = await registry.getVersion(aId);
+      const b = await registry.getVersion(bId);
       if (!a || !b) throw new Error('versões desconhecidas para diff');
       const ot = changedKeys(a.objectTypes, b.objectTypes);
       const pt = changedKeys(a.propertyTypes, b.propertyTypes);

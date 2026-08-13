@@ -17,6 +17,26 @@
 **Objetivo:** um ObjectRepository/LinkRepository canônico; projector/graph/API/actions sobre a mesma verdade; Postgres durável; Actions atômicas + outbox; auth Bearer + policy.
 **Docs:** `docs/architecture.md` · `docs/platform-consolidation-audit.md` · `docs/openfoundry-adaptations.md`
 **Gate parcial:** `pnpm --filter platform-api test` (one-truth + listOntologies + soft-delete revive)
+**Gate rápido do kernel:** `pnpm gate:core` (typecheck + test + build do caminho crítico; CI completo continua no monorepo)
+
+Durability checklist (DONE = implementation + wiring em `createPostgresPlatformContext` + tests + restart/concurrency gate quando aplicável):
+
+| Item | Status | Gate |
+|---|---|---|
+| PgObjectRepository / PgLinkRepository | DONE | CAS + soft-delete revive (memory+PG schema) |
+| PgOperationalEventStore | DONE | append → restart → list |
+| PgActionExecutionStore | DONE | execute → restart → getExecution |
+| PostgreSQL idempotency | DONE | concurrent same key → 1 execução; restart + replay não reexecuta |
+| Actions transacionais (UnitOfWork) | DONE | falha no meio → ROLLBACK; sem estado parcial |
+| Canonical outbox (`outbox_events`) | DONE | PostgresOutboxStore + Action UoW usam a migration 0001; sem tabela `outbox` paralela |
+| Connector write-back (pedido) | PARTIAL | side effect persiste no outbox na mesma tx; worker HTTP = Passo 25 |
+| PolicyEngine / authorize no ActionExecutor | DONE | production fail-closed (sem `allowAll` default); memory injeta allowAll explícito |
+| Bearer authentication | PARTIAL | stub em `/api/v2`; IAM verification = Phase D restante |
+| PgOntologyRegistry | DONE | create+commit → restart → get ontology/version |
+| Durable PgAuditRepository | DONE | GENESIS/EVENT/COMMIT/REDACTED; restart verify; concurrent append; redact+reload |
+| Object history na mesma tx | PARTIAL | tabela `platform_object_history` existe (0003); projector ainda não grava nela no UoW |
+
+Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pagar` até estes gates.
 
 ---
 

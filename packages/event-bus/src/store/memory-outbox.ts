@@ -25,7 +25,7 @@ export interface OutboxTransaction {
 
 export interface OutboxStore {
   begin(): OutboxTransaction;
-  listUnpublished(): OutboxRecord[];
+  listUnpublished(): OutboxRecord[] | Promise<OutboxRecord[]>;
   markPublished(eventId: string): Promise<void>;
   incrementAttempts(eventId: string): Promise<void>;
   getBusinessRows(table: string): Record<string, unknown>[];

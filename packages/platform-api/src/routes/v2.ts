@@ -79,13 +79,13 @@ export async function registerV2Routes(
   ctx: PlatformContext,
 ): Promise<void> {
   app.get('/api/v2/ontologies', async () => {
-    return { data: ctx.ontology.listOntologies() };
+    return { data: await ctx.ontology.listOntologies() };
   });
 
   app.post<{ Body: { name: string; description?: string } }>(
     '/api/v2/ontologies',
     async (req, reply) => {
-      const o = ctx.ontology.createOntology({
+      const o = await ctx.ontology.createOntology({
         name: req.body.name,
         description: req.body.description,
         createdBy: principalOf(req),
@@ -97,7 +97,7 @@ export async function registerV2Routes(
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology',
     async (req, reply) => {
-      const o = ctx.ontology.getOntology(req.params.ontology);
+      const o = await ctx.ontology.getOntology(req.params.ontology);
       if (!o) throw notFound('OntologyNotFound', 'ontology not found', { ontology: req.params.ontology });
       return o;
     },
@@ -106,7 +106,7 @@ export async function registerV2Routes(
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/objectTypes',
     async (req, reply) => {
-      const v = ctx.ontology.getLatestVersion(req.params.ontology);
+      const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       if (!v) return reply.code(404).send({ error: 'ontology not found' });
       return { data: Object.values(v.objectTypes) };
     },
@@ -115,7 +115,7 @@ export async function registerV2Routes(
   app.get<{ Params: { ontology: string; objectType: string } }>(
     '/api/v2/ontologies/:ontology/objectTypes/:objectType',
     async (req, reply) => {
-      const v = ctx.ontology.getLatestVersion(req.params.ontology);
+      const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       const ot = v?.objectTypes[req.params.objectType];
       if (!ot) return reply.code(404).send({ error: 'objectType not found' });
       return ot;
@@ -157,7 +157,7 @@ export async function registerV2Routes(
       properties: req.body.properties,
       source: req.body.source ?? 'api',
     });
-    ctx.events.append({
+    await ctx.events.append({
       kind: 'ObjectCreated',
       ontologyId: req.params.ontology,
       principal: principalOf(req),
@@ -180,7 +180,7 @@ export async function registerV2Routes(
         req.params.primaryKey,
         { properties: req.body.properties },
       );
-      ctx.events.append({
+      await ctx.events.append({
         kind: 'ObjectModified',
         ontologyId: req.params.ontology,
         principal: principalOf(req),
@@ -248,7 +248,7 @@ export async function registerV2Routes(
           | 'N:N'
           | undefined,
       });
-      ctx.events.append({
+      await ctx.events.append({
         kind: 'LinkCreated',
         ontologyId: req.params.ontology,
         principal: principalOf(req),
@@ -307,7 +307,7 @@ export async function registerV2Routes(
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/actionTypes',
     async (req, reply) => {
-      const v = ctx.ontology.getLatestVersion(req.params.ontology);
+      const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       if (!v) return reply.code(404).send({ error: 'ontology not found' });
       return { data: Object.values(v.actionTypes) };
     },
@@ -317,9 +317,9 @@ export async function registerV2Routes(
     Params: { ontology: string };
     Body: ActionTypeDef;
   }>('/api/v2/ontologies/:ontology/actionTypes', async (req, reply) => {
-    ctx.ontology.openDraft(req.params.ontology);
-    ctx.ontology.addActionType(req.params.ontology, req.body);
-    ctx.ontology.commit({ ontologyId: req.params.ontology, createdBy: principalOf(req) });
+    await ctx.ontology.openDraft(req.params.ontology);
+    await ctx.ontology.addActionType(req.params.ontology, req.body);
+    await ctx.ontology.commit({ ontologyId: req.params.ontology, createdBy: principalOf(req) });
     ctx.actions.registerActionType(req.params.ontology, req.body);
     return reply.code(201).send(req.body);
   });

@@ -27,7 +27,7 @@ export interface CliDeps {
   error?: (message: string) => void;
 }
 
-export function runDemo(log: (message: string) => void = console.log): number {
+export async function runDemo(log: (message: string) => void = console.log): Promise<number> {
   const clock = createDeterministicClock('2024-06-01T12:00:00.000Z');
   const ids = createIdGenerator();
   const engine = createPolicyEngine({ clock, nextId: ids });
@@ -74,10 +74,10 @@ export function runDemo(log: (message: string) => void = console.log): number {
   });
   log(`  alice→sales read=${aliceRead.decision}`);
   log(`  bob→sales read=${bobReadSales.decision}`);
-  audit.append(`authorize ${aliceRead.decision} read ds-sales`, {
+  await audit.append(`authorize ${aliceRead.decision} read ds-sales`, {
     decision: aliceRead.decision,
   }, 'alice');
-  audit.append(`authorize ${bobReadSales.decision} read ds-sales`, {
+  await audit.append(`authorize ${bobReadSales.decision} read ds-sales`, {
     decision: bobReadSales.decision,
   }, 'bob');
 
@@ -120,21 +120,22 @@ export function runDemo(log: (message: string) => void = console.log): number {
   });
   log(`  alice create ledger ok=${created.ok} epid=${created.epid}`);
   log(`  bob create finance ok=${deniedCreate.ok} reason=${deniedCreate.denyReason}`);
-  audit.append(`create ds-ledger ${created.ok}`, { op: 'create' }, 'alice');
-  audit.commit('demo-seal');
+  await audit.append(`create ds-ledger ${created.ok}`, { op: 'create' }, 'alice');
+  await audit.commit('demo-seal');
 
   log('== 6. audit verify + tamper detection ==');
-  const okVerify = audit.verify();
+  const okVerify = await audit.verify();
   log(`  verify ok=${okVerify.ok} checked=${okVerify.checked}`);
 
-  const mutated = audit.list().map((e, i) =>
+  const listed = await audit.list();
+  const mutated = listed.map((e, i) =>
     i === 1 ? { ...e, summaryHash: '0'.repeat(64) } : e,
   );
   const tamper = audit.detectTamper(mutated);
   log(`  tamper detected ok=${tamper.ok} reason=${tamper.reason}`);
 
-  const redacted = audit.redact(audit.list()[1]!.id);
-  const afterRedact = audit.verify();
+  const redacted = await audit.redact(listed[1]!.id);
+  const afterRedact = await audit.verify();
   log(`  redact ${redacted.id} type=${redacted.messageType} chainStillOk=${afterRedact.ok}`);
 
   const ok =

@@ -68,7 +68,8 @@
     "demo:sales": "tsx scripts/demo-sales-gd.ts",
     "gate:bloco1": "pnpm --filter observability cli -- check && pnpm --filter event-bus cli -- gate",
     "gate:t1.3": "pnpm --filter connector-postgres cli -- gate-t1.3",
-    "gate:platform": "pnpm --filter object-set test && pnpm --filter platform-api test"
+    "gate:platform": "pnpm --filter object-set test && pnpm --filter platform-api test",
+    "gate:core": "turbo run typecheck test build --filter=contracts --filter=api-errors --filter=pagination --filter=object-platform --filter=ontology-registry --filter=object-set --filter=knowledge-graph --filter=action-engine --filter=policy-engine --filter=connector-sdk --filter=connector-postgres --filter=event-bus --filter=observability --filter=platform-api"
   },
   "devDependencies": {
     "tsx": "^4.16.0",

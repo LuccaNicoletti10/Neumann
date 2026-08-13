@@ -146,9 +146,22 @@ export {
   type AuditMessageType,
   type AuditEntry,
   type AuditVerifyResult,
+  type AuditAppendInput,
+  type AuditRepository,
   type AuditLog,
   buildGoldenAuditEntry,
 } from './audit.js';
+
+export {
+  type SqlQueryResult,
+  type SqlClient,
+  type TransactionManager,
+} from './sql.js';
+
+export {
+  type OutboxInsertInput,
+  type OutboxRepository,
+} from './outbox.js';
 
 export {
   type OntologyId,
@@ -229,6 +242,8 @@ export {
   type ActionApplyRequest,
   type ActionApplyResult,
   type ActionExecution,
+  type ActionExecutionClaimResult,
+  type ActionExecutionStore,
   type ActionExecutor,
 } from './action-runtime.js';
 

@@ -15,63 +15,63 @@ import { resolveObjectSet } from 'object-set';
 import { createPlatformContext } from '../src/core/context.js';
 import { createPlatformServer } from '../src/server.js';
 
-function seedSalesOntology(ctx: ReturnType<typeof createPlatformContext>) {
-  const o = ctx.ontology.createOntology({
+async function seedSalesOntology(ctx: ReturnType<typeof createPlatformContext>) {
+  const o = await ctx.ontology.createOntology({
     name: 'sales',
     description: 'Neutral commerce ontology',
     createdBy: 'test',
   });
 
-  ctx.ontology.addPropertyType(o.id, {
+  await ctx.ontology.addPropertyType(o.id, {
     id: 'pt.name',
     displayName: 'Name',
     baseType: 'string',
   });
-  ctx.ontology.addPropertyType(o.id, {
+  await ctx.ontology.addPropertyType(o.id, {
     id: 'pt.email',
     displayName: 'Email',
     baseType: 'string',
   });
-  ctx.ontology.addPropertyType(o.id, {
+  await ctx.ontology.addPropertyType(o.id, {
     id: 'pt.sku',
     displayName: 'SKU',
     baseType: 'string',
   });
-  ctx.ontology.addPropertyType(o.id, {
+  await ctx.ontology.addPropertyType(o.id, {
     id: 'pt.amount',
     displayName: 'Amount',
     baseType: 'number',
   });
-  ctx.ontology.addPropertyType(o.id, {
+  await ctx.ontology.addPropertyType(o.id, {
     id: 'pt.status',
     displayName: 'Status',
     baseType: 'string',
   });
 
-  ctx.ontology.addObjectType(o.id, {
+  await ctx.ontology.addObjectType(o.id, {
     id: 'ot.customer',
     displayName: 'Customer',
     propertyTypeIds: ['pt.name', 'pt.email'],
   });
-  ctx.ontology.addObjectType(o.id, {
+  await ctx.ontology.addObjectType(o.id, {
     id: 'ot.product',
     displayName: 'Product',
     propertyTypeIds: ['pt.name', 'pt.sku'],
   });
-  ctx.ontology.addObjectType(o.id, {
+  await ctx.ontology.addObjectType(o.id, {
     id: 'ot.sales-order',
     displayName: 'SalesOrder',
     propertyTypeIds: ['pt.amount', 'pt.status'],
   });
 
-  ctx.ontology.addLinkType(o.id, {
+  await ctx.ontology.addLinkType(o.id, {
     id: 'lt.customer-orders',
     displayName: 'Customer → SalesOrders',
     sourceObjectTypeId: 'ot.customer',
     targetObjectTypeId: 'ot.sales-order',
     cardinality: '1:N',
   });
-  ctx.ontology.addLinkType(o.id, {
+  await ctx.ontology.addLinkType(o.id, {
     id: 'lt.order-product',
     displayName: 'SalesOrder → Product',
     sourceObjectTypeId: 'ot.sales-order',
@@ -121,8 +121,8 @@ function seedSalesOntology(ctx: ReturnType<typeof createPlatformContext>) {
     permissions: ['actions:apply'],
   };
 
-  ctx.ontology.addActionType(o.id, approve);
-  const version = ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
+  await ctx.ontology.addActionType(o.id, approve);
+  const version = await ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
   ctx.actions.registerActionType(o.id, approve);
   return { ontologyId: o.id, version, approve };
 }
@@ -130,7 +130,7 @@ function seedSalesOntology(ctx: ReturnType<typeof createPlatformContext>) {
 describe('milestone — Customer / SalesOrder / Product platform', () => {
   it('create → links → ObjectSet → action → audit', async () => {
     const ctx = createPlatformContext();
-    const { ontologyId } = seedSalesOntology(ctx);
+    const { ontologyId } = await seedSalesOntology(ctx);
 
     // create objects
     const customer = await ctx.objects.create({
@@ -300,16 +300,16 @@ describe('milestone — Customer / SalesOrder / Product platform', () => {
     expect(updated?.version).toBe(order.version + 1);
 
     // audit persisted
-    const auditEntries = ctx.audit.list();
+    const auditEntries = await ctx.audit.list();
     expect(auditEntries.some((e) => e.id === applied.auditEntryId)).toBe(true);
-    expect(ctx.audit.verify().ok).toBe(true);
+    expect((await ctx.audit.verify()).ok).toBe(true);
 
     // operational events
-    const actionEvents = ctx.events.list({ kind: 'ActionApplied' });
+    const actionEvents = await ctx.events.list({ kind: 'ActionApplied' });
     expect(actionEvents.length).toBeGreaterThanOrEqual(1);
-    expect(ctx.events.list({ kind: 'ObjectModified' }).length).toBeGreaterThanOrEqual(1);
+    expect((await ctx.events.list({ kind: 'ObjectModified' })).length).toBeGreaterThanOrEqual(1);
     expect(
-      ctx.events.list({ kind: 'ExternalWritebackRequested' }).length,
+      (await ctx.events.list({ kind: 'ExternalWritebackRequested' })).length,
     ).toBeGreaterThanOrEqual(1);
 
     // idempotency

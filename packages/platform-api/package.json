@@ -28,6 +28,7 @@
     "contracts": "workspace:*",
     "fastify": "^4.28.0",
     "knowledge-graph": "workspace:*",
+    "event-bus": "workspace:*",
     "object-platform": "workspace:*",
     "object-set": "workspace:*",
     "ontology-registry": "workspace:*",

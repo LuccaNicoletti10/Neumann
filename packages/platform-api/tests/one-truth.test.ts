@@ -22,7 +22,7 @@ import { createPlatformServer } from '../src/server.js';
 describe('GATE 1 — one source of truth', () => {
   it('ObjectRepository is shared across ObjectSet, Graph, Action, /api/v2', async () => {
     const ctx = createMemoryPlatformContext();
-    const ontologyId = ctx.ontology.createOntology({ name: 'shared' }).id;
+    const ontologyId = (await ctx.ontology.createOntology({ name: 'shared' })).id;
 
     const obj = await ctx.objects.create({
       ontologyId,
@@ -152,7 +152,7 @@ describe('soft-delete revive', () => {
 describe('listOntologies', () => {
   it('GET /api/v2/ontologies returns created ontologies', async () => {
     const ctx = createMemoryPlatformContext();
-    const o = ctx.ontology.createOntology({ name: 'alpha' });
+    const o = await ctx.ontology.createOntology({ name: 'alpha' });
     const { app } = await createPlatformServer(ctx);
     const res = await app.inject({ method: 'GET', url: '/api/v2/ontologies' });
     expect(res.statusCode).toBe(200);

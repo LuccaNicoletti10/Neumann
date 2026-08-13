@@ -12,6 +12,7 @@ import type {
   ObjectRepository,
   OntologyId,
   ObjectTypeId,
+  SqlClient,
   UpdateObjectInput,
 } from 'contracts';
 
@@ -19,12 +20,7 @@ import { createSystemClock, createUuidIdGenerator } from './determinism.js';
 import { ObjectNotFoundError, VersionConflictError } from './errors.js';
 import type { Clock, IdGenerator } from './types.js';
 
-export interface SqlClient {
-  query<T = Record<string, unknown>>(
-    text: string,
-    params?: unknown[],
-  ): Promise<{ rows: T[]; rowCount?: number | null }>;
-}
+export type { SqlClient };
 
 export interface CreatePgObjectRepositoryOptions {
   sql: SqlClient;

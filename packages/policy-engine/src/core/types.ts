@@ -18,4 +18,6 @@ export interface CreateAuditLogOptions {
   nextSalt?: SaltGenerator;
   /** Commit automático a cada N eventos (0 = só manual). */
   autoCommitEvery?: number;
+  /** Durable backend. Default: in-memory (tests/demos only). */
+  repository?: import('contracts').AuditRepository;
 }

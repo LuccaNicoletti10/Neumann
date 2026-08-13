@@ -69,25 +69,25 @@ describe('Passo 16 gates', () => {
     expect(deny.ok).toBe(false);
   });
 
-  it('audit hash chain detecta adulteração e sobrevive redact', () => {
+  it('audit hash chain detecta adulteração e sobrevive redact', async () => {
     const audit = createAuditLog({
       clock: createDeterministicClock(),
       nextId: createIdGenerator(),
       nextSalt: createDeterministicSalt(),
     });
-    audit.begin();
-    const a = audit.append('event-a', { k: '1' });
-    audit.append('event-b', { k: '2' });
-    expect(audit.verify().ok).toBe(true);
+    await audit.begin();
+    const a = await audit.append('event-a', { k: '1' });
+    await audit.append('event-b', { k: '2' });
+    expect((await audit.verify()).ok).toBe(true);
 
-    const tampered = audit.list().map((e) =>
+    const tampered = (await audit.list()).map((e) =>
       e.id === a.id ? { ...e, summaryHash: 'deadbeef'.repeat(8) } : e,
     );
     expect(audit.detectTamper(tampered).ok).toBe(false);
 
-    audit.redact(a.id);
-    expect(audit.verify().ok).toBe(true);
-    expect(audit.list().find((e) => e.id === a.id)?.eventData).toBeNull();
+    await audit.redact(a.id);
+    expect((await audit.verify()).ok).toBe(true);
+    expect((await audit.list()).find((e) => e.id === a.id)?.eventData).toBeNull();
   });
 
   it('null policy herda EPID do ancestral', () => {
@@ -114,9 +114,9 @@ describe('Passo 16 gates', () => {
     ).toBe('partial');
   });
 
-  it('cli demo exit 0', () => {
+  it('cli demo exit 0', async () => {
     const lines: string[] = [];
-    expect(runDemo((m) => lines.push(m))).toBe(0);
+    expect(await runDemo((m) => lines.push(m))).toBe(0);
     expect(lines.some((l) => l.includes('demo ok'))).toBe(true);
   });
 });
