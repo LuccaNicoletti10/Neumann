@@ -14,7 +14,7 @@ import type {
   PropertyBaseType,
 } from 'contracts';
 
-import { baseTypeOf, type PropertyTypeLookup } from './coerce.js';
+import { baseTypeOf, invalidFilterValue, type PropertyTypeLookup } from './coerce.js';
 
 export interface SqlFragment {
   text: string;
@@ -75,19 +75,32 @@ export function compileFilter(f: ObjectSetFilter, objectType: string, ctx: Compi
     case 'EQUALS': {
       const bt = ctx.propertyTypes(objectType, f.property);
       if (f.value === null) {
-        return `(o.properties->${bind(ctx, f.property)}) = 'null'::jsonb`;
+        // Absent-or-null semantics: ->> yields SQL NULL for both a missing key
+        // and a JSON null, matching the memory evaluator and IS_NULL.
+        return `(o.properties->>${bind(ctx, f.property)}) IS NULL`;
       }
-      if (bt === undefined || bt === 'string' || bt === 'object_ref' || bt === 'struct') {
+      if (bt === 'string') {
+        // @> fast path (GIN jsonb_path_ops) only when the ontology CONFIRMS
+        // the property is a JSON string; against a JSON number, {"n":"5"} @>
+        // would silently never match.
         return `o.properties @> jsonb_build_object(${bind(ctx, f.property)}::text, ${bind(ctx, String(f.value))}::text)`;
       }
-      return `${propExpr(f.property, bt, ctx)} = ${bind(ctx, f.value)}`;
+      if (bt === 'number' || bt === 'boolean' || bt === 'datetime') {
+        return `${propExpr(f.property, bt, ctx)} = ${bind(ctx, f.value)}`;
+      }
+      // Unknown / object_ref / struct: text comparison via ->> is
+      // representation-agnostic (JSON number 5 ->> '5' = '5').
+      return `(o.properties->>${bind(ctx, f.property)}) = ${bind(ctx, String(f.value))}`;
     }
     case 'NOT_EQUALS': {
       const bt = ctx.propertyTypes(objectType, f.property);
       if (f.value === null) {
-        return `(o.properties->${bind(ctx, f.property)}) IS DISTINCT FROM 'null'::jsonb`;
+        return `(o.properties->>${bind(ctx, f.property)}) IS NOT NULL`;
       }
-      return `${propExpr(f.property, bt, ctx)} IS DISTINCT FROM ${bind(ctx, f.value)}`;
+      if (bt === 'number' || bt === 'boolean' || bt === 'datetime') {
+        return `${propExpr(f.property, bt, ctx)} IS DISTINCT FROM ${bind(ctx, f.value)}`;
+      }
+      return `(o.properties->>${bind(ctx, f.property)}) IS DISTINCT FROM ${bind(ctx, String(f.value))}`;
     }
     case 'CONTAINS':
       return `(o.properties->>${bind(ctx, f.property)}) LIKE '%' || ${bind(ctx, likeLiteral(f.value))} || '%' ESCAPE CHR(92)`;
@@ -99,6 +112,9 @@ export function compileFilter(f: ObjectSetFilter, objectType: string, ctx: Compi
     case 'GTE':
     case 'LT':
     case 'LTE': {
+      // Ordering against null is undefined; strict coercion rejects it with
+      // 400 upstream. Compile to FALSE so lenient/direct callers match memory.
+      if (f.value === null) return 'FALSE';
       const op = { GT: '>', GTE: '>=', LT: '<', LTE: '<=' }[f.type];
       const bt = ctx.propertyTypes(objectType, f.property);
       return `${propExpr(f.property, bt, ctx)} ${op} ${bind(ctx, f.value)}`;
@@ -107,8 +123,20 @@ export function compileFilter(f: ObjectSetFilter, objectType: string, ctx: Compi
       return `(o.properties->>${bind(ctx, f.property)}) IS NULL`;
     case 'IN_SET': {
       const bt = ctx.propertyTypes(objectType, f.property);
-      const arr = bind(ctx, f.values.map((v) => (v === null ? null : String(v))));
-      return `${propExpr(f.property, bt, ctx)}::text = ANY(${arr}::text[])`;
+      const nonNull = f.values.filter((v) => v !== null).map((v) => String(v));
+      const hasNull = f.values.length !== nonNull.length;
+      const parts: string[] = [];
+      if (nonNull.length > 0) {
+        const arr = bind(ctx, nonNull);
+        parts.push(`${propExpr(f.property, bt, ctx)}::text = ANY(${arr}::text[])`);
+      }
+      if (hasNull) {
+        // `x = ANY(array_with_null)` never matches NULL in SQL; memory's
+        // `includes(null)` does. Split the null member into an IS NULL branch.
+        parts.push(`(o.properties->>${bind(ctx, f.property)}) IS NULL`);
+      }
+      if (parts.length === 0) return 'FALSE';
+      return parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`;
     }
   }
 }
@@ -204,7 +232,7 @@ export function compileObjectSet(def: ObjectSet, ctx: CompileCtx): SqlFragment {
 
 export interface CompileLoadOpts {
   pageSize: number;
-  after?: { orderValue: string | null; pk: string };
+  after?: { orderValue: string | null; pk: string; nullRegion?: boolean };
   orderBy?: { property: string; direction: 'asc' | 'desc' };
 }
 
@@ -221,9 +249,21 @@ export function compileLoad(def: ObjectSet, ctx: CompileCtx, opts: CompileLoadOp
       )
     : `o.primary_key`;
 
-  const afterClause = opts.after
-    ? `AND (${orderExpr}, o.primary_key) ${cmpOp} (${bind(ctx, opts.after.orderValue)}, ${bind(ctx, opts.after.pk)})`
-    : '';
+  // Keyset over `ORDER BY expr <dir> NULLS LAST, pk <dir>` has two regimes:
+  //  1) cursor in the non-null region → advance by tuple, OR jump into nulls
+  //     (a plain tuple compare against NULL yields NULL and silently DROPS
+  //     every null-ordered row — the data-loss bug this replaces);
+  //  2) cursor already in the null region → advance by pk among nulls only.
+  let afterClause = '';
+  if (opts.after) {
+    if (!opts.orderBy) {
+      afterClause = `AND o.primary_key ${cmpOp} ${bind(ctx, opts.after.pk)}`;
+    } else if (opts.after.nullRegion || opts.after.orderValue === null) {
+      afterClause = `AND (${orderExpr} IS NULL AND o.primary_key ${cmpOp} ${bind(ctx, opts.after.pk)})`;
+    } else {
+      afterClause = `AND ((${orderExpr}, o.primary_key) ${cmpOp} (${bind(ctx, opts.after.orderValue)}, ${bind(ctx, opts.after.pk)}) OR ${orderExpr} IS NULL)`;
+    }
+  }
 
   return {
     text: `SELECT o.* FROM platform_objects o
@@ -254,6 +294,18 @@ export function compileAggregate(
   aggregations: ObjectSetAggregation[],
   ctx: CompileCtx,
 ): SqlFragment {
+  const aggObjectType = baseTypeOf(def);
+  for (const a of aggregations) {
+    if (a.kind !== 'count' && a.property) {
+      const bt = ctx.propertyTypes(aggObjectType, a.property);
+      if (bt !== undefined && bt !== 'number') {
+        invalidFilterValue(
+          `aggregation "${a.kind}" requires a number property; "${a.property}" is ${bt}`,
+          { property: a.property, baseType: bt },
+        );
+      }
+    }
+  }
   const keys = compileObjectSet(def, ctx);
   const selects = aggregations.map((a, i) => {
     const alias = quoteIdent(a.name && /^[A-Za-z_][A-Za-z0-9_]*$/.test(a.name) ? a.name : `a${i}`);
@@ -296,9 +348,18 @@ function quoteIdent(name: string): string {
   return `"${name}"`;
 }
 
-export function queryFingerprint(sqlText: string, orderBy?: CompileLoadOpts['orderBy']): string {
+export function queryFingerprint(
+  sqlText: string,
+  params: unknown[],
+  orderBy?: CompileLoadOpts['orderBy'],
+): string {
   return createHash('sha256')
     .update(sqlText)
+    .update('\0')
+    // Same AST shape with different filter VALUES compiles to identical text
+    // (values live in params) — hash them too, or a page token from
+    // `GT n > 4` is silently accepted by `GT n > 6`.
+    .update(JSON.stringify(params))
     .update('\0')
     .update(orderBy ? `${orderBy.property}:${orderBy.direction ?? 'asc'}` : 'pk')
     .digest('hex')

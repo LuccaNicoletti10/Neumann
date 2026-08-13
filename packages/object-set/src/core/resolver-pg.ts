@@ -81,9 +81,9 @@ export async function loadObjectsPg(
 
   const fingerprintCtx = createCompileCtx(deps.ontologyId, lookupOf(deps));
   const keysOnly = compileResolve(req.objectSet, fingerprintCtx);
-  const hash = queryFingerprint(keysOnly.text, orderBy);
+  const hash = queryFingerprint(keysOnly.text, fingerprintCtx.params, orderBy);
 
-  let after: { orderValue: string | null; pk: string } | undefined;
+  let after: { orderValue: string | null; pk: string; nullRegion?: boolean } | undefined;
   if (req.pageToken) {
     const cursor = decodePageToken(req.pageToken);
     if (cursor.h && cursor.h !== hash) {
@@ -93,6 +93,7 @@ export async function loadObjectsPg(
       after = {
         orderValue: cursor.o === undefined ? null : cursor.o,
         pk: cursor.k,
+        nullRegion: cursor.nr === 1,
       };
     }
   }
@@ -104,9 +105,11 @@ export async function loadObjectsPg(
   const hasNext = rows.length > pageSize;
   const page = hasNext ? rows.slice(0, pageSize) : rows;
   const last = page[page.length - 1];
+  const lastInNullRegion =
+    orderBy != null && last != null && last.properties[orderBy.property] == null;
   const lastOrder =
     orderBy && last
-      ? last.properties[orderBy.property] == null
+      ? lastInNullRegion
         ? null
         : String(last.properties[orderBy.property])
       : last
@@ -123,6 +126,7 @@ export async function loadObjectsPg(
             o: lastOrder,
             k: last.primaryKey,
             h: hash,
+            ...(lastInNullRegion ? { nr: 1 } : {}),
           })
         : undefined,
   };

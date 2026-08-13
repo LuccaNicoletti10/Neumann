@@ -16,12 +16,13 @@ describe('pagination', () => {
       o: undefined,
       k: undefined,
       h: undefined,
+      nr: undefined,
     });
   });
 
   it('round-trips keyset tokens', () => {
-    const token = encodePageToken({ offset: 0, o: 'open', k: 'a', h: 'abc123' });
-    expect(decodePageToken(token)).toMatchObject({ o: 'open', k: 'a', h: 'abc123' });
+    const token = encodePageToken({ offset: 0, o: 'open', k: 'a', h: 'abc123', nr: 1 });
+    expect(decodePageToken(token)).toMatchObject({ o: 'open', k: 'a', h: 'abc123', nr: 1 });
   });
 
   it('rejects malformed tokens', () => {

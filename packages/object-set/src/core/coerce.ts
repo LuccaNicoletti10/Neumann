@@ -79,6 +79,19 @@ export function coerceFilter(
         values: f.values.map((v) => coerceValue(v, bt)),
       };
     }
+    case 'GT':
+    case 'GTE':
+    case 'LT':
+    case 'LTE': {
+      const bt = lookup(objectType, f.property);
+      assertKnownProperty(objectType, f.property, lookup, mode);
+      if (mode === 'strict' && (f.value === null || f.value === undefined)) {
+        invalidFilterValue(`${f.type} cannot compare against null`, {
+          property: f.property,
+        });
+      }
+      return { ...f, value: coerceValue(f.value, bt) };
+    }
     default: {
       const bt = lookup(objectType, f.property);
       assertKnownProperty(objectType, f.property, lookup, mode);

@@ -63,6 +63,12 @@ describe('coerce + typed evaluateFilter', () => {
     ).toBe(true);
   });
 
+  it('strict GT against null is 400', () => {
+    expect(() =>
+      coerceFilter({ type: 'GT', property: 'qty', value: null }, 'ot.item', lookup),
+    ).toThrow(NeumannApiError);
+  });
+
   it('GT/LT compare numerically, not lexicographically', () => {
     const gt = coerceFilter({ type: 'GT', property: 'qty', value: '9' }, 'ot.item', lookup);
     const rec = {

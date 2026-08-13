@@ -18,7 +18,7 @@ import type {
 } from 'contracts';
 import { encodePageToken, decodePageToken, clampPageSize } from 'pagination';
 
-import type { PropertyTypeLookup } from './coerce.js';
+import { baseTypeOf, coerceValue, invalidFilterValue, type PropertyTypeLookup } from './coerce.js';
 import { evaluateFilter } from './filter.js';
 
 export interface ObjectSetResolverDeps {
@@ -132,16 +132,32 @@ export async function loadObjects(
   let data = await resolveObjectSet(req.objectSet, deps);
 
   if (req.orderBy?.length) {
+    // Match PG: `ORDER BY expr <dir> NULLS LAST, primary_key <dir>`.
+    // The pk pre-sort + stable clause sorts make pk the final tiebreaker.
+    const primaryDir = req.orderBy[0]!.direction === 'desc' ? -1 : 1;
+    data = [...data].sort((a, b) =>
+      a.primaryKey === b.primaryKey ? 0 : (a.primaryKey < b.primaryKey ? -1 : 1) * primaryDir,
+    );
     for (let i = req.orderBy.length - 1; i >= 0; i -= 1) {
       const clause = req.orderBy[i]!;
       const dir = clause.direction === 'desc' ? -1 : 1;
+      const bt = deps.propertyTypes?.(baseTypeOf(req.objectSet), clause.property);
+      const orderVal = (v: unknown): unknown => {
+        if (v == null) return null;
+        try {
+          return coerceValue(v, bt);
+        } catch {
+          return v;
+        }
+      };
       data = [...data].sort((a, b) => {
-        const av = a.properties[clause.property];
-        const bv = b.properties[clause.property];
+        const av = orderVal(a.properties[clause.property]);
+        const bv = orderVal(b.properties[clause.property]);
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1; // NULLS LAST regardless of direction
+        if (bv == null) return -1;
         if (av === bv) return 0;
-        if (av == null) return -1 * dir;
-        if (bv == null) return 1 * dir;
-        return (av < bv ? -1 : 1) * dir;
+        return ((av as never) < (bv as never) ? -1 : 1) * dir;
       });
     }
   }
@@ -192,6 +208,20 @@ export async function aggregateObjects(
   req: ObjectSetAggregateRequest,
   deps: ObjectSetResolverDeps,
 ): Promise<Record<string, number | null>> {
+  if (deps.propertyTypes) {
+    const ot = baseTypeOf(req.objectSet);
+    for (const a of req.aggregations) {
+      if (a.kind !== 'count' && a.property) {
+        const bt = deps.propertyTypes(ot, a.property);
+        if (bt !== undefined && bt !== 'number') {
+          invalidFilterValue(
+            `aggregation "${a.kind}" requires a number property; "${a.property}" is ${bt}`,
+            { property: a.property, baseType: bt },
+          );
+        }
+      }
+    }
+  }
   const objs = await resolveObjectSet(req.objectSet, deps);
   return aggregateRecords(objs, req.aggregations);
 }

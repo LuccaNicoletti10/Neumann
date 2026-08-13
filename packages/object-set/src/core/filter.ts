@@ -67,13 +67,19 @@ export function evaluateFilter(
       return typeof v === 'string' && v.endsWith(filter.value);
     }
     case 'GT':
-      return cmp(obj.properties[filter.property], filter.value, lookup?.(obj.objectTypeId, filter.property)) > 0;
     case 'GTE':
-      return cmp(obj.properties[filter.property], filter.value, lookup?.(obj.objectTypeId, filter.property)) >= 0;
     case 'LT':
-      return cmp(obj.properties[filter.property], filter.value, lookup?.(obj.objectTypeId, filter.property)) < 0;
-    case 'LTE':
-      return cmp(obj.properties[filter.property], filter.value, lookup?.(obj.objectTypeId, filter.property)) <= 0;
+    case 'LTE': {
+      // Ordering against null is undefined — false on both engines (SQL: FALSE).
+      if (filter.value == null) return false;
+      const got = obj.properties[filter.property];
+      if (got == null) return false;
+      const c = cmp(got, filter.value, lookup?.(obj.objectTypeId, filter.property));
+      if (filter.type === 'GT') return c > 0;
+      if (filter.type === 'GTE') return c >= 0;
+      if (filter.type === 'LT') return c < 0;
+      return c <= 0;
+    }
     case 'IS_NULL':
       return obj.properties[filter.property] == null;
     case 'IN_SET': {

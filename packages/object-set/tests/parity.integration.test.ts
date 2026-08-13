@@ -54,7 +54,7 @@ describe.skipIf(!db)('gate:objectset-parity', () => {
     await db?.close();
   });
 
-  it('memory ≡ pg on 500 seeded ASTs + keyset pages + aggregates', async () => {
+  it('memory ≡ pg on 500 seeded ASTs + keyset pages + aggregates', { timeout: 60_000 }, async () => {
     if (!db) return;
     const ontologyId = 'onto-parity';
     const clock = createDeterministicClock();
@@ -67,15 +67,18 @@ describe.skipIf(!db)('gate:objectset-parity', () => {
     const statuses = ['open', 'closed', 'pending'] as const;
     for (let i = 0; i < 24; i += 1) {
       const pk = `i${String(i).padStart(2, '0')}`;
+      // Degenerate-value coverage: every 5th row has a JSON-null status,
+      // every 7th omits the key entirely, and row 13 omits `n`.
+      const properties: Record<string, unknown> = {
+        sku: i === 10 ? 'NIT_10%' : `SKU-${i}`,
+      };
+      if (i % 7 !== 0) properties.status = i % 5 === 0 ? null : statuses[i % 3]!;
+      if (i !== 13) properties.n = i;
       const rec = {
         ontologyId,
         objectTypeId: 'ot.item',
         primaryKey: pk,
-        properties: {
-          status: statuses[i % 3]!,
-          n: i,
-          sku: i === 10 ? 'NIT_10%' : `SKU-${i}`,
-        },
+        properties,
       };
       await memObjects.create(rec);
       await pgObjects.create(rec);
@@ -126,12 +129,16 @@ describe.skipIf(!db)('gate:objectset-parity', () => {
           objectSet: { type: 'BASE', objectType: 'ot.item' },
           filter: pick([
             { type: 'EQUALS' as const, property: 'status', value: pick([...statuses]) },
+            { type: 'EQUALS' as const, property: 'status', value: null },
             { type: 'NOT_EQUALS' as const, property: 'status', value: 'closed' },
+            { type: 'NOT_EQUALS' as const, property: 'status', value: null },
             { type: 'GT' as const, property: 'n', value: Math.floor(rand() * 20) },
             { type: 'LTE' as const, property: 'n', value: Math.floor(rand() * 20) },
             { type: 'CONTAINS' as const, property: 'sku', value: 'SKU' },
             { type: 'CONTAINS' as const, property: 'sku', value: 'NIT_10%' },
             { type: 'IN_SET' as const, property: 'status', values: ['open', 'pending'] },
+            { type: 'IN_SET' as const, property: 'status', values: ['open', null] },
+            { type: 'IS_NULL' as const, property: 'status' },
           ]),
         };
       }
@@ -195,7 +202,110 @@ describe.skipIf(!db)('gate:objectset-parity', () => {
       },
       pgDeps,
     );
-    expect(pgPage2.data.map((o) => o.primaryKey)).toEqual(['i09', 'i12', 'i15']);
+    const memPage2 = await loadObjects(
+      {
+        objectSet: filterOpen,
+        orderBy: [{ property: 'n', direction: 'asc' }],
+        pageSize: 3,
+        pageToken: memPage1.nextPageToken,
+      },
+      memDeps,
+    );
+    expect(pgPage2.data.map((o) => o.primaryKey)).toEqual(memPage2.data.map((o) => o.primaryKey));
+
+    // INVARIANT: union of all pages ≡ full resolve, no duplicates, no losses —
+    // including when the order-by property is null/absent on some rows
+    // (the NULLS LAST region). This is the invariant that catches keyset
+    // cursors silently dropping the null region.
+    for (const direction of ['asc', 'desc'] as const) {
+      for (const property of ['status', 'n'] as const) {
+        const full = (await resolveObjectSetPg({ type: 'BASE', objectType: 'ot.item' }, pgDeps))
+          .map((o) => o.primaryKey)
+          .sort();
+        const walked: string[] = [];
+        let token: string | undefined;
+        let guard = 0;
+        do {
+          const page = await loadObjectsPg(
+            {
+              objectSet: { type: 'BASE', objectType: 'ot.item' },
+              orderBy: [{ property, direction }],
+              pageSize: 5,
+              pageToken: token,
+            },
+            pgDeps,
+          );
+          walked.push(...page.data.map((o) => o.primaryKey));
+          token = page.nextPageToken;
+        } while (token && ++guard < 50);
+        expect(new Set(walked).size, `dup rows ${property} ${direction}`).toBe(walked.length);
+        expect([...walked].sort(), `lost rows ${property} ${direction}`).toEqual(full);
+
+        // Page-by-page parity: memory walk emits the same sequence.
+        const memWalked: string[] = [];
+        let memToken: string | undefined;
+        guard = 0;
+        do {
+          const page = await loadObjects(
+            {
+              objectSet: { type: 'BASE', objectType: 'ot.item' },
+              orderBy: [{ property, direction }],
+              pageSize: 5,
+              pageToken: memToken,
+            },
+            memDeps,
+          );
+          memWalked.push(...page.data.map((o) => o.primaryKey));
+          memToken = page.nextPageToken;
+        } while (memToken && ++guard < 50);
+        expect(walked, `sequence parity ${property} ${direction}`).toEqual(memWalked);
+      }
+    }
+
+    // INVARIANT: a page token minted by one query is rejected by a query with
+    // the same shape but different filter values.
+    const gt4 = await loadObjectsPg(
+      {
+        objectSet: {
+          type: 'FILTER',
+          objectSet: { type: 'BASE', objectType: 'ot.item' },
+          filter: { type: 'GT', property: 'n', value: 4 },
+        },
+        orderBy: [{ property: 'n', direction: 'asc' }],
+        pageSize: 2,
+      },
+      pgDeps,
+    );
+    await expect(
+      loadObjectsPg(
+        {
+          objectSet: {
+            type: 'FILTER',
+            objectSet: { type: 'BASE', objectType: 'ot.item' },
+            filter: { type: 'GT', property: 'n', value: 6 },
+          },
+          orderBy: [{ property: 'n', direction: 'asc' }],
+          pageSize: 2,
+          pageToken: gt4.nextPageToken,
+        },
+        pgDeps,
+      ),
+    ).rejects.toThrow(/page token/i);
+
+    // INVARIANT: numeric EQUALS agrees between engines even WITHOUT an
+    // ontology lookup (the @> string fast path must not fire on JSON numbers).
+    const eqN5: ObjectSet = {
+      type: 'FILTER',
+      objectSet: { type: 'BASE', objectType: 'ot.item' },
+      filter: { type: 'EQUALS', property: 'n', value: 5 },
+    };
+    const memNoLookup = await resolveObjectSet(eqN5, {
+      ontologyId,
+      objects: memObjects,
+      links: memLinks,
+    });
+    const pgNoLookup = await resolveObjectSetPg(eqN5, { sql: db.sql, ontologyId });
+    expect(pgNoLookup.map(logical).sort()).toEqual(memNoLookup.map(logical).sort());
 
     const memAgg = await aggregateObjects(
       {

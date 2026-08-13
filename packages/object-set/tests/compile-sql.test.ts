@@ -43,6 +43,26 @@ describe('compile-sql', () => {
     expect(where).toContain('jsonb_build_object');
   });
 
+  it('unknown-type EQUALS does not use @> (JSON number would miss)', () => {
+    const ctx = createCompileCtx('o');
+    const where = compileFilter({ type: 'EQUALS', property: 'n', value: 5 }, 'ot.item', ctx);
+    expect(where).not.toContain('@>');
+    expect(where).toContain('->>');
+  });
+
+  it('EQUALS null and IN_SET null use IS NULL, not jsonb null / ANY(null)', () => {
+    const ctx = createCompileCtx('o', lookup);
+    const eq = compileFilter({ type: 'EQUALS', property: 'status', value: null }, 'ot.item', ctx);
+    expect(eq).toContain('IS NULL');
+    const inset = compileFilter(
+      { type: 'IN_SET', property: 'status', values: ['open', null] },
+      'ot.item',
+      ctx,
+    );
+    expect(inset).toContain('IS NULL');
+    expect(inset).toMatch(/ANY\(/);
+  });
+
   it('number EQUALS / GT use numeric cast', () => {
     const ctx = createCompileCtx('o', lookup);
     const eq = compileFilter({ type: 'EQUALS', property: 'qty', value: 150 }, 'ot.item', ctx);

@@ -20,6 +20,8 @@ export interface PageCursor {
   k?: string;
   /** Fingerprint of the compiled query + orderBy (reject token reuse). */
   h?: string;
+  /** Keyset: 1 when the cursor sits in the NULLS LAST region of the order-by. */
+  nr?: number;
 }
 
 export function encodePageToken(cursor: PageCursor): PageToken {
@@ -61,6 +63,7 @@ export function decodePageToken(token: string): PageCursor {
     o: obj.o === null || typeof obj.o === 'string' ? (obj.o as string | null) : undefined,
     k: typeof obj.k === 'string' ? obj.k : undefined,
     h: typeof obj.h === 'string' ? obj.h : undefined,
+    nr: obj.nr === 1 ? 1 : undefined,
   };
 }
 
