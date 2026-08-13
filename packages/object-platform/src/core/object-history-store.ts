@@ -5,8 +5,8 @@
  * (tabela já criada em infra/sql/0003_history_ontology.sql; até agora
  * nenhum código escrevia nela).
  *
- * Responde: "como estava esse objeto quando a decisão foi tomada?"
- * asOf() reconstrói o estado vigente em qualquer timestamp.
+ * Responde: "qual era o mundo neste instante?"
+ * Snapshots são pós-mutação; asOf(t) devolve o último snapshot <= t.
  */
 
 import type { OntologyId, OntologyVersionId, SqlClient } from 'contracts';
@@ -176,7 +176,10 @@ export function createMemoryObjectHistoryStore(opts?: {
             e.primaryKey === primaryKey &&
             e.createdAt <= atIso,
         )
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+        .sort((a, b) => {
+          if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+          return b.version - a.version;
+        })[0];
     },
   };
 }

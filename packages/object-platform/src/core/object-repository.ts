@@ -8,6 +8,7 @@
 
 import type {
   CreateObjectInput,
+  DeleteObjectInput,
   ListObjectsOptions,
   ObjectRecord,
   ObjectRecordId,
@@ -179,12 +180,33 @@ export function createMemoryObjectRepository(
       return next;
     },
 
-    delete(ontologyId, objectTypeId, primaryKey) {
+    delete(ontologyId, objectTypeId, primaryKey, input?: DeleteObjectInput) {
       const key = pkKey(ontologyId, objectTypeId, primaryKey);
       const id = byPk.get(key);
-      if (!id) return false;
+      if (!id) {
+        if (input?.expectedVersion != null) {
+          throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
+        }
+        return false;
+      }
       const prev = byId.get(id);
-      if (!prev || prev.deleted) return false;
+      if (!prev || prev.deleted) {
+        if (input?.expectedVersion != null) {
+          throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
+        }
+        return false;
+      }
+      if (input?.expectedVersion != null && prev.version !== input.expectedVersion) {
+        throw new VersionConflictError(
+          `version conflict: expected ${input.expectedVersion}, got ${prev.version}`,
+          {
+            expectedVersion: input.expectedVersion,
+            actualVersion: prev.version,
+            objectTypeId,
+            primaryKey,
+          },
+        );
+      }
       byId.set(
         id,
         freezeRecord({

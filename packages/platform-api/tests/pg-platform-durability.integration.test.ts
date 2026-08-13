@@ -109,16 +109,24 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     expect(trail.length).toBeGreaterThanOrEqual(2);
     expect(trail[0]?.operation).toBe('create');
     expect(trail[1]?.operation).toBe('update');
-    expect(trail[1]?.properties.status).toBe('pending');
+    expect(trail[1]?.properties.status).toBe('ok');
     expect(trail[1]?.principal).toBe('alice');
-    const asOf = await ctx.history.asOf(
+    const asOfCreate = await ctx.history.asOf(
       o.id,
       'ot.order',
       '1',
       trail[0]!.createdAt,
     );
-    expect(asOf?.properties.status).toBe('pending');
-    expect(asOf?.operation).toBe('create');
+    expect(asOfCreate?.properties.status).toBe('pending');
+    expect(asOfCreate?.operation).toBe('create');
+    const asOfNow = await ctx.history.asOf(
+      o.id,
+      'ot.order',
+      '1',
+      trail[1]!.createdAt,
+    );
+    expect(asOfNow?.properties.status).toBe('ok');
+    expect(asOfNow?.operation).toBe('update');
 
     const head = await ctx.audit.head();
     expect(head).toBeTruthy();

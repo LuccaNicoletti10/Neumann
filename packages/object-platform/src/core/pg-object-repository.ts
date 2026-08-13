@@ -7,6 +7,7 @@
 
 import type {
   CreateObjectInput,
+  DeleteObjectInput,
   ListObjectsOptions,
   ObjectRecord,
   ObjectRepository,
@@ -195,16 +196,46 @@ export function createPgObjectRepository(
       return rowToRecord(result.rows[0] as Record<string, unknown>);
     },
 
-    async delete(ontologyId, objectTypeId, primaryKey) {
+    async delete(ontologyId, objectTypeId, primaryKey, input?: DeleteObjectInput) {
+      const expected = input?.expectedVersion;
+      if (expected != null) {
+        const current = await this.get(ontologyId, objectTypeId, primaryKey);
+        if (!current) {
+          throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
+        }
+        if (current.version !== expected) {
+          throw new VersionConflictError(
+            `version conflict: expected ${expected}, got ${current.version}`,
+            {
+              expectedVersion: expected,
+              actualVersion: current.version,
+              objectTypeId,
+              primaryKey,
+            },
+          );
+        }
+      }
       const now = clock();
       const result = await sql.query(
         `UPDATE platform_objects
          SET deleted = true, version = version + 1, updated_at = $1
-         WHERE ontology_id = $2 AND object_type_id = $3 AND primary_key = $4 AND deleted = false
+         WHERE ontology_id = $2 AND object_type_id = $3 AND primary_key = $4
+           AND deleted = false
+           AND ($5::int IS NULL OR version = $5)
          RETURNING id`,
-        [now, ontologyId, objectTypeId, primaryKey],
+        [now, ontologyId, objectTypeId, primaryKey, expected ?? null],
       );
-      return (result.rows?.length ?? 0) > 0;
+      if ((result.rows?.length ?? 0) === 0) {
+        if (expected != null) {
+          throw new VersionConflictError(`version conflict: expected ${expected}`, {
+            expectedVersion: expected,
+            objectTypeId,
+            primaryKey,
+          });
+        }
+        return false;
+      }
+      return true;
     },
   };
 }

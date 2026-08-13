@@ -92,6 +92,10 @@ export function createMemoryPlatformContext(
     nextId,
     objectExists: async (ontologyId, objectTypeId, primaryKey) =>
       Boolean(await objects.get(ontologyId, objectTypeId, primaryKey)),
+    cardinalityOf: async (ontologyId, linkTypeId) => {
+      const v = await ontology.getLatestVersion(ontologyId);
+      return v?.linkTypes[linkTypeId]?.cardinality;
+    },
   });
   const graph = createGraphQueryEngine({ objects, links });
   const audit = createAuditLog({ clock, nextId });
@@ -202,8 +206,19 @@ export function createPostgresPlatformContext(
       history,
       principal: () => getCurrentPrincipal(),
       mode: governanceMode,
+      versionCacheTtlMs: 0,
     });
-    const links = createPgLinkRepository({ sql: client, clock, nextId });
+    const links = createPgLinkRepository({
+      sql: client,
+      clock,
+      nextId,
+      objectExists: async (ontologyId, objectTypeId, primaryKey) =>
+        Boolean(await rawObjects.get(ontologyId, objectTypeId, primaryKey)),
+      cardinalityOf: async (ontologyId, linkTypeId) => {
+        const v = await ontology.getLatestVersion(ontologyId);
+        return v?.linkTypes[linkTypeId]?.cardinality;
+      },
+    });
     const events = createPgOperationalEventStore({ sql: client, clock, nextId });
     const executions = createPgActionExecutionStore({ sql: client });
     const audit = createAuditLog({

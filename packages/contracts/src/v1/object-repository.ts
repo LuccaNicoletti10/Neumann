@@ -42,6 +42,10 @@ export interface UpdateObjectInput {
   expectedVersion?: number;
 }
 
+export interface DeleteObjectInput {
+  expectedVersion?: number;
+}
+
 export interface ListObjectsOptions {
   includeDeleted?: boolean;
   limit?: number;
@@ -100,6 +104,7 @@ export interface ObjectRepository {
     ontologyId: OntologyId,
     objectTypeId: ObjectTypeId,
     primaryKey: string,
+    input?: DeleteObjectInput,
   ): Promise<boolean> | boolean;
 }
 

@@ -220,6 +220,7 @@ export {
   type ObjectRecord,
   type CreateObjectInput,
   type UpdateObjectInput,
+  type DeleteObjectInput,
   type ListObjectsOptions,
   type LinkRecord,
   type CreateLinkInput,

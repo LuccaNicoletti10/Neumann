@@ -9,6 +9,7 @@ export * from './core/errors.js';
 export * from './core/platform.js';
 export * from './core/object-repository.js';
 export * from './core/link-repository.js';
+export * from './core/link-integrity.js';
 export * from './core/pg-object-repository.js';
 export * from './core/pg-link-repository.js';
 export * from './core/pg-sql.js';

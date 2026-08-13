@@ -189,6 +189,14 @@ export function createActionExecutor(
     return errors;
   }
 
+  function expectedVersionOf(
+    expectedObjectVersions: Record<string, number> | undefined,
+    objectTypeId: string,
+    primaryKey: string,
+  ): number | undefined {
+    return expectedObjectVersions?.[`${objectTypeId}::${primaryKey}`];
+  }
+
   async function applyRule(
     stores: ActionTransactionStores,
     rule: ActionRule,
@@ -198,6 +206,7 @@ export function createActionExecutor(
     created: ObjectRecord[],
     modified: ObjectRecord[],
     linkIds: string[],
+    expectedObjectVersions?: Record<string, number>,
   ): Promise<void> {
     const { objects, links, events } = stores;
     if (rule.kind === 'create_object') {
@@ -234,7 +243,10 @@ export function createActionExecutor(
         properties[prop] = paramValue(params, paramName);
       }
       const obj = await asValue(
-        objects.update(ontologyId, rule.objectTypeId, pk, { properties }),
+        objects.update(ontologyId, rule.objectTypeId, pk, {
+          properties,
+          expectedVersion: expectedVersionOf(expectedObjectVersions, rule.objectTypeId, pk),
+        }),
       );
       modified.push(obj);
       await events.append({
@@ -251,7 +263,11 @@ export function createActionExecutor(
 
     if (rule.kind === 'delete_object') {
       const pk = String(paramValue(params, rule.primaryKeyFromParam) ?? '');
-      await asValue(objects.delete(ontologyId, rule.objectTypeId, pk));
+      await asValue(
+        objects.delete(ontologyId, rule.objectTypeId, pk, {
+          expectedVersion: expectedVersionOf(expectedObjectVersions, rule.objectTypeId, pk),
+        }),
+      );
       await events.append({
         kind: 'ObjectDeleted',
         ontologyId,
@@ -310,6 +326,7 @@ export function createActionExecutor(
     ontologyId: OntologyId,
     params: Record<string, unknown>,
     principal: string,
+    expectedObjectVersions?: Record<string, number>,
   ): Promise<Record<string, unknown>> {
     const touched: Record<string, unknown> = { modified: [], created: [], links: [] };
     const modified: ObjectRecord[] = [];
@@ -317,7 +334,17 @@ export function createActionExecutor(
     const linkIds: string[] = [];
 
     for (const rule of def.rules ?? []) {
-      await applyRule(stores, rule, ontologyId, params, principal, created, modified, linkIds);
+      await applyRule(
+        stores,
+        rule,
+        ontologyId,
+        params,
+        principal,
+        created,
+        modified,
+        linkIds,
+        expectedObjectVersions,
+      );
     }
 
     touched.modified = modified.map((o) => ({
@@ -497,6 +524,7 @@ export function createActionExecutor(
       req.ontologyId,
       req.parameters,
       req.principal,
+      req.expectedObjectVersions,
     );
     await runSideEffects(
       stores,

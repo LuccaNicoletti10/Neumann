@@ -8,5 +8,6 @@ export {
   resolveObjectSet,
   loadObjects,
   aggregateObjects,
+  aggregateRecords,
   type ObjectSetResolverDeps,
 } from './core/resolver.js';

@@ -8,8 +8,9 @@
  *      (tipo existe, propriedades declaradas, baseType confere, validators passam).
  *      A ontologia deixa de ser descritiva e vira LEI.
  *   2. GRAVA snapshot em platform_object_history a cada mutação
- *      (pre-state em update/delete, post-state em create), no MESMO SqlClient —
- *      portanto dentro da mesma transação quando construído via bind(tx).
+ *      (estado PÓS-mutação: create v1, update v2, delete deleted=true),
+ *      no MESMO SqlClient — portanto na mesma transação via bind(tx).
+ *      asOf(t) devolve o mundo vigente em t, não o contexto pré-decisão.
  *
  * Uso (context.ts):
  *   const raw = createPgObjectRepository({ sql: client, clock, nextId });
@@ -25,6 +26,7 @@
 
 import type {
   CreateObjectInput,
+  DeleteObjectInput,
   ObjectRecord,
   ObjectRepository,
   OntologyId,
@@ -274,15 +276,25 @@ export function createGovernedObjectRepository(
           ? input.properties
           : { ...(pre?.properties ?? {}), ...input.properties };
       await guard(ontologyId, pre?.ontologyVersionId, objectTypeId, toValidate, true);
-      // pre-state: o contexto em que a decisão foi tomada
-      if (pre) await snapshot(pre, 'update');
-      return inner.update(ontologyId, objectTypeId, primaryKey, input);
+      const post = await inner.update(ontologyId, objectTypeId, primaryKey, input);
+      await snapshot(post, 'update');
+      return post;
     },
 
-    async delete(ontologyId, objectTypeId, primaryKey) {
+    async delete(ontologyId, objectTypeId, primaryKey, input?: DeleteObjectInput) {
       const pre = await inner.get(ontologyId, objectTypeId, primaryKey);
-      if (pre) await snapshot(pre, 'delete');
-      return inner.delete(ontologyId, objectTypeId, primaryKey);
+      const ok = await inner.delete(ontologyId, objectTypeId, primaryKey, input);
+      if (ok && pre) {
+        await snapshot(
+          {
+            ...pre,
+            deleted: true,
+            version: pre.version + 1,
+          },
+          'delete',
+        );
+      }
+      return ok;
     },
   };
 }

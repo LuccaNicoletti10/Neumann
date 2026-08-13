@@ -174,15 +174,22 @@ function aggregateValue(objs: ObjectRecord[], agg: ObjectSetAggregation): number
   return null;
 }
 
+export function aggregateRecords(
+  objs: ObjectRecord[],
+  aggregations: ObjectSetAggregation[],
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const agg of aggregations) {
+    const name = agg.name ?? `${agg.kind}${agg.property ? `_${agg.property}` : ''}`;
+    out[name] = aggregateValue(objs, agg);
+  }
+  return out;
+}
+
 export async function aggregateObjects(
   req: ObjectSetAggregateRequest,
   deps: ObjectSetResolverDeps,
 ): Promise<Record<string, number | null>> {
   const objs = await resolveObjectSet(req.objectSet, deps);
-  const out: Record<string, number | null> = {};
-  for (const agg of req.aggregations) {
-    const name = agg.name ?? `${agg.kind}${agg.property ? `_${agg.property}` : ''}`;
-    out[name] = aggregateValue(objs, agg);
-  }
-  return out;
+  return aggregateRecords(objs, req.aggregations);
 }

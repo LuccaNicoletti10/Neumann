@@ -5,7 +5,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createDeterministicClock,
   createGovernedObjectRepository,
+  createIdGenerator,
   createMemoryObjectHistoryStore,
   createMemoryObjectRepository,
   OntologyValidationError,
@@ -29,9 +31,11 @@ const version: OntologyVersion = {
 };
 
 function governed() {
-  const history = createMemoryObjectHistoryStore();
+  const clock = createDeterministicClock();
+  const nextId = createIdGenerator();
+  const history = createMemoryObjectHistoryStore({ clock, nextId });
   const objects = createGovernedObjectRepository({
-    inner: createMemoryObjectRepository(),
+    inner: createMemoryObjectRepository({ clock, nextId }),
     resolveVersion: async () => version,
     history,
     principal: () => 'fernanda',
@@ -78,23 +82,37 @@ describe('PEÇA 1 — ontologia como lei', () => {
   });
 });
 
-describe('PEÇA 3 — histórico com pre-state e principal', () => {
-  it('grava create e pre-state do update', async () => {
+describe('PEÇA 3 — histórico pós-mutação e asOf', () => {
+  it('grava create + POST-state do update; asOf(agora) = get()', async () => {
     const { objects, history } = governed();
     const o = await objects.create({ ontologyId: 'o1', objectTypeId: 'Titulo',
       primaryKey: 't1', properties: { valor: 100, status: 'ABERTO' } });
-    await objects.update('o1', 'Titulo', 't1',
+    const updated = await objects.update('o1', 'Titulo', 't1',
       { properties: { status: 'APROVADO' } });
 
     const trail = await history.listByObject(o.id);
     expect(trail.length).toBe(2);
     expect(trail[0]!.operation).toBe('create');
     expect(trail[1]!.operation).toBe('update');
-    // o snapshot do update é o PRE-state: o contexto da decisão
-    expect(trail[1]!.properties.status).toBe('ABERTO');
+    expect(trail[1]!.properties.status).toBe('APROVADO');
+    expect(trail[1]!.version).toBe(updated.version);
     expect(trail[1]!.principal).toBe('fernanda');
-    const asOf = await history.asOf('o1', 'Titulo', 't1', trail[0]!.createdAt);
-    expect(asOf?.properties.status).toBe('ABERTO');
+    const asOfCreate = await history.asOf('o1', 'Titulo', 't1', trail[0]!.createdAt);
+    expect(asOfCreate?.properties.status).toBe('ABERTO');
+    const asOfNow = await history.asOf('o1', 'Titulo', 't1', trail[1]!.createdAt);
+    expect(asOfNow?.properties.status).toBe('APROVADO');
+    expect(asOfNow?.version).toBe(updated.version);
+  });
+
+  it('delete snapshot marca deleted=true', async () => {
+    const { objects, history } = governed();
+    const o = await objects.create({ ontologyId: 'o1', objectTypeId: 'Titulo',
+      primaryKey: 't1', properties: { valor: 100, status: 'ABERTO' } });
+    await objects.delete('o1', 'Titulo', 't1');
+    const trail = await history.listByObject(o.id);
+    const del = trail[trail.length - 1]!;
+    expect(del.operation).toBe('delete');
+    expect(del.deleted).toBe(true);
   });
 });
 

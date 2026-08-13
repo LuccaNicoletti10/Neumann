@@ -7,6 +7,7 @@ import { NeumannApiError } from 'api-errors';
 import { OntologyValidationError } from 'object-platform';
 
 import { createMemoryPlatformContext, type PlatformContext } from './core/context.js';
+import { ReadForbiddenError } from './core/secured-reads.js';
 import { bindPrincipalHook, principalOf } from './core/principal.js';
 import {
   AuthenticationError,
@@ -91,6 +92,13 @@ export async function createPlatformServer(
         errorName: 'OntologyValidationError',
         message: err.message,
         violations: err.violations,
+      });
+    }
+    if (err instanceof ReadForbiddenError) {
+      return reply.code(403).send({
+        errorCode: err.errorCode,
+        errorName: err.errorName,
+        message: err.message,
       });
     }
     const message = err instanceof Error ? err.message : String(err);

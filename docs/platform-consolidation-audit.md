@@ -36,9 +36,9 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 
 | Area | Gap | Proves gap |
 |---|---|---|
-| P0 complete | `createObjectPlatform` still has private Maps | projector DI not fully migrated |
+| P0 complete | `createObjectPlatform` still has private Maps | projector DI not fully migrated; history/CAS/authz/link integrity P0s closed |
 | P7–P8 | OntologyObjectService | schema rejection now via governed repo + five-pieces gates; OntologyObjectService still absent |
-| P13 | Policy on every route | unauthorized aggregate test missing |
+| P13 | Policy on every route | DONE — SecuredReads on list/get/history/links/ObjectSet/aggregate |
 | P66 | Full source→action→writeback E2E | SQL-mirror worker exists; HTTP ERP handler still Passo 25 |
 | P19 | SQL ObjectSet planner | only memory evaluator |
 | Bearer/IAM | HS256 adapter in platform-api | IdentityProvider (Passo 3) still not wired; no JWKS |

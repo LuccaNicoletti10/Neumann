@@ -9,12 +9,13 @@ import type {
   ObjectSet,
   ObjectSetAggregation,
 } from 'contracts';
-import { loadObjects, aggregateObjects, normalizeFilter } from 'object-set';
+import { normalizeFilter } from 'object-set';
 import { paginateArray } from 'pagination';
 import { notFound } from 'api-errors';
 
 import type { PlatformContext } from '../core/context.js';
 import { principalOf } from '../core/principal.js';
+import { createSecuredReads } from '../core/secured-reads.js';
 
 function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
   const type = String(raw.type ?? '').toUpperCase();
@@ -63,6 +64,8 @@ export async function registerV2Routes(
   app: FastifyInstance,
   ctx: PlatformContext,
 ): Promise<void> {
+  const reads = createSecuredReads(ctx);
+
   async function ensureActionType(ontologyId: string, action: string): Promise<void> {
     if (ctx.actions.getActionType(ontologyId, action)) return;
     const v = await ctx.ontology.getLatestVersion(ontologyId);
@@ -117,7 +120,7 @@ export async function registerV2Routes(
 
   app.get<{ Params: { objectId: string } }>(
     '/api/v2/objects/:objectId/history',
-    async (req) => ({ data: await ctx.history.listByObject(req.params.objectId) }),
+    async (req) => ({ data: await reads.listHistory(principalOf(req), req.params.objectId) }),
   );
 
   app.get<{ Params: { ontology: string } }>(
@@ -141,27 +144,11 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string; objectType: string }; Querystring: { pageSize?: string; pageToken?: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType',
-    async (req, reply) => {
-      const principal = principalOf(req);
-      if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, req.params.objectType)) {
-        return reply.code(403).send({
-          errorCode: 'READ_FORBIDDEN',
-          errorName: 'ObjectTypeReadDenied',
-          message: `principal "${principal}" cannot read object type "${req.params.objectType}"`,
-        });
-      }
-      const listed = await ctx.objects.list(req.params.ontology, req.params.objectType);
-      const data = listed.map((o) =>
-        ctx.authorizer
-          ? {
-              ...o,
-              properties: ctx.authorizer.redactProperties(
-                principal,
-                o.objectTypeId,
-                o.properties,
-              ),
-            }
-          : o,
+    async (req) => {
+      const data = await reads.listObjects(
+        principalOf(req),
+        req.params.ontology,
+        req.params.objectType,
       );
       return paginateArray(data, {
         pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
@@ -173,29 +160,14 @@ export async function registerV2Routes(
   app.get<{ Params: { ontology: string; objectType: string; primaryKey: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey',
     async (req, reply) => {
-      const principal = principalOf(req);
-      if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, req.params.objectType)) {
-        return reply.code(403).send({
-          errorCode: 'READ_FORBIDDEN',
-          errorName: 'ObjectTypeReadDenied',
-          message: `principal "${principal}" cannot read object type "${req.params.objectType}"`,
-        });
-      }
-      const obj = await ctx.objects.get(
+      const obj = await reads.getObject(
+        principalOf(req),
         req.params.ontology,
         req.params.objectType,
         req.params.primaryKey,
       );
       if (!obj) return reply.code(404).send({ error: 'object not found' });
-      if (!ctx.authorizer) return obj;
-      return {
-        ...obj,
-        properties: ctx.authorizer.redactProperties(
-          principal,
-          obj.objectTypeId,
-          obj.properties,
-        ),
-      };
+      return obj;
     },
   );
 
@@ -261,24 +233,15 @@ export async function registerV2Routes(
     Params: { ontology: string; objectType: string; primaryKey: string; linkType: string };
   }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey/links/:linkType',
-    async (req) => {
-      const edges = await ctx.links.listFrom(
+    async (req) => ({
+      data: await reads.listLinkTargets(
+        principalOf(req),
         req.params.ontology,
         req.params.objectType,
         req.params.primaryKey,
         req.params.linkType,
-      );
-      const data = [];
-      for (const e of edges) {
-        const t = await ctx.objects.get(
-          req.params.ontology,
-          e.targetObjectTypeId,
-          e.targetPrimaryKey,
-        );
-        if (t) data.push(t);
-      }
-      return { data };
-    },
+      ),
+    }),
   );
 
   app.post<{
@@ -321,19 +284,12 @@ export async function registerV2Routes(
       pageToken?: string;
     };
   }>('/api/v2/ontologies/:ontology/objectSets/loadObjects', async (req) => {
-    return loadObjects(
-      {
-        objectSet: normalizeObjectSet(req.body.objectSet),
-        orderBy: req.body.orderBy,
-        pageSize: req.body.pageSize,
-        pageToken: req.body.pageToken,
-      },
-      {
-        ontologyId: req.params.ontology,
-        objects: ctx.objects,
-        links: ctx.links,
-      },
-    );
+    return reads.loadObjectSet(principalOf(req), req.params.ontology, {
+      objectSet: normalizeObjectSet(req.body.objectSet),
+      orderBy: req.body.orderBy,
+      pageSize: req.body.pageSize,
+      pageToken: req.body.pageToken,
+    });
   });
 
   app.post<{
@@ -343,17 +299,10 @@ export async function registerV2Routes(
       aggregations: ObjectSetAggregation[];
     };
   }>('/api/v2/ontologies/:ontology/objectSets/aggregate', async (req) => {
-    const data = await aggregateObjects(
-      {
-        objectSet: normalizeObjectSet(req.body.objectSet),
-        aggregations: req.body.aggregations,
-      },
-      {
-        ontologyId: req.params.ontology,
-        objects: ctx.objects,
-        links: ctx.links,
-      },
-    );
+    const data = await reads.aggregateObjectSet(principalOf(req), req.params.ontology, {
+      objectSet: normalizeObjectSet(req.body.objectSet),
+      aggregations: req.body.aggregations,
+    });
     return { data };
   });
 

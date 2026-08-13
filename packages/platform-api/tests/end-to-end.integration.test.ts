@@ -197,7 +197,7 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
     expect(trail[0]?.operation).toBe('create');
     expect(trail[0]?.principal).toBe('svc-projector');
     expect(trail[1]?.operation).toBe('update');
-    expect(trail[1]?.properties.status).toBe('pending');
+    expect(trail[1]?.properties.status).toBe('ok');
     expect(trail[1]?.principal).toBe('alice');
 
     const exec = await ctx.actions.getExecution(executionId);
@@ -229,14 +229,22 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
     const failedExec = await ctx.actions.getExecution(failed.json().executionId as string);
     expect(failedExec?.status).toBe('FAILED');
 
-    const asOf = await ctx.history.asOf(
+    const asOfCreate = await ctx.history.asOf(
       ontologyId,
       'ot.order',
       'O1',
       trail[0]!.createdAt,
     );
-    expect(asOf?.properties.status).toBe('pending');
-    expect(asOf?.operation).toBe('create');
+    expect(asOfCreate?.properties.status).toBe('pending');
+    expect(asOfCreate?.operation).toBe('create');
+    const asOfNow = await ctx.history.asOf(
+      ontologyId,
+      'ot.order',
+      'O1',
+      trail[1]!.createdAt,
+    );
+    expect(asOfNow?.properties.status).toBe('ok');
+    expect(asOfNow?.operation).toBe('update');
 
     await app.close();
   });

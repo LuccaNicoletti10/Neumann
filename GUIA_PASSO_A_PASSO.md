@@ -35,7 +35,7 @@ Durability checklist (DONE = implementation + wiring em `createPostgresPlatformC
 | schema_migrations runner | DONE | checksum SHA-256; rerun no-op; histórico editado falha; advisory lock |
 | PgOntologyRegistry | DONE | create+commit → restart → get ontology/version |
 | Durable PgAuditRepository | DONE | GENESIS/EVENT/COMMIT/REDACTED; restart verify; concurrent append; redact+reload |
-| Object history na mesma tx | DONE | governed snapshot pre-state; asOf; restart |
+| Object history na mesma tx | DONE | governed snapshot pós-mutação; asOf = mundo vigente; restart |
 
 Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pagar` até estes gates.
 
