@@ -1,6 +1,9 @@
 /**
  * object-platform — src/core/object-repository.ts
  * Generic in-memory ObjectRepository (domain-neutral).
+ *
+ * Soft-delete semantic: recreating the same logical PK REVIVES the identity
+ * (same id, version++, deleted=false) rather than inventing a new identity.
  */
 
 import type {
@@ -14,7 +17,8 @@ import type {
   UpdateObjectInput,
 } from 'contracts';
 
-import { createDeterministicClock, createIdGenerator } from './determinism.js';
+import { createSystemClock, createUuidIdGenerator } from './determinism.js';
+import { DuplicateObjectError, ObjectNotFoundError, VersionConflictError } from './errors.js';
 import type { Clock, IdGenerator } from './types.js';
 
 export interface CreateMemoryObjectRepositoryOptions {
@@ -34,16 +38,31 @@ function freezeRecord(o: ObjectRecord): ObjectRecord {
   });
 }
 
+function sortRecords(out: ObjectRecord[], opts?: ListObjectsOptions): ObjectRecord[] {
+  if (!opts?.orderBy) return out;
+  const { property, direction } = opts.orderBy;
+  const dir = direction === 'desc' ? -1 : 1;
+  return [...out].sort((a, b) => {
+    const av = a.properties[property];
+    const bv = b.properties[property];
+    if (av === bv) return 0;
+    if (av == null) return -1 * dir;
+    if (bv == null) return 1 * dir;
+    return (av < bv ? -1 : 1) * dir;
+  });
+}
+
 export function createMemoryObjectRepository(
   opts: CreateMemoryObjectRepositoryOptions = {},
 ): ObjectRepository {
-  const clock = opts.clock ?? createDeterministicClock();
-  const nextId = opts.nextId ?? createIdGenerator();
+  // Production-safe defaults; tests inject deterministic providers.
+  const clock = opts.clock ?? createSystemClock();
+  const nextId = opts.nextId ?? createUuidIdGenerator();
 
   const byId = new Map<ObjectRecordId, ObjectRecord>();
   const byPk = new Map<string, ObjectRecordId>();
 
-  function requireByPk(
+  function requireLive(
     ontologyId: OntologyId,
     objectTypeId: ObjectTypeId,
     primaryKey: string,
@@ -51,7 +70,7 @@ export function createMemoryObjectRepository(
     const id = byPk.get(pkKey(ontologyId, objectTypeId, primaryKey));
     const obj = id ? byId.get(id) : undefined;
     if (!obj || obj.deleted) {
-      throw new Error(`object not found: ${objectTypeId}/${primaryKey}`);
+      throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
     }
     return obj;
   }
@@ -60,13 +79,31 @@ export function createMemoryObjectRepository(
     create(input: CreateObjectInput): ObjectRecord {
       const key = pkKey(input.ontologyId, input.objectTypeId, input.primaryKey);
       const existingId = byPk.get(key);
-      if (existingId) {
-        const existing = byId.get(existingId);
-        if (existing && !existing.deleted) {
-          throw new Error(`object already exists: ${input.objectTypeId}/${input.primaryKey}`);
-        }
+      const existing = existingId ? byId.get(existingId) : undefined;
+
+      if (existing && !existing.deleted) {
+        throw new DuplicateObjectError(
+          `object already exists: ${input.objectTypeId}/${input.primaryKey}`,
+        );
       }
+
       const now = clock();
+      // Soft-delete revive: keep identity, bump version.
+      if (existing && existing.deleted) {
+        const revived = freezeRecord({
+          ...existing,
+          ontologyVersionId: input.ontologyVersionId ?? existing.ontologyVersionId,
+          properties: { ...(input.properties ?? {}) },
+          version: existing.version + 1,
+          deleted: false,
+          updatedAt: now,
+          source: input.source ?? existing.source,
+          provenance: input.provenance ?? existing.provenance,
+        });
+        byId.set(revived.id, revived);
+        return revived;
+      }
+
       const record = freezeRecord({
         id: nextId('obj'),
         ontologyId: input.ontologyId,
@@ -108,18 +145,7 @@ export function createMemoryObjectRepository(
         if (!opts?.includeDeleted && obj.deleted) continue;
         out.push(obj);
       }
-      if (opts?.orderBy) {
-        const { property, direction } = opts.orderBy;
-        const dir = direction === 'desc' ? -1 : 1;
-        out = [...out].sort((a, b) => {
-          const av = a.properties[property];
-          const bv = b.properties[property];
-          if (av === bv) return 0;
-          if (av == null) return -1 * dir;
-          if (bv == null) return 1 * dir;
-          return (av < bv ? -1 : 1) * dir;
-        });
-      }
+      out = sortRecords(out, opts);
       const offset = opts?.offset ?? 0;
       const limit = opts?.limit;
       if (limit != null) return out.slice(offset, offset + limit);
@@ -127,10 +153,16 @@ export function createMemoryObjectRepository(
     },
 
     update(ontologyId, objectTypeId, primaryKey, input: UpdateObjectInput) {
-      const prev = requireByPk(ontologyId, objectTypeId, primaryKey);
+      const prev = requireLive(ontologyId, objectTypeId, primaryKey);
       if (input.expectedVersion != null && prev.version !== input.expectedVersion) {
-        throw new Error(
+        throw new VersionConflictError(
           `version conflict: expected ${input.expectedVersion}, got ${prev.version}`,
+          {
+            expectedVersion: input.expectedVersion,
+            actualVersion: prev.version,
+            objectTypeId,
+            primaryKey,
+          },
         );
       }
       const properties =

@@ -20,8 +20,8 @@ import type {
 } from 'contracts';
 
 import {
-  createDeterministicClock,
-  createIdGenerator,
+  createSystemClock,
+  createUuidIdGenerator,
 } from 'object-platform';
 import { createAuditLog } from 'policy-engine';
 
@@ -75,8 +75,8 @@ function evaluateCriterion(
 export function createActionExecutor(
   opts: CreateActionExecutorOptions,
 ): ActionExecutor {
-  const clock = opts.clock ?? createDeterministicClock();
-  const nextId = opts.nextId ?? createIdGenerator();
+  const clock = opts.clock ?? createSystemClock();
+  const nextId = opts.nextId ?? createUuidIdGenerator();
   const authorize = opts.authorize ?? allowAll;
   const objects = opts.objects;
   const links = opts.links;

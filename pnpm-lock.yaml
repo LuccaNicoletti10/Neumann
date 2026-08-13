@@ -65,6 +65,18 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/api-errors:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/auto-logging-config:
     dependencies:
       fastify:
@@ -580,12 +592,18 @@ importers:
 
   packages/object-set:
     dependencies:
+      api-errors:
+        specifier: workspace:*
+        version: link:../api-errors
       contracts:
         specifier: workspace:*
         version: link:../contracts
       object-platform:
         specifier: workspace:*
         version: link:../object-platform
+      pagination:
+        specifier: workspace:*
+        version: link:../pagination
     devDependencies:
       '@types/node':
         specifier: 20.14.15
@@ -659,6 +677,18 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.14.15)
 
+  packages/pagination:
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/periodic-search-manager:
     dependencies:
       fastify:
@@ -686,12 +716,18 @@ importers:
       action-engine:
         specifier: workspace:*
         version: link:../action-engine
+      api-errors:
+        specifier: workspace:*
+        version: link:../api-errors
       contracts:
         specifier: workspace:*
         version: link:../contracts
       fastify:
         specifier: ^4.28.0
         version: 4.28.1
+      knowledge-graph:
+        specifier: workspace:*
+        version: link:../knowledge-graph
       object-platform:
         specifier: workspace:*
         version: link:../object-platform
@@ -701,6 +737,9 @@ importers:
       ontology-registry:
         specifier: workspace:*
         version: link:../ontology-registry
+      pagination:
+        specifier: workspace:*
+        version: link:../pagination
       policy-engine:
         specifier: workspace:*
         version: link:../policy-engine

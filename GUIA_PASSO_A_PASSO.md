@@ -6,7 +6,17 @@
 > Fluxo: ingestão → memória imutável → transform → qualidade → lineage/policy → ontologia → …  
 > **Não** é app de fábrica, planejamento, forecasting nem vertical de negócio. Especialização na empresa só **depois** dos gates em datasets de teste, e sempre como app em cima do kernel.  
 > Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).  
-> **Status:** Blocos **1–6 entregues** + **Passo 20** (ER). Próximo = **Passo 21** (auditoria + canonical).
+> **Status:** Blocos **1–6 entregues** + **Passo 20** (ER) + **milestone Object/Action `/api/v2`**.  
+> **Em andamento:** consolidação/hardening (ver `docs/platform-consolidation-audit.md`) — uma fonte de verdade Objects/Links, Postgres CAS, auth, Actions transacionais.  
+> Próximo roadmap clássico após gates de consolidação: **Passo 21** (auditoria + canonical).
+
+---
+
+## MILESTONE — CONSOLIDAÇÃO / HARDENING (em andamento)
+<!-- Não apaga o progresso anterior. Fecha gaps P0–P73 antes de novas features. -->
+**Objetivo:** um ObjectRepository/LinkRepository canônico; projector/graph/API/actions sobre a mesma verdade; Postgres durável; Actions atômicas + outbox; auth Bearer + policy.
+**Docs:** `docs/architecture.md` · `docs/platform-consolidation-audit.md` · `docs/openfoundry-adaptations.md`
+**Gate parcial:** `pnpm --filter platform-api test` (one-truth + listOntologies + soft-delete revive)
 
 ---
 

@@ -189,6 +189,10 @@ export function createOntologyRegistry(
       return ontologies.get(ontologyId);
     },
 
+    listOntologies() {
+      return [...ontologies.values()];
+    },
+
     openDraft(ontologyId) {
       requireOntology(ontologyId);
       const latest = registry.getLatestVersion(ontologyId);

@@ -25,3 +25,7 @@ not a verbatim copy of OpenFoundry services):
 - ObjectSet algebra (BASE, FILTER, UNION, INTERSECT, SUBTRACT, STATIC, SEARCH_AROUND)
 - Foundry-like /api/v2 ontology-scoped object, link, objectSet, and action routes
 - ActionType parameter / lifecycle shapes
+- packages/api-errors (from OpenFoundry packages/errors)
+- packages/pagination (from OpenFoundry packages/pagination; Node base64url)
+- Auth Bearer middleware pattern (OpenFoundry packages/permissions) — Phase D ongoing
+- Webhook HMAC/retry concepts — Phase F planned

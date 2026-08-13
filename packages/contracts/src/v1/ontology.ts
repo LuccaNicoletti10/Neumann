@@ -231,6 +231,8 @@ export interface CommitOntologyInput {
 export interface OntologyRegistry {
   createOntology(input: CreateOntologyInput): Ontology;
   getOntology(ontologyId: OntologyId): Ontology | undefined;
+  /** List all ontologies (persisted). */
+  listOntologies(): Ontology[];
   /** Abre draft a partir da latest (ou vazio). */
   openDraft(ontologyId: OntologyId): OntologyDraft;
   getDraft(ontologyId: OntologyId): OntologyDraft | undefined;

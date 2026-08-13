@@ -3,6 +3,7 @@
  */
 
 export { evaluateFilter } from './core/filter.js';
+export { normalizeFilter } from './core/normalize.js';
 export {
   resolveObjectSet,
   loadObjects,

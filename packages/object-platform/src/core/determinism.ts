@@ -1,11 +1,15 @@
 /**
  * object-platform — src/core/determinism.ts
+ * Deterministic providers for tests; production-safe providers for runtime.
  */
+
+import { randomUUID } from 'node:crypto';
 
 import type { Clock, IdGenerator } from './types.js';
 
 export const DEFAULT_EPOCH = '2024-01-01T00:00:00.000Z';
 
+/** Test-only: monotonic deterministic clock. */
 export function createDeterministicClock(start: string = DEFAULT_EPOCH): Clock {
   const base = Date.parse(start);
   if (!Number.isFinite(base)) throw new Error(`instante inválido: ${start}`);
@@ -17,6 +21,7 @@ export function createDeterministicClock(start: string = DEFAULT_EPOCH): Clock {
   };
 }
 
+/** Test-only: sequential ids (`prefix-1`, `prefix-2`, …). Never use in production. */
 export function createIdGenerator(): IdGenerator {
   const counters = new Map<string, number>();
   return (prefix: string): string => {
@@ -24,4 +29,14 @@ export function createIdGenerator(): IdGenerator {
     counters.set(prefix, next);
     return `${prefix}-${next}`;
   };
+}
+
+/** Production clock. */
+export function createSystemClock(): Clock {
+  return () => new Date().toISOString();
+}
+
+/** Production collision-safe IDs (UUID v4). Prefix is informational only. */
+export function createUuidIdGenerator(): IdGenerator {
+  return (prefix: string): string => `${prefix}_${randomUUID()}`;
 }

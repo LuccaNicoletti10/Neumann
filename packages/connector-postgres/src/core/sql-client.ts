@@ -53,7 +53,12 @@ export function createMemorySqlClient(seed: MemoryPersonRow[] = []): MemorySqlCl
       return rowsSorted();
     },
     async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []) {
-      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      // Strip identifier quotes for pattern matching ("id" → id).
+      const normalized = sql
+        .replace(/"/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
 
       // health ping
       if (normalized === 'select 1 as ok' || normalized === 'select 1') {
@@ -74,8 +79,13 @@ export function createMemorySqlClient(seed: MemoryPersonRow[] = []): MemorySqlCl
         return { rows: cols as T[] };
       }
 
-      // snapshot: SELECT ... FROM people WHERE id > $1 ORDER BY id ASC LIMIT $2
-      if (normalized.includes('order by id asc') && normalized.includes('limit')) {
+      // snapshot: ORDER BY <pk> ASC LIMIT — supports configured primary key column
+      if (
+        normalized.includes('from people') &&
+        normalized.includes('order by') &&
+        normalized.includes('limit') &&
+        !normalized.includes('order by updated_at')
+      ) {
         const lastPk = params[0] === null || params[0] === undefined ? null : String(params[0]);
         const limit = Number(params[1] ?? 100);
         let list = rowsSorted();
@@ -85,8 +95,12 @@ export function createMemorySqlClient(seed: MemoryPersonRow[] = []): MemorySqlCl
         return { rows: list.slice(0, limit) as T[] };
       }
 
-      // cdc: updated_at > $1 OR (updated_at = $1 AND id > $2) ORDER BY updated_at ASC, id ASC LIMIT $3
-      if (normalized.includes('updated_at') && normalized.includes('order by updated_at')) {
+      // cdc: watermark + pk keyset
+      if (
+        normalized.includes('from people') &&
+        normalized.includes('updated_at') &&
+        normalized.includes('order by')
+      ) {
         const cursorTs = String(params[0] ?? '');
         const lastPk = String(params[1] ?? '');
         const limit = Number(params[2] ?? 100);

@@ -12,7 +12,7 @@ import type {
   OntologyId,
 } from 'contracts';
 
-import { createDeterministicClock, createIdGenerator } from './determinism.js';
+import { createSystemClock, createUuidIdGenerator } from './determinism.js';
 import type { Clock, IdGenerator } from './types.js';
 import type { SqlClient } from './pg-object-repository.js';
 
@@ -42,8 +42,8 @@ export function createPgLinkRepository(
   opts: CreatePgLinkRepositoryOptions,
 ): LinkRepository {
   const { sql } = opts;
-  const clock = opts.clock ?? createDeterministicClock();
-  const nextId = opts.nextId ?? createIdGenerator();
+  const clock = opts.clock ?? createSystemClock();
+  const nextId = opts.nextId ?? createUuidIdGenerator();
 
   return {
     async create(input: CreateLinkInput): Promise<LinkRecord> {

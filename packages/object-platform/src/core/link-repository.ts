@@ -13,12 +13,24 @@ import type {
   OntologyId,
 } from 'contracts';
 
-import { createDeterministicClock, createIdGenerator } from './determinism.js';
+import { createSystemClock, createUuidIdGenerator } from './determinism.js';
+import { LinkIntegrityError } from './errors.js';
 import type { Clock, IdGenerator } from './types.js';
 
 export interface CreateMemoryLinkRepositoryOptions {
   clock?: Clock;
   nextId?: IdGenerator;
+  /**
+   * Optional existence check — inject ObjectRepository.get for integrity.
+   * When provided, create() rejects dangling endpoints.
+   */
+  objectExists?: (
+    ontologyId: string,
+    objectTypeId: string,
+    primaryKey: string,
+  ) => boolean | Promise<boolean>;
+  /** Cardinality from LinkType schema (never trust raw client). */
+  cardinalityOf?: (linkTypeId: string) => string | undefined | Promise<string | undefined>;
 }
 
 function linkKey(input: {
@@ -42,45 +54,67 @@ function linkKey(input: {
 export function createMemoryLinkRepository(
   opts: CreateMemoryLinkRepositoryOptions = {},
 ): LinkRepository {
-  const clock = opts.clock ?? createDeterministicClock();
-  const nextId = opts.nextId ?? createIdGenerator();
+  const clock = opts.clock ?? createSystemClock();
+  const nextId = opts.nextId ?? createUuidIdGenerator();
 
   const byId = new Map<LinkRecordId, LinkRecord>();
   const byKey = new Map<string, LinkRecordId>();
 
-  function enforceCardinality(input: CreateLinkInput): void {
-    const c = input.cardinality;
-    if (!c) return;
+  function enforceCardinality(input: CreateLinkInput, cardinality?: string): void {
+    const c = cardinality ?? input.cardinality;
+    if (!c || c === 'N:N') return;
 
-    if (c === '1:1' || c === '1:N') {
+    // 1:1 — at most one edge from source and at most one into target
+    // 1:N — many from source OK; at most one into a given target
+    // N:1 — at most one from a given source; many into target OK
+    if (c === '1:1' || c === 'N:1') {
       for (const link of byId.values()) {
         if (link.ontologyId !== input.ontologyId) continue;
         if (link.linkTypeId !== input.linkTypeId) continue;
         if (link.sourceObjectTypeId !== input.sourceObjectTypeId) continue;
         if (link.sourcePrimaryKey !== input.sourcePrimaryKey) continue;
-        if (c === '1:1') {
-          throw new Error(`cardinality 1:1 violated for ${input.linkTypeId}`);
-        }
+        throw new LinkIntegrityError(`cardinality ${c} violated for ${input.linkTypeId}`);
       }
     }
-    if (c === '1:1' || c === 'N:1') {
+    if (c === '1:1' || c === '1:N') {
       for (const link of byId.values()) {
         if (link.ontologyId !== input.ontologyId) continue;
         if (link.linkTypeId !== input.linkTypeId) continue;
         if (link.targetObjectTypeId !== input.targetObjectTypeId) continue;
         if (link.targetPrimaryKey !== input.targetPrimaryKey) continue;
-        throw new Error(`cardinality ${c} violated on target for ${input.linkTypeId}`);
+        throw new LinkIntegrityError(`cardinality ${c} violated on target for ${input.linkTypeId}`);
       }
     }
   }
 
   return {
-    create(input: CreateLinkInput): LinkRecord {
+    async create(input: CreateLinkInput): Promise<LinkRecord> {
       const key = linkKey(input);
       if (byKey.has(key)) {
-        throw new Error(`link already exists: ${input.linkTypeId}`);
+        throw new LinkIntegrityError(`link already exists: ${input.linkTypeId}`);
       }
-      enforceCardinality(input);
+      if (opts.objectExists) {
+        const srcOk = await opts.objectExists(
+          input.ontologyId,
+          input.sourceObjectTypeId,
+          input.sourcePrimaryKey,
+        );
+        const tgtOk = await opts.objectExists(
+          input.ontologyId,
+          input.targetObjectTypeId,
+          input.targetPrimaryKey,
+        );
+        if (!srcOk || !tgtOk) {
+          throw new LinkIntegrityError('link endpoints must reference existing objects');
+        }
+      }
+      const schemaCardinality = opts.cardinalityOf
+        ? await opts.cardinalityOf(input.linkTypeId)
+        : undefined;
+      const cardinality = (schemaCardinality ?? input.cardinality) as
+        | CreateLinkInput['cardinality']
+        | undefined;
+      enforceCardinality(input, cardinality);
       const record: LinkRecord = Object.freeze({
         id: nextId('link'),
         ontologyId: input.ontologyId,
@@ -90,7 +124,7 @@ export function createMemoryLinkRepository(
         targetObjectTypeId: input.targetObjectTypeId,
         targetPrimaryKey: input.targetPrimaryKey,
         createdAt: clock(),
-        cardinality: input.cardinality,
+        cardinality,
       });
       byId.set(record.id, record);
       byKey.set(key, record.id);

@@ -5,6 +5,7 @@
 export * from './core/types.js';
 export * from './core/determinism.js';
 export * from './core/hash.js';
+export * from './core/errors.js';
 export * from './core/platform.js';
 export * from './core/object-repository.js';
 export * from './core/link-repository.js';

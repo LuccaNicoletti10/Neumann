@@ -16,6 +16,7 @@ import type {
   ObjectSetLoadRequest,
   OntologyId,
 } from 'contracts';
+import { encodePageToken, decodePageToken, clampPageSize } from 'pagination';
 
 import { evaluateFilter } from './filter.js';
 
@@ -143,13 +144,19 @@ export async function loadObjects(
     }
   }
 
-  const pageSize = req.pageSize ?? 100;
-  const offset = req.pageToken ? Number.parseInt(req.pageToken, 10) || 0 : 0;
+  const pageSize = clampPageSize(req.pageSize);
+  const offset = req.pageToken ? decodePageToken(req.pageToken).offset : 0;
   const page = data.slice(offset, offset + pageSize);
   const next = offset + pageSize;
   return {
     data: page,
-    nextPageToken: next < data.length ? String(next) : undefined,
+    nextPageToken:
+      next < data.length
+        ? encodePageToken({
+            offset: next,
+            lastId: page[page.length - 1]?.id,
+          })
+        : undefined,
   };
 }
 

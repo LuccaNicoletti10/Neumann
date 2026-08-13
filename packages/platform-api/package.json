@@ -24,11 +24,14 @@
   "license": "MIT",
   "dependencies": {
     "action-engine": "workspace:*",
+    "api-errors": "workspace:*",
     "contracts": "workspace:*",
     "fastify": "^4.28.0",
+    "knowledge-graph": "workspace:*",
     "object-platform": "workspace:*",
     "object-set": "workspace:*",
     "ontology-registry": "workspace:*",
+    "pagination": "workspace:*",
     "policy-engine": "workspace:*"
   },
   "devDependencies": {

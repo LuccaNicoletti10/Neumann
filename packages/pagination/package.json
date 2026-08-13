@@ -1,7 +1,7 @@
 {
-  "name": "object-set",
+  "name": "pagination",
   "version": "1.0.0",
-  "description": "ObjectSet algebra — BASE/FILTER/UNION/INTERSECT/SUBTRACT/STATIC/SEARCH_AROUND (Foundry-inspired; OpenFoundry Apache-2.0 adapted).",
+  "description": "Opaque page tokens for Neumann APIs (adapted from OpenFoundry Apache-2.0 pagination).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,12 +20,6 @@
     "test": "vitest run"
   },
   "license": "MIT",
-  "dependencies": {
-    "api-errors": "workspace:*",
-    "contracts": "workspace:*",
-    "object-platform": "workspace:*",
-    "pagination": "workspace:*"
-  },
   "devDependencies": {
     "@types/node": "20.14.15",
     "typescript": "5.5.4",

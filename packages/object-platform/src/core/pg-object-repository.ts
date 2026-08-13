@@ -1,8 +1,8 @@
 /**
  * object-platform — src/core/pg-object-repository.ts
- * PostgreSQL ObjectRepository (durable). Requires injectable SqlClient.
+ * PostgreSQL ObjectRepository with atomic optimistic concurrency (CAS).
  *
- * Schema: infra/sql/0002_objects_platform.sql
+ * Soft-delete recreate: UPSERT revives same logical row (identity stable).
  */
 
 import type {
@@ -15,15 +15,15 @@ import type {
   UpdateObjectInput,
 } from 'contracts';
 
-import { createDeterministicClock, createIdGenerator } from './determinism.js';
+import { createSystemClock, createUuidIdGenerator } from './determinism.js';
+import { ObjectNotFoundError, VersionConflictError } from './errors.js';
 import type { Clock, IdGenerator } from './types.js';
 
-/** Minimal SQL client (same pattern as connector-postgres / event-bus). */
 export interface SqlClient {
   query<T = Record<string, unknown>>(
     text: string,
     params?: unknown[],
-  ): Promise<{ rows: T[] }>;
+  ): Promise<{ rows: T[]; rowCount?: number | null }>;
 }
 
 export interface CreatePgObjectRepositoryOptions {
@@ -55,18 +55,29 @@ export function createPgObjectRepository(
   opts: CreatePgObjectRepositoryOptions,
 ): ObjectRepository {
   const { sql } = opts;
-  const clock = opts.clock ?? createDeterministicClock();
-  const nextId = opts.nextId ?? createIdGenerator();
+  const clock = opts.clock ?? createSystemClock();
+  const nextId = opts.nextId ?? createUuidIdGenerator();
 
   return {
     async create(input: CreateObjectInput): Promise<ObjectRecord> {
       const id = nextId('obj');
       const now = clock();
+      // Revive soft-deleted logical identity; reject if live duplicate.
       const result = await sql.query(
         `INSERT INTO platform_objects (
            id, ontology_id, ontology_version_id, object_type_id, primary_key,
            properties, version, deleted, source, provenance, created_at, updated_at
          ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,1,false,$7,$8::jsonb,$9,$9)
+         ON CONFLICT (ontology_id, object_type_id, primary_key) DO UPDATE
+           SET
+             properties = EXCLUDED.properties,
+             ontology_version_id = COALESCE(EXCLUDED.ontology_version_id, platform_objects.ontology_version_id),
+             source = COALESCE(EXCLUDED.source, platform_objects.source),
+             provenance = COALESCE(EXCLUDED.provenance, platform_objects.provenance),
+             deleted = false,
+             version = platform_objects.version + 1,
+             updated_at = EXCLUDED.updated_at
+           WHERE platform_objects.deleted = true
          RETURNING *`,
         [
           id,
@@ -80,6 +91,11 @@ export function createPgObjectRepository(
           now,
         ],
       );
+      if (!result.rows[0]) {
+        throw new Error(
+          `object already exists: ${input.objectTypeId}/${input.primaryKey}`,
+        );
+      }
       return rowToRecord(result.rows[0] as Record<string, unknown>);
     },
 
@@ -105,19 +121,28 @@ export function createPgObjectRepository(
 
     async list(ontologyId: OntologyId, objectTypeId: ObjectTypeId, opts?: ListObjectsOptions) {
       const includeDeleted = opts?.includeDeleted ?? false;
+      const params: unknown[] = [ontologyId, objectTypeId, includeDeleted];
+      let orderSql = 'ORDER BY primary_key ASC';
+      if (opts?.orderBy) {
+        const prop = opts.orderBy.property;
+        if (!/^[A-Za-z0-9_.:-]+$/.test(prop)) {
+          throw new Error(`invalid orderBy property: ${prop}`);
+        }
+        const dir = opts.orderBy.direction === 'desc' ? 'DESC' : 'ASC';
+        params.push(prop);
+        orderSql = `ORDER BY properties->>$${params.length} ${dir} NULLS LAST, primary_key ASC`;
+      }
+      params.push(opts?.limit ?? 10_000);
+      const limitParam = params.length;
+      params.push(opts?.offset ?? 0);
+      const offsetParam = params.length;
       const result = await sql.query(
         `SELECT * FROM platform_objects
          WHERE ontology_id = $1 AND object_type_id = $2
            AND ($3::boolean OR deleted = false)
-         ORDER BY primary_key
-         LIMIT $4 OFFSET $5`,
-        [
-          ontologyId,
-          objectTypeId,
-          includeDeleted,
-          opts?.limit ?? 10_000,
-          opts?.offset ?? 0,
-        ],
+         ${orderSql}
+         LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        params,
       );
       return (result.rows as Record<string, unknown>[]).map(rowToRecord);
     },
@@ -129,10 +154,19 @@ export function createPgObjectRepository(
       input: UpdateObjectInput,
     ) {
       const current = await this.get(ontologyId, objectTypeId, primaryKey);
-      if (!current) throw new Error(`object not found: ${objectTypeId}/${primaryKey}`);
+      if (!current) {
+        throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
+      }
+      const expected = input.expectedVersion ?? current.version;
       if (input.expectedVersion != null && current.version !== input.expectedVersion) {
-        throw new Error(
+        throw new VersionConflictError(
           `version conflict: expected ${input.expectedVersion}, got ${current.version}`,
+          {
+            expectedVersion: input.expectedVersion,
+            actualVersion: current.version,
+            objectTypeId,
+            primaryKey,
+          },
         );
       }
       const properties =
@@ -140,13 +174,28 @@ export function createPgObjectRepository(
           ? input.properties
           : { ...current.properties, ...input.properties };
       const now = clock();
+      // Atomic CAS — never trust app-memory alone.
       const result = await sql.query(
         `UPDATE platform_objects
          SET properties = $1::jsonb, version = version + 1, updated_at = $2
-         WHERE ontology_id = $3 AND object_type_id = $4 AND primary_key = $5 AND deleted = false
+         WHERE ontology_id = $3 AND object_type_id = $4 AND primary_key = $5
+           AND deleted = false AND version = $6
          RETURNING *`,
-        [JSON.stringify(properties), now, ontologyId, objectTypeId, primaryKey],
+        [
+          JSON.stringify(properties),
+          now,
+          ontologyId,
+          objectTypeId,
+          primaryKey,
+          expected,
+        ],
       );
+      if (!result.rows[0]) {
+        throw new VersionConflictError(
+          `version conflict: expected ${expected}`,
+          { expectedVersion: expected, objectTypeId, primaryKey },
+        );
+      }
       return rowToRecord(result.rows[0] as Record<string, unknown>);
     },
 
@@ -159,7 +208,7 @@ export function createPgObjectRepository(
          RETURNING id`,
         [now, ontologyId, objectTypeId, primaryKey],
       );
-      return result.rows.length > 0;
+      return (result.rows?.length ?? 0) > 0;
     },
   };
 }

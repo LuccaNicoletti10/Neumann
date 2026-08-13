@@ -8,15 +8,27 @@ import type {
   ActionTypeDef,
   ObjectSet,
   ObjectSetAggregation,
-  ObjectSetFilter,
 } from 'contracts';
-import { aggregateObjects, loadObjects } from 'object-set';
+import { loadObjects, aggregateObjects, normalizeFilter } from 'object-set';
+import { paginateArray } from 'pagination';
+import { notFound } from 'api-errors';
 
 import type { PlatformContext } from '../core/context.js';
 
 function principalOf(req: { headers: Record<string, string | string[] | undefined> }): string {
-  const h = req.headers['x-principal'];
-  return typeof h === 'string' && h ? h : 'anonymous';
+  const allowDev = process.env.ALLOW_DEV_PRINCIPAL_HEADER === 'true';
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  if (allowDev && nodeEnv !== 'production') {
+    const h = req.headers['x-principal'];
+    if (typeof h === 'string' && h) return h;
+  }
+  const auth = req.headers.authorization;
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    // Token verification wired via IAM in Phase D; for now accept opaque token as principal id.
+    const token = auth.slice('Bearer '.length).trim();
+    if (token) return `bearer:${token.slice(0, 32)}`;
+  }
+  return 'anonymous';
 }
 
 function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
@@ -28,7 +40,7 @@ function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
       return {
         type: 'FILTER',
         objectSet: normalizeObjectSet(raw.objectSet as Record<string, unknown>),
-        filter: (raw.filter ?? raw.where) as ObjectSetFilter,
+        filter: normalizeFilter(raw.filter ?? raw.where),
       };
     case 'UNION':
       return {
@@ -67,8 +79,7 @@ export async function registerV2Routes(
   ctx: PlatformContext,
 ): Promise<void> {
   app.get('/api/v2/ontologies', async () => {
-    // Registry has no listAll — return empty until we add it; create via POST.
-    return { data: [] };
+    return { data: ctx.ontology.listOntologies() };
   });
 
   app.post<{ Body: { name: string; description?: string } }>(
@@ -87,7 +98,7 @@ export async function registerV2Routes(
     '/api/v2/ontologies/:ontology',
     async (req, reply) => {
       const o = ctx.ontology.getOntology(req.params.ontology);
-      if (!o) return reply.code(404).send({ error: 'ontology not found' });
+      if (!o) throw notFound('OntologyNotFound', 'ontology not found', { ontology: req.params.ontology });
       return o;
     },
   );
@@ -111,11 +122,14 @@ export async function registerV2Routes(
     },
   );
 
-  app.get<{ Params: { ontology: string; objectType: string } }>(
+  app.get<{ Params: { ontology: string; objectType: string }; Querystring: { pageSize?: string; pageToken?: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType',
     async (req) => {
       const data = await ctx.objects.list(req.params.ontology, req.params.objectType);
-      return { data };
+      return paginateArray(data, {
+        pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
+        pageToken: req.query.pageToken,
+      }, { idOf: (o) => o.id, maxPageSize: 1000, defaultPageSize: 100 });
     },
   );
 

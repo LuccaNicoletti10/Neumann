@@ -25,6 +25,8 @@ export function evaluateFilter(obj: ObjectRecord, filter: ObjectSetFilter): bool
       return !evaluateFilter(obj, filter.filter);
     case 'EQUALS':
       return obj.properties[filter.property] === filter.value;
+    case 'NOT_EQUALS':
+      return obj.properties[filter.property] !== filter.value;
     case 'CONTAINS': {
       const v = obj.properties[filter.property];
       return typeof v === 'string' && v.includes(filter.value);
@@ -32,6 +34,10 @@ export function evaluateFilter(obj: ObjectRecord, filter: ObjectSetFilter): bool
     case 'STARTS_WITH': {
       const v = obj.properties[filter.property];
       return typeof v === 'string' && v.startsWith(filter.value);
+    }
+    case 'ENDS_WITH': {
+      const v = obj.properties[filter.property];
+      return typeof v === 'string' && v.endsWith(filter.value);
     }
     case 'GT':
       return cmp(obj.properties[filter.property], filter.value) > 0;

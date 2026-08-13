@@ -25,8 +25,10 @@ export type ObjectSetFilter =
   | { type: 'OR'; filters: ObjectSetFilter[] }
   | { type: 'NOT'; filter: ObjectSetFilter }
   | { type: 'EQUALS'; property: PropertyTypeId | string; value: PropertyValue }
+  | { type: 'NOT_EQUALS'; property: PropertyTypeId | string; value: PropertyValue }
   | { type: 'CONTAINS'; property: PropertyTypeId | string; value: string }
   | { type: 'STARTS_WITH'; property: PropertyTypeId | string; value: string }
+  | { type: 'ENDS_WITH'; property: PropertyTypeId | string; value: string }
   | { type: 'GT'; property: PropertyTypeId | string; value: PropertyValue }
   | { type: 'GTE'; property: PropertyTypeId | string; value: PropertyValue }
   | { type: 'LT'; property: PropertyTypeId | string; value: PropertyValue }

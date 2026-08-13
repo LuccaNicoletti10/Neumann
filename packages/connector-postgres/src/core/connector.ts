@@ -33,6 +33,14 @@ function tableOrThrow(tables: TableConfig[], name: string): TableConfig {
   return t;
 }
 
+/** Safe SQL identifier quoting — rejects injection fragments. */
+function quoteIdent(ident: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(ident)) {
+    throw new Error(`unsafe SQL identifier: ${ident}`);
+  }
+  return `"${ident}"`;
+}
+
 function rowPayload(row: RowRecord, pk: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
@@ -134,12 +142,25 @@ export function createPostgresConnector(config: PostgresConnectorConfig): Connec
         column_name: string;
         data_type: string;
         is_nullable: string;
-        is_pk?: boolean;
+        is_pk: boolean;
       }>(
-        `SELECT column_name, data_type, is_nullable, is_pk
-         FROM information_schema.columns
-         WHERE table_name = $1
-         ORDER BY ordinal_position`,
+        `SELECT
+           c.column_name,
+           c.data_type,
+           c.is_nullable,
+           CASE WHEN kcu.column_name IS NOT NULL THEN true ELSE false END AS is_pk
+         FROM information_schema.columns c
+         LEFT JOIN information_schema.table_constraints tc
+           ON tc.table_schema = c.table_schema
+          AND tc.table_name = c.table_name
+          AND tc.constraint_type = 'PRIMARY KEY'
+         LEFT JOIN information_schema.key_column_usage kcu
+           ON kcu.constraint_name = tc.constraint_name
+          AND kcu.table_schema = tc.table_schema
+          AND kcu.table_name = tc.table_name
+          AND kcu.column_name = c.column_name
+         WHERE c.table_schema = 'public' AND c.table_name = $1
+         ORDER BY c.ordinal_position`,
         [table.name],
       );
       return {
@@ -165,10 +186,11 @@ export function createPostgresConnector(config: PostgresConnectorConfig): Connec
       }
 
       for (;;) {
+        const pkCol = quoteIdent(table.primaryKey);
         const { rows } = await config.client.query<RowRecord>(
-          `SELECT * FROM ${table.name}
-           WHERE ($1::text IS NULL OR id > $1)
-           ORDER BY id ASC
+          `SELECT * FROM ${quoteIdent(table.name)}
+           WHERE ($1::text IS NULL OR ${pkCol}::text > $1)
+           ORDER BY ${pkCol} ASC
            LIMIT $2`,
           [lastPk, pageSize],
         );
@@ -212,11 +234,13 @@ export function createPostgresConnector(config: PostgresConnectorConfig): Connec
           : { kind: 'cdc', object: table.name, updatedAt, lastPk };
 
       for (;;) {
+        const pkCol = quoteIdent(table.primaryKey);
+        const updatedCol = quoteIdent(table.updatedAtColumn ?? 'updated_at');
         const { rows } = await config.client.query<RowRecord>(
-          `SELECT * FROM ${table.name}
-           WHERE updated_at > $1
-              OR (updated_at = $1 AND id > $2)
-           ORDER BY updated_at ASC, id ASC
+          `SELECT * FROM ${quoteIdent(table.name)}
+           WHERE ${updatedCol}::text > $1
+              OR (${updatedCol}::text = $1 AND ${pkCol}::text > $2)
+           ORDER BY ${updatedCol} ASC, ${pkCol} ASC
            LIMIT $3`,
           [updatedAt, lastPk, pageSize],
         );
