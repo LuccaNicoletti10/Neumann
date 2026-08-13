@@ -8,14 +8,49 @@ import { OntologyValidationError } from 'object-platform';
 
 import { createMemoryPlatformContext, type PlatformContext } from './core/context.js';
 import { bindPrincipalHook, principalOf } from './core/principal.js';
+import {
+  AuthenticationError,
+  createHmacTokenVerifier,
+  type TokenVerifier,
+} from './core/token-verifier.js';
 import { registerWriteGuard } from './core/write-guard.js';
 import { registerV2Routes } from './routes/v2.js';
 
-export async function createPlatformServer(ctx?: PlatformContext) {
+export interface CreatePlatformServerOptions {
+  tokenVerifier?: TokenVerifier;
+  jwtSecret?: string;
+  jwtIssuer?: string;
+}
+
+function resolveTokenVerifier(opts: CreatePlatformServerOptions): TokenVerifier | undefined {
+  if (opts.tokenVerifier) return opts.tokenVerifier;
+  const secret = opts.jwtSecret ?? process.env.PLATFORM_JWT_SECRET;
+  if (!secret) return undefined;
+  return createHmacTokenVerifier({
+    secret,
+    issuer: opts.jwtIssuer ?? process.env.PLATFORM_JWT_ISSUER,
+  });
+}
+
+export async function createPlatformServer(
+  ctx?: PlatformContext,
+  opts: CreatePlatformServerOptions = {},
+) {
   const context = ctx ?? createMemoryPlatformContext();
   if (process.env.PLATFORM_MODE === 'postgres' && context.mode !== 'postgres') {
     throw new Error('PLATFORM_MODE=postgres but context is not postgres — refuse memory fallback');
   }
+
+  if (process.env.NODE_ENV === 'production') {
+    const secret = opts.jwtSecret ?? opts.tokenVerifier ?? process.env.PLATFORM_JWT_SECRET;
+    if (!secret) {
+      throw new Error(
+        'NODE_ENV=production requires PLATFORM_JWT_SECRET (fail-closed authentication)',
+      );
+    }
+  }
+
+  const verifier = resolveTokenVerifier(opts);
   const app = Fastify({ logger: false });
 
   app.addHook('onSend', async (_req, reply, payload) => {
@@ -29,7 +64,10 @@ export async function createPlatformServer(ctx?: PlatformContext) {
   });
   app.options('*', async (_req, reply) => reply.code(204).send());
 
-  app.addHook('onRequest', bindPrincipalHook());
+  app.get('/health', async () => ({ status: 'ok' }));
+  app.get('/ready', async () => ({ status: 'ready', mode: context.mode }));
+
+  app.addHook('onRequest', bindPrincipalHook(verifier));
 
   registerWriteGuard(app, {
     allowedPrincipals: ['svc-projector', 'svc-migration'],
@@ -39,6 +77,13 @@ export async function createPlatformServer(ctx?: PlatformContext) {
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof NeumannApiError) {
       return reply.code(err.statusCode).send(err.toJSON());
+    }
+    if (err instanceof AuthenticationError) {
+      return reply.code(401).send({
+        errorCode: 'UNAUTHENTICATED',
+        errorName: 'AuthenticationError',
+        message: err.message,
+      });
     }
     if (err instanceof OntologyValidationError) {
       return reply.code(400).send({
@@ -64,5 +109,5 @@ export async function createPlatformServer(ctx?: PlatformContext) {
   });
 
   await registerV2Routes(app, context);
-  return { app, ctx: context };
+  return { app, ctx: context, verifier };
 }

@@ -65,6 +65,10 @@ Production `createPostgresPlatformContext({ sql, transaction, authorize })` is f
 
 Direct HTTP writes to `/objects` and `/links` are service-only (`svc-projector`, `svc-migration`). Humans use Actions. Generic console: `apps/console/index.html` (not a domain app).
 
+Production HTTP auth: `PLATFORM_JWT_SECRET` required when `NODE_ENV=production`. `TokenVerifier` (HS256 today) is the swap point for JWKS/IdentityProvider. Dev without the secret still accepts opaque Bearer. `/health` and `/ready` stay public.
+
+SQL: `applyPlatformMigrations` records SHA-256 checksums in `schema_migrations` under an advisory lock. Historical files must not be edited.
+
 ## Package classification
 
 **CORE PLATFORM / CRITICAL PATH** (`pnpm gate:core`):

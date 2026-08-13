@@ -5,7 +5,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import pg from 'pg';
 import type { SqlClient, SqlQueryResult, TransactionManager } from 'contracts';
@@ -23,6 +23,8 @@ export function quoteIdent(ident: string): string {
 
 export interface TransactionalSqlClient extends SqlClient, TransactionManager {
   close(): Promise<void>;
+  /** Hold one pool connection for the duration of `fn` (advisory locks, migration runner). */
+  withSession<T>(fn: (sql: SqlClient) => Promise<T>): Promise<T>;
 }
 
 export interface CreatePgSqlClientOptions {
@@ -88,6 +90,17 @@ export function createPgSqlClient(opts: CreatePgSqlClientOptions): Transactional
       });
     },
 
+    async withSession<T>(fn: (sql: SqlClient) => Promise<T>): Promise<T> {
+      return withClient(async (client) => {
+        const session: SqlClient = {
+          async query<R = Record<string, unknown>>(text: string, params?: unknown[]) {
+            return wrapResult<R>(await client.query(text, params));
+          },
+        };
+        return fn(session);
+      });
+    },
+
     async close() {
       if (closed) return;
       closed = true;
@@ -108,15 +121,88 @@ export function findInfraSqlDir(start = process.cwd()): string {
   throw new Error('infra/sql not found (run tests from the monorepo)');
 }
 
-export async function applyPlatformMigrations(sql: SqlClient, sqlDir?: string): Promise<void> {
+const SCHEMA_MIGRATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename TEXT PRIMARY KEY,
+  checksum TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  duration_ms INTEGER
+);
+`;
+
+export function checksumSql(body: string): string {
+  return createHash('sha256').update(body, 'utf8').digest('hex');
+}
+
+function hasWithSession(
+  sql: SqlClient,
+): sql is SqlClient & { withSession: TransactionalSqlClient['withSession'] } {
+  return typeof (sql as TransactionalSqlClient).withSession === 'function';
+}
+
+async function runPlatformMigrations(sql: SqlClient, sqlDir?: string): Promise<void> {
   const dir = sqlDir ?? findInfraSqlDir();
   const files = readdirSync(dir)
     .filter((f) => /^\d+_.*\.sql$/.test(f))
     .sort();
-  for (const file of files) {
-    const body = readFileSync(join(dir, file), 'utf8');
-    await sql.query(body);
+
+  await sql.query('SELECT pg_advisory_lock(8041716, hashtext(current_schema()))');
+  try {
+    await sql.query(SCHEMA_MIGRATIONS_DDL);
+
+    for (const file of files) {
+      const body = readFileSync(join(dir, file), 'utf8');
+      const checksum = checksumSql(body);
+      const existing = await sql.query<{ checksum: string }>(
+        `SELECT checksum FROM schema_migrations WHERE filename = $1`,
+        [file],
+      );
+      const prev = existing.rows[0]?.checksum;
+      if (prev) {
+        if (prev !== checksum) {
+          throw new Error(
+            `migration checksum mismatch: ${file} was already applied with a different checksum; historical migrations must not be edited`,
+          );
+        }
+        continue;
+      }
+
+      const started = Date.now();
+      await sql.query('BEGIN');
+      try {
+        await sql.query(body);
+        await sql.query(
+          `INSERT INTO schema_migrations (filename, checksum, duration_ms)
+           VALUES ($1, $2, $3)`,
+          [file, checksum, Date.now() - started],
+        );
+        await sql.query('COMMIT');
+      } catch (err) {
+        try {
+          await sql.query('ROLLBACK');
+        } catch {
+          /* ignore */
+        }
+        throw err;
+      }
+    }
+  } finally {
+    await sql.query('SELECT pg_advisory_unlock(8041716, hashtext(current_schema()))').catch(
+      () => undefined,
+    );
   }
+}
+
+/**
+ * Apply numbered `infra/sql/*.sql` files once, tracked in `schema_migrations`.
+ * Re-runs with the same checksum are no-ops. Edited historical files fail closed.
+ */
+export async function applyPlatformMigrations(sql: SqlClient, sqlDir?: string): Promise<void> {
+  if (hasWithSession(sql)) {
+    await sql.withSession((session) => runPlatformMigrations(session, sqlDir));
+    return;
+  }
+  await runPlatformMigrations(sql, sqlDir);
 }
 
 export const DEFAULT_TEST_DATABASE_URL =

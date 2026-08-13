@@ -31,7 +31,8 @@ Durability checklist (DONE = implementation + wiring em `createPostgresPlatformC
 | Canonical outbox (`outbox_events`) | DONE | PostgresOutboxStore + Action UoW usam a migration 0001; sem tabela `outbox` paralela |
 | Connector write-back (pedido + worker) | DONE | side effect na mesma tx; `worker.drainOnce()` → `erp_writeback_queue` (HTTP ERP = depois) |
 | PolicyEngine / authorize no ActionExecutor | DONE | production fail-closed (sem `allowAll` default); memory injeta allowAll explícito |
-| Bearer authentication | PARTIAL | Bearer token = principal id; IAM verification = Phase D restante |
+| Bearer / JWT HS256 | DONE | `TokenVerifier` HMAC; production exige `PLATFORM_JWT_SECRET`; token inválido → 401; IdentityProvider/JWKS = Phase D |
+| schema_migrations runner | DONE | checksum SHA-256; rerun no-op; histórico editado falha; advisory lock |
 | PgOntologyRegistry | DONE | create+commit → restart → get ontology/version |
 | Durable PgAuditRepository | DONE | GENESIS/EVENT/COMMIT/REDACTED; restart verify; concurrent append; redact+reload |
 | Object history na mesma tx | DONE | governed snapshot pre-state; asOf; restart |

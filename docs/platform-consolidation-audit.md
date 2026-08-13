@@ -13,7 +13,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 | P6 | High | DONE | C | ontology-registry | PgOntologyRegistry + restart gate |
 | P10 | High | DONE | B | graph-query.ts | Repository-backed GraphQueryEngine |
 | P11 | High | DONE | C | context.ts | createMemory* / createPostgres*; PG mode uses PG ontology/events/executions/audit |
-| P12 | High | PARTIAL | D | routes v2 | Bearer token = principal id; IAM verification remaining |
+| P12 | High | DONE (HS256) | D | routes v2 + token-verifier | JWT HS256 + 401; IdentityProvider/JWKS still Phase D |
 | P14 | Medium | DONE | D | api-errors | NeumannApiError + Fastify handler |
 | P15 | Medium | DONE | D | pagination | Opaque page tokens |
 | P17 | Medium | PARTIAL | I | object-set | NOT_EQUALS/ENDS_WITH + alias normalize |
@@ -41,7 +41,8 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 | P13 | Policy on every route | unauthorized aggregate test missing |
 | P66 | Full source→action→writeback E2E | SQL-mirror worker exists; HTTP ERP handler still Passo 25 |
 | P19 | SQL ObjectSet planner | only memory evaluator |
-| Bearer/IAM | token accepted as opaque principal | no IdentityProvider verification |
+| Bearer/IAM | HS256 adapter in platform-api | IdentityProvider (Passo 3) still not wired; no JWKS |
+| schema_migrations | versioned runner + checksum lock | ALTER TABLE now safe to add |
 
 ## Working rule
 

@@ -4,15 +4,22 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+
+import {
+  AuthenticationError,
+  type TokenVerifier,
+} from './token-verifier.js';
 
 export const principalAls = new AsyncLocalStorage<string>();
+
+const PUBLIC_PATHS = new Set(['/health', '/ready']);
 
 export function getCurrentPrincipal(): string | undefined {
   return principalAls.getStore();
 }
 
-export function principalOf(req: {
+export function extractDevPrincipal(req: {
   headers: Record<string, string | string[] | undefined>;
 }): string {
   const allowDev = process.env.ALLOW_DEV_PRINCIPAL_HEADER === 'true';
@@ -29,16 +36,83 @@ export function principalOf(req: {
   return 'anonymous';
 }
 
+/**
+ * Resolve principal from ALS (after bindPrincipalHook) or headers (dev / tests).
+ * When a TokenVerifier is bound, missing/invalid tokens never become 'anonymous'.
+ */
+export function principalOf(req: {
+  headers: Record<string, string | string[] | undefined>;
+}): string {
+  return principalAls.getStore() ?? extractDevPrincipal(req);
+}
+
+export function extractBearerToken(req: {
+  headers: Record<string, string | string[] | undefined>;
+}): string | undefined {
+  const auth = req.headers.authorization;
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    const token = auth.slice('Bearer '.length).trim();
+    return token || undefined;
+  }
+  return undefined;
+}
+
 export function runWithPrincipal<T>(principal: string, fn: () => T): T {
   return principalAls.run(principal, fn);
 }
 
-export function bindPrincipalHook(): (
-  req: FastifyRequest,
-  _reply: unknown,
-  done: (err?: Error) => void,
-) => void {
-  return (req, _reply, done) => {
-    principalAls.run(principalOf(req), () => done());
+function sendUnauthenticated(reply: FastifyReply, message: string): void {
+  void reply.code(401).send({
+    errorCode: 'UNAUTHENTICATED',
+    errorName: 'AuthenticationError',
+    message,
+  });
+}
+
+/**
+ * Fastify onRequest hook. Uses callback style so AsyncLocalStorage wraps the
+ * rest of the request (done() runs inside principalAls.run).
+ */
+export function bindPrincipalHook(verifier?: TokenVerifier) {
+  return (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    done: (err?: Error) => void,
+  ): void => {
+    const url = req.url.split('?')[0] ?? '';
+    if (PUBLIC_PATHS.has(url)) {
+      done();
+      return;
+    }
+
+    if (!verifier) {
+      principalAls.run(extractDevPrincipal(req), () => done());
+      return;
+    }
+
+    const token = extractBearerToken(req);
+    if (!token) {
+      sendUnauthenticated(reply, 'missing bearer token');
+      done();
+      return;
+    }
+
+    verifier
+      .verify(token)
+      .then((verified) => {
+        principalAls.run(verified.principal, () => done());
+      })
+      .catch((err: unknown) => {
+        const message =
+          err instanceof AuthenticationError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'authentication failed';
+        sendUnauthenticated(reply, message);
+        done();
+      });
   };
 }
+
+export { AuthenticationError };
