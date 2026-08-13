@@ -6,9 +6,9 @@
 > Fluxo: ingestão → memória imutável → transform → qualidade → lineage/policy → ontologia → …  
 > **Não** é app de fábrica, planejamento, forecasting nem vertical de negócio. Especialização na empresa só **depois** dos gates em datasets de teste, e sempre como app em cima do kernel.  
 > Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).  
-> **Status:** Blocos **1–6 entregues** + **Passo 20** (ER) + **milestone Object/Action `/api/v2`**.  
+> **Status:** Blocos **1–6 entregues** + **Passos 20–21** (ER + audit/canonical) + **milestone Object/Action `/api/v2`**.  
 > **Em andamento:** consolidação/hardening (ver `docs/platform-consolidation-audit.md`) — uma fonte de verdade Objects/Links, Postgres CAS, auth, Actions transacionais.  
-> Próximo roadmap clássico após gates de consolidação: **Passo 21** (auditoria + canonical).
+> Próximo roadmap clássico após gates de consolidação: **Passo 22** (gold set + revisão humana).
 
 ---
 
@@ -198,7 +198,7 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 
 ---
 
-## ▶ PRÓXIMO — PASSO 21
+## ▶ PRÓXIMO — PASSO 22
 
 ## BLOCO 6 — ONTOLOGY (ENTREGUE)
 
@@ -253,13 +253,14 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 **Gate:** "ACME LTDA" (A) + "Acme Ltda." (B) → 1 objeto Customer. *(tasks 059–063)* — `pnpm er -- demo`
 
 ### PASSO 21 — Auditoria de matches + canonical entities
+<!-- ENTREGUE: packages/entity-resolution + contracts (audit/canonical/fingerprint/rank) + infra/sql/0006_entity_resolution.sql. Sem gold set / HTTP review queue (Passo 22). -->
 **Construir:** persistir candidate, score, features, model_version, decision, reason, review, timestamp; merge para canonical sem destruir original; link source→canonical.
 **Patentes:**
 - **US20250165857A1** — serve para: **entity resolution generalizável baseada em estruturas da ontology** — comparar registros entrantes com entidades já presentes na ontology + usar feedback para melhorar (por isso ER e Ontology são construídas juntas).
 - **US 12,393,406 / US20250348288A1** — servem para: busca de entidades via copy-detection.
 - **US 8,788,405** — serve para: clusters de entidades.
 - **US 8,818,892** — serve para: priorização de clusters (ordena a fila de revisão).
-**Gate:** toda decisão auditável; false merge reversível. *(tasks 064–067)*
+**Gate:** toda decisão auditável; false merge reversível. *(tasks 064–067)* — `pnpm er -- demo`
 
 ### PASSO 22 — Gold set + revisão humana
 **Construir:** 50 pares rotulados (MATCH/NO_MATCH); métricas precision/recall/F1/**false-merge-rate**/false-split-rate/manual-review-rate; fila + endpoint de revisão para zona cinzenta.
@@ -451,7 +452,7 @@ BLOCO 3  Store imutável (versões, deltas, time travel) → passos 8–10  ✓ 
 BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14  ✓ ENTREGUE
 BLOCO 5  Lineage + Policy + Audit                      → passos 15–16  ✓ ENTREGUE
 BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19  ✓ ENTREGUE
-BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22  ◀ Passo 20 ✓; 21 próximo
+BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22  ◀ Passos 20–21 ✓; 22 próximo
 BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ★ CICLO DA PLATAFORMA
 BLOCO 9  Security hardening                            → passos 27–28
 BLOCO 10 Search + APIs (+Federation; Edge só se pedido)→ passos 29–32
@@ -462,7 +463,7 @@ BLOCO 13 Closed-loop E2E + hardening                   → passos 38–39
 
 **Dataset-first:** validar cada bloco com datasets de teste genéricos. App real da empresa (qualquer vertical) entra em `apps/<nome>/` **só depois** — nunca no core.
 
-**Ordem obrigatória daqui pra frente:** Passo 21 (auditoria/canonical) → demais.
+**Ordem obrigatória daqui pra frente:** Passo 22 (gold set / revisão humana) → demais.
 
 **Não vira core (patentes verticais — ficam fora da fundação):**
 US 9,129,219 / 9,836,694 (crime-risk) · US 9,501,202 (genomic) · US 9,431,507 (acoustic sensing) · US 9,872,083 / 10,708,669 (media/ads) · US 8,494,941 (financial similarity) · US 9,830,157 / 9,676,662 (image metadata) · US 9,606,647 (gestures) · US 11,706,090 (network troubleshooting).

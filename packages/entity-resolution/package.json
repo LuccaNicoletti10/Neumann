@@ -1,7 +1,7 @@
 {
   "name": "entity-resolution",
   "version": "1.0.0",
-  "description": "ER pipeline normalize→block→score (US 8,554,719 / 9,501,552 / 9,846,731 / 12,229,154 / US20140280252).",
+  "description": "ER pipeline normalize→block→score + audit/canonical/fingerprint (Passos 20–21).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@types/node": "20.14.15",
+    "object-platform": "workspace:*",
     "tsx": "^4.16.0",
     "typescript": "5.5.4",
     "vitest": "^2.1.9"

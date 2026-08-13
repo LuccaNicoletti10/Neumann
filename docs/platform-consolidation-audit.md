@@ -29,7 +29,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 ## Baseline inventory
 
 - 39+ packages under `packages/*` (+ `api-errors`, `pagination`)
-- SQL: `0001_outbox.sql`, `0002_objects_platform.sql`, `0003_history_ontology.sql`, `0004_audit.sql`, `0005_writeback.sql`
+- SQL: `0001_outbox.sql`, `0002_objects_platform.sql`, `0003_history_ontology.sql`, `0004_audit.sql`, `0005_writeback.sql`, `0006_entity_resolution.sql`
 - OpenFoundry reference: `/tmp/openfoundry-reference` (Apache-2.0)
 
 ## Still remaining (next sessions)
