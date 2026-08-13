@@ -28,8 +28,8 @@ Durability checklist (DONE = implementation + wiring em `createPostgresPlatformC
 | PgActionExecutionStore | DONE | execute → restart → getExecution |
 | PostgreSQL idempotency | DONE | concurrent same key → 1 execução; restart + replay não reexecuta |
 | Actions transacionais (UnitOfWork) | DONE | falha no meio → ROLLBACK; sem estado parcial |
-| Canonical outbox (`outbox_events`) | DONE | PostgresOutboxStore + Action UoW usam a migration 0001; sem tabela `outbox` paralela |
-| Connector write-back (pedido + worker) | DONE | side effect na mesma tx; `worker.drainOnce()` → `erp_writeback_queue` (HTTP ERP = depois) |
+| Canonical outbox (`outbox_events`) | DONE | status machine PENDING→PROCESSING→RETRYING/DELIVERED/DEAD_LETTER/UNHANDLED; backoff+jitter; lease; HTTP fora da TX |
+| Connector write-back (pedido + worker) | DONE | SqlMirror sink **ou** HttpConnector + `Idempotency-Key`; `writeback_executions`; ERP simulator + closed-loop E2E |
 | PolicyEngine / authorize no ActionExecutor | DONE | production fail-closed: `authorizer` obrigatório; AuthorizeFn = `authorizer.authorize` (uma fonte p/ Actions+Reads) |
 | Bearer / JWT HS256 | DONE | `TokenVerifier` HMAC; production exige `PLATFORM_JWT_SECRET`; token inválido → 401; IdentityProvider/JWKS = Phase D |
 | schema_migrations runner | DONE | checksum SHA-256; rerun no-op; histórico editado falha; advisory lock |

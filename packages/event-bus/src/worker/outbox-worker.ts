@@ -1,61 +1,40 @@
 /**
- * event-bus — src/worker/outbox-worker.ts
+ * event-bus — operational outbox worker.
  *
- * PEÇA 2 (fechamento do loop) — o consumidor que faltava.
+ * TX1: claim row (PROCESSING + lease) and COMMIT.
+ * Then run the handler (HTTP allowed — no open row lock).
+ * TX2: DELIVERED / RETRYING / DEAD_LETTER / UNHANDLED.
  *
- * A action insere a intenção de side effect em outbox_events DENTRO da
- * transação. Este worker roda DEPOIS do commit: pega lotes com
- * FOR UPDATE SKIP LOCKED (multi-worker safe), despacha para o handler
- * registrado por topic, marca published_at. Falha => attempts+1 e retry
- * com backoff; acima de maxAttempts => dead letter (published_at setado
- * + payload marcado, para não travar a fila).
- *
- * Uso:
- *   const worker = createOutboxWorker({
- *     sql,
- *     handlers: {
- *       'action.side_effect.writeback': async (ev) => {
- *         await erpClient.update(ev.payload);   // o write-back de verdade
- *       },
- *     },
- *   });
- *   worker.start();          // polling
- *   await worker.drainOnce() // ou manual (testes / cron)
+ * Expired leases are reclaimed. published_at is set only on DELIVERED.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { SqlClient } from 'contracts';
 
-export interface OutboxEventRow {
-  eventId: string;
-  topic: string;
-  orderingKey: string;
-  payload: Record<string, unknown>;
-  principal: string;
-  tenantId: string;
-  traceId: string;
-  createdAt: string;
-  attempts: number;
-}
+import { computeBackoffMs, type BackoffOptions } from './backoff.js';
+import type { OutboxEventRow, OutboxHandler, OutboxStatus } from './types.js';
 
-export type OutboxHandler = (event: OutboxEventRow) => Promise<void>;
+export type { OutboxEventRow, OutboxHandler, OutboxStatus } from './types.js';
 
 export interface CreateOutboxWorkerOptions {
   sql: SqlClient & {
     transaction?: <T>(fn: (tx: SqlClient) => Promise<T>) => Promise<T>;
   };
   handlers: Record<string, OutboxHandler>;
-  /** Tamanho do lote por ciclo. Default 20. */
   batchSize?: number;
-  /** Intervalo de polling em ms. Default 1000. */
   pollIntervalMs?: number;
-  /** Tentativas antes de dead-letter. Default 8. */
+  /** Attempts before DEAD_LETTER. Default 8. */
   maxAttempts?: number;
+  /** Claim lease duration. Default 30s. */
+  leaseMs?: number;
+  workerId?: string;
+  backoff?: BackoffOptions;
   onError?: (event: OutboxEventRow, error: unknown) => void;
   onDeadLetter?: (event: OutboxEventRow, error: unknown) => void;
+  onUnhandled?: (event: OutboxEventRow) => void;
 }
 
 export interface OutboxWorker {
-  /** Processa um lote e retorna quantos eventos tratou. */
   drainOnce(): Promise<number>;
   start(): void;
   stop(): Promise<void>;
@@ -63,7 +42,7 @@ export interface OutboxWorker {
 }
 
 function rowToEvent(row: Record<string, unknown>): OutboxEventRow {
-  return {
+  const ev: OutboxEventRow = {
     eventId: String(row.event_id),
     topic: String(row.topic),
     orderingKey: String(row.ordering_key),
@@ -73,7 +52,13 @@ function rowToEvent(row: Record<string, unknown>): OutboxEventRow {
     traceId: String(row.trace_id),
     createdAt: new Date(String(row.created_at)).toISOString(),
     attempts: Number(row.attempts ?? 0),
+    status: String(row.status ?? 'PENDING') as OutboxStatus,
   };
+  if (row.next_attempt_at) ev.nextAttemptAt = new Date(String(row.next_attempt_at)).toISOString();
+  if (row.last_error != null) ev.lastError = String(row.last_error);
+  if (row.locked_by != null) ev.lockedBy = String(row.locked_by);
+  if (row.lease_until) ev.leaseUntil = new Date(String(row.lease_until)).toISOString();
+  return ev;
 }
 
 export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorker {
@@ -83,78 +68,153 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
     batchSize = 20,
     pollIntervalMs = 1000,
     maxAttempts = 8,
+    leaseMs = 30_000,
+    backoff,
   } = opts;
+  const workerId = opts.workerId ?? `worker-${randomUUID().slice(0, 8)}`;
   const onError = opts.onError ?? (() => {});
   const onDeadLetter =
     opts.onDeadLetter ??
-    ((ev, err) =>
-      console.error(`[outbox] DEAD LETTER ${ev.eventId} topic=${ev.topic}:`, err));
+    ((ev, err) => console.error(`[outbox] DEAD_LETTER ${ev.eventId} topic=${ev.topic}:`, err));
+  const onUnhandled =
+    opts.onUnhandled ??
+    ((ev) => console.error(`[outbox] UNHANDLED ${ev.eventId} topic=${ev.topic}`));
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let active = false;
   let inFlight: Promise<void> = Promise.resolve();
 
-  async function processBatch(tx: SqlClient): Promise<number> {
-    const res = await tx.query(
-      `SELECT * FROM outbox_events
-       WHERE published_at IS NULL
-       ORDER BY created_at
-       LIMIT $1
-       FOR UPDATE SKIP LOCKED`,
-      [batchSize],
-    );
-    const rows = (res.rows as Record<string, unknown>[]).map(rowToEvent);
+  async function inTx<T>(fn: (tx: SqlClient) => Promise<T>): Promise<T> {
+    if (!sql.transaction) {
+      throw new Error(
+        'createOutboxWorker requires sql.transaction so HTTP runs after claim commit',
+      );
+    }
+    return sql.transaction(fn);
+  }
 
-    for (const ev of rows) {
+  async function claimBatch(): Promise<OutboxEventRow[]> {
+    return inTx(async (tx) => {
+      const res = await tx.query(
+        `WITH batch AS (
+           SELECT event_id
+           FROM outbox_events
+           WHERE (
+               (status IN ('PENDING', 'RETRYING') AND next_attempt_at <= now())
+               OR (status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < now())
+             )
+           ORDER BY created_at
+           LIMIT $1
+           FOR UPDATE SKIP LOCKED
+         )
+         UPDATE outbox_events AS o
+         SET status = 'PROCESSING',
+             locked_at = now(),
+             locked_by = $2,
+             lease_until = now() + ($3::int * interval '1 millisecond'),
+             last_attempt_at = now(),
+             attempts = o.attempts + 1
+         FROM batch
+         WHERE o.event_id = batch.event_id
+         RETURNING o.*`,
+        [batchSize, workerId, leaseMs],
+      );
+      return (res.rows as Record<string, unknown>[]).map(rowToEvent);
+    });
+  }
+
+  async function markDelivered(eventId: string): Promise<void> {
+    await inTx((tx) =>
+      tx.query(
+        `UPDATE outbox_events
+         SET status = 'DELIVERED',
+             published_at = now(),
+             delivered_at = now(),
+             locked_at = NULL,
+             locked_by = NULL,
+             lease_until = NULL,
+             last_error = NULL
+         WHERE event_id = $1`,
+        [eventId],
+      ),
+    );
+  }
+
+  async function markUnhandled(eventId: string): Promise<void> {
+    await inTx((tx) =>
+      tx.query(
+        `UPDATE outbox_events
+         SET status = 'UNHANDLED',
+             published_at = NULL,
+             locked_at = NULL,
+             locked_by = NULL,
+             lease_until = NULL,
+             last_error = 'no handler registered for topic'
+         WHERE event_id = $1`,
+        [eventId],
+      ),
+    );
+  }
+
+  async function markFailure(ev: OutboxEventRow, err: unknown): Promise<void> {
+    const message = err instanceof Error ? err.message : String(err);
+    if (ev.attempts >= maxAttempts) {
+      onDeadLetter(ev, err);
+      await inTx((tx) =>
+        tx.query(
+          `UPDATE outbox_events
+           SET status = 'DEAD_LETTER',
+               published_at = NULL,
+               dead_lettered_at = now(),
+               last_error = $2,
+               locked_at = NULL,
+               locked_by = NULL,
+               lease_until = NULL
+           WHERE event_id = $1`,
+          [ev.eventId, message],
+        ),
+      );
+      return;
+    }
+    const delayMs = computeBackoffMs(ev.attempts, backoff);
+    await inTx((tx) =>
+      tx.query(
+        `UPDATE outbox_events
+         SET status = 'RETRYING',
+             published_at = NULL,
+             next_attempt_at = now() + ($2::int * interval '1 millisecond'),
+             last_error = $3,
+             locked_at = NULL,
+             locked_by = NULL,
+             lease_until = NULL
+         WHERE event_id = $1`,
+        [ev.eventId, delayMs, message],
+      ),
+    );
+  }
+
+  async function drainOnce(): Promise<number> {
+    const claimed = await claimBatch();
+    for (const ev of claimed) {
+      if (ev.attempts > maxAttempts) {
+        await markFailure(ev, new Error('max attempts exceeded after lease reclaim'));
+        continue;
+      }
       const handler = handlers[ev.topic];
       if (!handler) {
-        // Sem handler não é erro fatal: marca published com flag para inspeção.
-        await tx.query(
-          `UPDATE outbox_events
-           SET published_at = now(),
-               payload = payload || '{"__unhandled": true}'::jsonb
-           WHERE event_id = $1`,
-          [ev.eventId],
-        );
+        onUnhandled(ev);
+        await markUnhandled(ev.eventId);
         continue;
       }
       try {
         await handler(ev);
-        await tx.query(
-          `UPDATE outbox_events SET published_at = now() WHERE event_id = $1`,
-          [ev.eventId],
-        );
+        await markDelivered(ev.eventId);
       } catch (err) {
         onError(ev, err);
-        if (ev.attempts + 1 >= maxAttempts) {
-          onDeadLetter(ev, err);
-          await tx.query(
-            `UPDATE outbox_events
-             SET published_at = now(),
-                 attempts = attempts + 1,
-                 payload = payload || jsonb_build_object(
-                   '__dead_letter', true,
-                   '__last_error', $2::text
-                 )
-             WHERE event_id = $1`,
-            [ev.eventId, err instanceof Error ? err.message : String(err)],
-          );
-        } else {
-          await tx.query(
-            `UPDATE outbox_events SET attempts = attempts + 1 WHERE event_id = $1`,
-            [ev.eventId],
-          );
-        }
+        await markFailure(ev, err);
       }
     }
-    return rows.length;
-  }
-
-  async function drainOnce(): Promise<number> {
-    if (sql.transaction) {
-      return sql.transaction((tx) => processBatch(tx));
-    }
-    return processBatch(sql);
+    return claimed.length;
   }
 
   function schedule() {
@@ -179,25 +239,5 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
       await inFlight;
     },
     running: () => active,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Handler pronto: write-back via SQL para tabela espelho do ERP.      */
-/* Troque por chamada de API quando o canal do ERP existir.            */
-/* ------------------------------------------------------------------ */
-
-export function createSqlMirrorWritebackHandler(opts: {
-  sql: SqlClient;
-  /** ex.: 'erp_writeback_queue' — criada pelo cliente/integração. */
-  table: string;
-}): OutboxHandler {
-  return async (ev) => {
-    await opts.sql.query(
-      `INSERT INTO ${opts.table.replace(/[^a-zA-Z0-9_]/g, '')} (event_id, payload, principal, trace_id, created_at)
-       VALUES ($1, $2::jsonb, $3, $4, now())
-       ON CONFLICT (event_id) DO NOTHING`,
-      [ev.eventId, JSON.stringify(ev.payload), ev.principal, ev.traceId],
-    );
   };
 }

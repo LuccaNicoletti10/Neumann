@@ -59,7 +59,7 @@ authorize → validate → submission criteria → UnitOfWork(rules)
   → COMMIT
 ```
 
-External webhooks/writeback **after** commit, via outbox workers (`createOutboxWorker` → `erp_writeback_queue` SQL mirror until an HTTP ERP handler exists).
+External writeback **after** commit, via outbox workers: claim+lease (TX1) → handler (HTTP allowed) → DELIVERED (TX2). `createSqlMirrorWritebackHandler` is an ERP **simulator sink**; `createHttpWritebackConnector` sends `Idempotency-Key: neumann:<eventId>`. Real SAP/TOTVS is not this.
 
 Production `createPostgresPlatformContext({ sql, transaction, authorize })` is fail-closed: missing `authorize` is a startup error. Memory/tests pass `allowAll` explicitly. Postgres mode wraps `ObjectRepository` with ontology validation + `platform_object_history` snapshots in the same UnitOfWork.
 

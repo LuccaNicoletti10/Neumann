@@ -1,0 +1,43 @@
+{
+  "name": "erp-simulator",
+  "version": "1.0.0",
+  "description": "Neumann ERP simulator / writeback sink — not a real ERP. Fault injection for closed-loop tests.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "erp-simulator": "./dist/cli.js"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "fastify": "^4.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "action-engine": "workspace:*",
+    "contracts": "workspace:*",
+    "event-bus": "workspace:*",
+    "object-platform": "workspace:*",
+    "ontology-registry": "workspace:*",
+    "platform-api": "workspace:*",
+    "policy-engine": "workspace:*",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

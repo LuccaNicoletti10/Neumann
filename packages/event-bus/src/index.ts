@@ -16,6 +16,30 @@ export {
 } from './store/postgres-outbox.js';
 export { createPgOutboxRepository } from './store/pg-outbox-repository.js';
 export * from './worker/outbox-worker.js';
+export { computeBackoffMs, DEFAULT_BACKOFF_MS } from './worker/backoff.js';
+export type { OutboxStatus } from './worker/types.js';
+export type {
+  WritebackConnector,
+  WritebackConnectorKind,
+  WritebackRequest,
+  WritebackResult,
+  WritebackExecutionRecord,
+} from './writeback/types.js';
+export {
+  createPgWritebackExecutionStore,
+  hashWritebackRequest,
+  type WritebackExecutionStore,
+} from './writeback/executions.js';
+export { createSqlMirrorConnector } from './writeback/sql-mirror.js';
+export {
+  createHttpWritebackConnector,
+  type CreateHttpWritebackConnectorOptions,
+} from './writeback/http.js';
+export { createMockWritebackConnector } from './writeback/mock.js';
+export {
+  createWritebackHandler,
+  createSqlMirrorWritebackHandler,
+} from './writeback/handler.js';
 
 export { OutboxPublisher, type PublishHandler, type OutboxPublisherOptions } from './publisher.js';
 export { IdempotentConsumer, type EventHandler } from './consumer.js';

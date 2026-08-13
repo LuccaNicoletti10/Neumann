@@ -7,10 +7,9 @@ import { randomUUID } from 'node:crypto';
 import { tryOpenIsolatedPg } from 'object-platform';
 
 import { createPgOutboxRepository } from '../src/store/pg-outbox-repository.js';
-import {
-  createOutboxWorker,
-  createSqlMirrorWritebackHandler,
-} from '../src/worker/outbox-worker.js';
+import { createOutboxWorker } from '../src/worker/outbox-worker.js';
+import { createSqlMirrorWritebackHandler } from '../src/writeback/handler.js';
+import { createPgWritebackExecutionStore } from '../src/writeback/executions.js';
 
 const db = await tryOpenIsolatedPg();
 
@@ -27,17 +26,19 @@ describe.skipIf(!db)('outbox worker', () => {
       eventId,
       topic: 'action.side_effect.writeback',
       key: 'k1',
-      payload: { kind: 'connector_writeback' },
+      payload: { kind: 'connector_writeback', connectorId: 'erp', operation: 'update' },
       principal: 'u1',
       traceId: eventId,
     });
 
+    const executions = createPgWritebackExecutionStore({ sql: db.sql });
     const ok = createOutboxWorker({
       sql: db.sql,
       handlers: {
         'action.side_effect.writeback': createSqlMirrorWritebackHandler({
           sql: db.sql,
           table: 'erp_writeback_queue',
+          executions,
         }),
       },
     });
@@ -47,6 +48,14 @@ describe.skipIf(!db)('outbox worker', () => {
       [eventId],
     );
     expect(queued.rows[0]?.n).toBe('1');
+    const delivered = await db.sql.query<{ status: string; published_at: string | null }>(
+      `SELECT status, published_at::text FROM outbox_events WHERE event_id = $1`,
+      [eventId],
+    );
+    expect(delivered.rows[0]?.status).toBe('DELIVERED');
+    expect(delivered.rows[0]?.published_at).toBeTruthy();
+    const execs = await executions.listByEvent(eventId);
+    expect(execs.some((e) => e.status === 'SUCCEEDED')).toBe(true);
 
     const boomId = randomUUID();
     await repo.insert({
@@ -60,6 +69,7 @@ describe.skipIf(!db)('outbox worker', () => {
     const failing = createOutboxWorker({
       sql: db.sql,
       maxAttempts: 2,
+      backoff: { random: () => 0.5, schedule: [0, 0] },
       onError: () => {},
       onDeadLetter: () => {},
       handlers: {
@@ -70,10 +80,17 @@ describe.skipIf(!db)('outbox worker', () => {
     });
     await failing.drainOnce();
     await failing.drainOnce();
-    const dead = await db.sql.query<{ payload: Record<string, unknown> }>(
-      `SELECT payload FROM outbox_events WHERE event_id = $1`,
+    const dead = await db.sql.query<{
+      status: string;
+      published_at: string | null;
+      dead_lettered_at: string | null;
+    }>(
+      `SELECT status, published_at::text, dead_lettered_at::text
+       FROM outbox_events WHERE event_id = $1`,
       [boomId],
     );
-    expect(dead.rows[0]?.payload.__dead_letter).toBe(true);
+    expect(dead.rows[0]?.status).toBe('DEAD_LETTER');
+    expect(dead.rows[0]?.published_at).toBeNull();
+    expect(dead.rows[0]?.dead_lettered_at).toBeTruthy();
   });
 });

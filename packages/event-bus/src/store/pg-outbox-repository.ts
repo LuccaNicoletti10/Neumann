@@ -16,8 +16,9 @@ export function createPgOutboxRepository(opts: { sql: SqlClient }): OutboxReposi
       const eventId = input.eventId ?? randomUUID();
       await sql.query(
         `INSERT INTO outbox_events
-           (event_id, topic, ordering_key, payload, principal, tenant_id, trace_id, attempts)
-         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,0)`,
+           (event_id, topic, ordering_key, payload, principal, tenant_id, trace_id,
+            attempts, status, next_attempt_at)
+         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,0,'PENDING', now())`,
         [
           eventId,
           input.topic,

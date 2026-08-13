@@ -4,8 +4,11 @@
  */
 
 import {
+  createHttpWritebackConnector,
   createOutboxWorker,
+  createPgWritebackExecutionStore,
   createSqlMirrorWritebackHandler,
+  createWritebackHandler,
 } from 'event-bus';
 import { createPgSqlClient } from 'object-platform';
 
@@ -15,19 +18,31 @@ if (!url) {
 }
 
 const sql = createPgSqlClient({ connectionString: url });
+const erpUrl = process.env.ERP_WRITEBACK_URL;
+const executions = createPgWritebackExecutionStore({ sql });
+const writebackHandler = erpUrl
+  ? createWritebackHandler({
+      connector: createHttpWritebackConnector({ baseUrl: erpUrl }),
+      executions,
+    })
+  : createSqlMirrorWritebackHandler({
+      sql,
+      table: 'erp_writeback_queue',
+      executions,
+    });
+
 const worker = createOutboxWorker({
   sql,
   handlers: {
-    'action.side_effect.writeback': createSqlMirrorWritebackHandler({
-      sql,
-      table: 'erp_writeback_queue',
-    }),
+    'action.side_effect.writeback': writebackHandler,
   },
   maxAttempts: 8,
 });
 
 worker.start();
-console.log('Neumann outbox worker started');
+console.log(
+  `Neumann outbox worker started (${erpUrl ? `HTTP ${erpUrl}` : 'sql-mirror sink, not a real ERP'})`,
+);
 
 const shutdown = async () => {
   await worker.stop();

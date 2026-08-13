@@ -43,6 +43,46 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
+  apps/erp-simulator:
+    dependencies:
+      fastify:
+        specifier: ^4.28.0
+        version: 4.28.1
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.15
+        version: 20.14.15
+      action-engine:
+        specifier: workspace:*
+        version: link:../../packages/action-engine
+      contracts:
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      event-bus:
+        specifier: workspace:*
+        version: link:../../packages/event-bus
+      object-platform:
+        specifier: workspace:*
+        version: link:../../packages/object-platform
+      ontology-registry:
+        specifier: workspace:*
+        version: link:../../packages/ontology-registry
+      platform-api:
+        specifier: workspace:*
+        version: link:../../packages/platform-api
+      policy-engine:
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.14.15)
+
   packages/action-engine:
     dependencies:
       contracts:

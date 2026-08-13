@@ -18,7 +18,8 @@ platform  →  applications
 
 | App | Role |
 |---|---|
+| `erp-simulator/` | Fake ERP / writeback sink (latency, 500, 429, idempotency) — **not** a real ERP |
 | *(future)* `production_planning/` | Forecast, netting, scheduling — ontology content + Action handlers only |
-| *(future)* `console/` | Object Explorer / Workshop-like UI consuming `/api/v2` |
+| `console/` | Object Explorer / Workshop-like UI consuming `/api/v2` |
 
 Kernel packages stay domain-neutral: Ontology, Objects, Links, ObjectSets, Actions, Datasets, Policy.

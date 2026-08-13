@@ -126,8 +126,9 @@ export class PostgresOutboxStore implements OutboxStore {
           for (const record of pendingOutbox) {
             await client.query(
               `INSERT INTO outbox_events
-                (event_id, topic, ordering_key, payload, principal, tenant_id, trace_id, attempts)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                (event_id, topic, ordering_key, payload, principal, tenant_id, trace_id,
+                 attempts, status, next_attempt_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING', now())`,
               [
                 record.eventId,
                 record.topic,
@@ -177,7 +178,7 @@ export class PostgresOutboxStore implements OutboxStore {
         `SELECT event_id, topic, ordering_key, payload, principal, tenant_id, trace_id,
                 created_at, published_at, attempts
          FROM outbox_events
-         WHERE published_at IS NULL
+         WHERE status IN ('PENDING', 'RETRYING')
          ORDER BY created_at ASC`,
       );
       return result.rows.map(rowToRecord);
@@ -191,7 +192,11 @@ export class PostgresOutboxStore implements OutboxStore {
     try {
       await this.withSearchPath(client);
       await client.query(
-        'UPDATE outbox_events SET published_at = NOW() WHERE event_id = $1',
+        `UPDATE outbox_events
+         SET published_at = NOW(),
+             delivered_at = NOW(),
+             status = 'DELIVERED'
+         WHERE event_id = $1`,
         [eventId],
       );
     } finally {
@@ -204,7 +209,11 @@ export class PostgresOutboxStore implements OutboxStore {
     try {
       await this.withSearchPath(client);
       await client.query(
-        'UPDATE outbox_events SET attempts = attempts + 1 WHERE event_id = $1',
+        `UPDATE outbox_events
+         SET attempts = attempts + 1,
+             status = 'RETRYING',
+             next_attempt_at = now()
+         WHERE event_id = $1`,
         [eventId],
       );
     } finally {
