@@ -18,6 +18,7 @@ services:
       - ./infra/sql/0004_audit.sql:/docker-entrypoint-initdb.d/0004_audit.sql:ro
       - ./infra/sql/0005_writeback.sql:/docker-entrypoint-initdb.d/0005_writeback.sql:ro
       - ./infra/sql/0006_entity_resolution.sql:/docker-entrypoint-initdb.d/0006_entity_resolution.sql:ro
+      - ./infra/sql/0007_link_versioning.sql:/docker-entrypoint-initdb.d/0007_link_versioning.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neumann -d neumann"]
       interval: 5s

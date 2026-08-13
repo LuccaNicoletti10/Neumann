@@ -224,6 +224,7 @@ export {
   type ListObjectsOptions,
   type LinkRecord,
   type CreateLinkInput,
+  type ListLinksOptions,
   type ObjectRepository,
   type LinkRepository,
 } from './object-repository.js';

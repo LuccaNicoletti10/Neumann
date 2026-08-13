@@ -222,10 +222,11 @@ export function createPgObjectRepository(
          WHERE ontology_id = $2 AND object_type_id = $3 AND primary_key = $4
            AND deleted = false
            AND ($5::int IS NULL OR version = $5)
-         RETURNING id`,
+         RETURNING *`,
         [now, ontologyId, objectTypeId, primaryKey, expected ?? null],
       );
-      if ((result.rows?.length ?? 0) === 0) {
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) {
         if (expected != null) {
           throw new VersionConflictError(`version conflict: expected ${expected}`, {
             expectedVersion: expected,
@@ -233,9 +234,9 @@ export function createPgObjectRepository(
             primaryKey,
           });
         }
-        return false;
+        return undefined;
       }
-      return true;
+      return rowToRecord(row);
     },
   };
 }

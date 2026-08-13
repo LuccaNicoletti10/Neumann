@@ -9,7 +9,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 | P2 | High | DONE | B | pg-object-repository.ts | Atomic CAS `AND version = $expected` |
 | P3 | High | PARTIAL | B | pg list orderBy | Property orderBy added; full contract suite pending |
 | P4 | High | DONE (memory) | B | object-repository | Soft-delete revive same id; PG ON CONFLICT revive |
-| P5 | High | PARTIAL | B | link-repository | Cardinality semantics fixed; optional objectExists |
+| P5 | High | DONE | B | link-repository | PG advisory lock + FOR UPDATE endpoints; WORLD NOW vs HISTORY; version/soft-delete on links |
 | P6 | High | DONE | C | ontology-registry | PgOntologyRegistry + restart gate |
 | P10 | High | DONE | B | graph-query.ts | Repository-backed GraphQueryEngine |
 | P11 | High | DONE | C | context.ts | createMemory* / createPostgres*; PG mode uses PG ontology/events/executions/audit |
@@ -29,7 +29,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 ## Baseline inventory
 
 - 39+ packages under `packages/*` (+ `api-errors`, `pagination`)
-- SQL: `0001_outbox.sql`, `0002_objects_platform.sql`, `0003_history_ontology.sql`, `0004_audit.sql`, `0005_writeback.sql`, `0006_entity_resolution.sql`
+- SQL: `0001_outbox.sql`, `0002_objects_platform.sql`, `0003_history_ontology.sql`, `0004_audit.sql`, `0005_writeback.sql`, `0006_entity_resolution.sql`, `0007_link_versioning.sql`
 - OpenFoundry reference: `/tmp/openfoundry-reference` (Apache-2.0)
 
 ## Still remaining (next sessions)
@@ -38,7 +38,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 |---|---|---|
 | P0 complete | `createObjectPlatform` still has private Maps | projector DI not fully migrated; history/CAS/authz/link integrity P0s closed |
 | P7–P8 | OntologyObjectService | schema rejection now via governed repo + five-pieces gates; OntologyObjectService still absent |
-| P13 | Policy on every route | DONE — SecuredReads on list/get/history/links/ObjectSet/aggregate |
+| P13 | Policy on every route | DONE — SecuredReads; postgres exige `authorizer` (fail-closed; AuthorizeFn derivado) |
 | P66 | Full source→action→writeback E2E | SQL-mirror worker exists; HTTP ERP handler still Passo 25 |
 | P19 | SQL ObjectSet planner | only memory evaluator |
 | Bearer/IAM | HS256 adapter in platform-api | IdentityProvider (Passo 3) still not wired; no JWKS |
@@ -46,4 +46,4 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 
 ## Working rule
 
-Memory adapters = tests/demos only. Production path = PostgreSQL + fail-fast without `DATABASE_URL` + fail-closed without `authorize`.
+Memory adapters = tests/demos only. Production path = PostgreSQL + fail-fast without `DATABASE_URL` + fail-closed without `authorizer` (Actions + Reads share `authorizer.authorize`).

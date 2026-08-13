@@ -30,12 +30,13 @@ Durability checklist (DONE = implementation + wiring em `createPostgresPlatformC
 | Actions transacionais (UnitOfWork) | DONE | falha no meio → ROLLBACK; sem estado parcial |
 | Canonical outbox (`outbox_events`) | DONE | PostgresOutboxStore + Action UoW usam a migration 0001; sem tabela `outbox` paralela |
 | Connector write-back (pedido + worker) | DONE | side effect na mesma tx; `worker.drainOnce()` → `erp_writeback_queue` (HTTP ERP = depois) |
-| PolicyEngine / authorize no ActionExecutor | DONE | production fail-closed (sem `allowAll` default); memory injeta allowAll explícito |
+| PolicyEngine / authorize no ActionExecutor | DONE | production fail-closed: `authorizer` obrigatório; AuthorizeFn = `authorizer.authorize` (uma fonte p/ Actions+Reads) |
 | Bearer / JWT HS256 | DONE | `TokenVerifier` HMAC; production exige `PLATFORM_JWT_SECRET`; token inválido → 401; IdentityProvider/JWKS = Phase D |
 | schema_migrations runner | DONE | checksum SHA-256; rerun no-op; histórico editado falha; advisory lock |
 | PgOntologyRegistry | DONE | create+commit → restart → get ontology/version |
 | Durable PgAuditRepository | DONE | GENESIS/EVENT/COMMIT/REDACTED; restart verify; concurrent append; redact+reload |
-| Object history na mesma tx | DONE | governed snapshot pós-mutação; asOf = mundo vigente; restart |
+| Object history na mesma tx | DONE | governed snapshot pós-mutação (delete = RETURNING *); asOf = mundo vigente; restart |
+| Link integrity + cardinality concurrente | DONE | `pg_advisory_xact_lock` + `SELECT … FOR UPDATE` nos endpoints; WORLD NOW ignora pontas deletadas; history reconstrói |
 
 Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pagar` até estes gates.
 

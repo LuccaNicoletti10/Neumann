@@ -4,26 +4,16 @@
  */
 import { afterAll, describe, expect, it } from 'vitest';
 
-import type { ActionTypeDef, AuthorizeFn } from 'contracts';
+import type { ActionTypeDef } from 'contracts';
 import { createOutboxWorker, createSqlMirrorWritebackHandler } from 'event-bus';
 import { tryOpenIsolatedPg } from 'object-platform';
+import { createAllowAllAuthorizer, createDenyAllAuthorizer } from 'policy-engine';
 
 import { createPostgresPlatformContext } from '../src/core/context.js';
 import { principalAls } from '../src/core/principal.js';
 
-const allow: AuthorizeFn = (req) => ({
-  decision: 'allow',
-  principalEpids: [],
-  resourceEpid: null,
-  reason: `allow ${req.operation}`,
-});
-
-const deny: AuthorizeFn = (req) => ({
-  decision: 'deny',
-  principalEpids: [],
-  resourceEpid: null,
-  reason: `deny ${req.operation}`,
-});
+const allow = createAllowAllAuthorizer();
+const deny = createDenyAllAuthorizer();
 
 const approve: ActionTypeDef = {
   id: 'act.approve',
@@ -59,7 +49,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     const ctx = createPostgresPlatformContext({
       sql: db.sql,
       transaction: db.sql,
-      authorize: allow,
+      authorizer: allow,
     });
     expect(ctx.mode).toBe('postgres');
     expect(ctx.ontology.constructor?.name).not.toBe('Function');
@@ -70,7 +60,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     const ctx = createPostgresPlatformContext({
       sql: db.sql,
       transaction: db.sql,
-      authorize: allow,
+      authorizer: allow,
     });
     const o = await ctx.ontology.createOntology({ name: 'prod' });
     await ctx.ontology.addPropertyType(o.id, {
@@ -157,7 +147,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     const ctx2 = createPostgresPlatformContext({
       sql: sql2,
       transaction: sql2,
-      authorize: allow,
+      authorizer: allow,
     });
     ctx2.actions.registerActionType(o.id, approve);
 
@@ -192,7 +182,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     const ctx = createPostgresPlatformContext({
       sql,
       transaction: sql,
-      authorize: deny,
+      authorizer: deny,
     });
     const o = await ctx.ontology.createOntology({ name: 'denied' });
     ctx.actions.registerActionType(o.id, approve);

@@ -50,7 +50,9 @@ describe('ObjectRepository + LinkRepository', () => {
     expect(from).toHaveLength(1);
     expect(from[0]?.targetPrimaryKey).toBe('2');
 
-    expect(await objects.delete('o1', 'ot.a', '1')).toBe(true);
+    const deleted = await objects.delete('o1', 'ot.a', '1');
+    expect(deleted?.deleted).toBe(true);
+    expect(deleted?.version).toBe(updated.version + 1);
     expect(await objects.get('o1', 'ot.a', '1')).toBeUndefined();
   });
 
@@ -70,7 +72,7 @@ describe('ObjectRepository + LinkRepository', () => {
       VersionConflictError,
     );
     expect(await objects.get('o1', 'ot.a', '1')).toBeTruthy();
-    expect(objects.delete('o1', 'ot.a', '1', { expectedVersion: 2 })).toBe(true);
+    expect((await objects.delete('o1', 'ot.a', '1', { expectedVersion: 2 }))?.deleted).toBe(true);
   });
 
   it('rejects dangling link endpoints and N:1 cardinality', async () => {
@@ -132,5 +134,46 @@ describe('ObjectRepository + LinkRepository', () => {
         targetPrimaryKey: 'M2',
       }),
     ).rejects.toThrow(/cardinality N:1/);
+  });
+
+  it('WORLD NOW hides links whose endpoints are soft-deleted; history still lists them', async () => {
+    const clock = createDeterministicClock();
+    const nextId = createIdGenerator();
+    const objects = createMemoryObjectRepository({ clock, nextId });
+    const links = createMemoryLinkRepository({
+      clock,
+      nextId,
+      objectExists: async (oid, t, pk) => Boolean(await objects.get(oid, t, pk)),
+    });
+    await objects.create({
+      ontologyId: 'o1',
+      objectTypeId: 'ot.order',
+      primaryKey: 'O1',
+      properties: {},
+    });
+    await objects.create({
+      ontologyId: 'o1',
+      objectTypeId: 'ot.customer',
+      primaryKey: 'C1',
+      properties: {},
+    });
+    const link = await links.create({
+      ontologyId: 'o1',
+      linkTypeId: 'lt.buyer',
+      sourceObjectTypeId: 'ot.order',
+      sourcePrimaryKey: 'O1',
+      targetObjectTypeId: 'ot.customer',
+      targetPrimaryKey: 'C1',
+    });
+    expect(link.version).toBe(1);
+    expect(link.deleted).toBe(false);
+
+    await objects.delete('o1', 'ot.order', 'O1');
+    expect(await links.listFrom('o1', 'ot.order', 'O1', 'lt.buyer')).toHaveLength(0);
+    const history = await links.listFrom('o1', 'ot.order', 'O1', 'lt.buyer', {
+      includeDeletedEndpoints: true,
+    });
+    expect(history).toHaveLength(1);
+    expect(history[0]?.deleted).toBe(false);
   });
 });

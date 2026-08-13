@@ -28,11 +28,9 @@ const ctx =
   process.env.PLATFORM_MODE === 'postgres'
     ? createPostgresPlatformContext({
         databaseUrl: process.env.DATABASE_URL,
-        authorize: authz.authorize,
         authorizer: authz,
       })
     : createMemoryPlatformContext({
-        authorize: authz.authorize,
         authorizer: authz,
         deterministic: false,
       });

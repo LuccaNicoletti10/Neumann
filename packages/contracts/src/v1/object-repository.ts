@@ -63,8 +63,15 @@ export interface LinkRecord {
   targetObjectTypeId: ObjectTypeId;
   targetPrimaryKey: string;
   createdAt: string;
+  updatedAt?: string;
+  version?: number;
+  /** Explicit unlink. Endpoint soft-delete does NOT cascade here (WORLD HISTORY). */
+  deleted?: boolean;
   /** Optional cardinality hint from LinkTypeDef. */
   cardinality?: '1:1' | '1:N' | 'N:1' | 'N:N';
+  source?: string;
+  provenance?: Record<string, unknown>;
+  principal?: string;
 }
 
 export interface CreateLinkInput {
@@ -75,6 +82,17 @@ export interface CreateLinkInput {
   targetObjectTypeId: ObjectTypeId;
   targetPrimaryKey: string;
   cardinality?: LinkRecord['cardinality'];
+  source?: string;
+  provenance?: Record<string, unknown>;
+  principal?: string;
+}
+
+/** Default listFrom/listTo = WORLD NOW (live links + live endpoints). */
+export interface ListLinksOptions {
+  /** Include links whose source/target object is soft-deleted (WORLD HISTORY). */
+  includeDeletedEndpoints?: boolean;
+  /** Include explicitly unlinked (deleted=true) rows. */
+  includeDeletedLinks?: boolean;
 }
 
 /**
@@ -100,12 +118,16 @@ export interface ObjectRepository {
     primaryKey: string,
     input: UpdateObjectInput,
   ): Promise<ObjectRecord> | ObjectRecord;
+  /**
+   * Soft-delete. Returns the durable post-state (RETURNING / in-memory row)
+   * or undefined if the object was already absent.
+   */
   delete(
     ontologyId: OntologyId,
     objectTypeId: ObjectTypeId,
     primaryKey: string,
     input?: DeleteObjectInput,
-  ): Promise<boolean> | boolean;
+  ): Promise<ObjectRecord | undefined> | ObjectRecord | undefined;
 }
 
 /**
@@ -126,11 +148,13 @@ export interface LinkRepository {
     sourceObjectTypeId: ObjectTypeId,
     sourcePrimaryKey: string,
     linkTypeId?: LinkTypeId,
+    opts?: ListLinksOptions,
   ): Promise<LinkRecord[]> | LinkRecord[];
   listTo(
     ontologyId: OntologyId,
     targetObjectTypeId: ObjectTypeId,
     targetPrimaryKey: string,
     linkTypeId?: LinkTypeId,
+    opts?: ListLinksOptions,
   ): Promise<LinkRecord[]> | LinkRecord[];
 }

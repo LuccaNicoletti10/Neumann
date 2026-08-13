@@ -59,8 +59,16 @@ export interface OntologyAuthorizerConfig {
   everyoneRole?: string;
 }
 
+/**
+ * Single runtime policy for Actions + Reads (platform-api).
+ * Distinct from the EPID `PolicyEngine` graph.
+ */
 export interface OntologyAuthorizer {
   authorize(req: AuthorizeRequest): AuthorizeResult;
+  authorizeRead(principal: string, objectTypeId: string): AuthorizeResult;
+  authorizeMutation(principal: string, objectTypeId: string): AuthorizeResult;
+  authorizeAction(principal: string, actionApiName: string): AuthorizeResult;
+  explainDecision(req: AuthorizeRequest): AuthorizeResult;
   canReadObjectType(principal: string, objectTypeId: string): boolean;
   canRunAction(principal: string, actionApiName: string): boolean;
   /** Remove propriedades ocultas ao papel. Não muta o original. */
@@ -135,19 +143,39 @@ export function createOntologyAuthorizer(
     return { allow: false, reason: `unknown resource scheme: "${resource}"` };
   }
 
+  function toResult(
+    principal: string,
+    resource: string,
+    operation: string,
+  ): AuthorizeResult {
+    const { allow, reason } = decide(principal, resource, operation);
+    return {
+      decision: allow ? 'allow' : 'deny',
+      principalEpids: rolesOf(principal),
+      resourceEpid: resource,
+      reason,
+    };
+  }
+
   return {
     authorize(req: AuthorizeRequest): AuthorizeResult {
-      const { allow, reason } = decide(
-        req.principal,
-        String(req.resource),
-        String(req.operation),
-      );
-      return {
-        decision: allow ? 'allow' : 'deny',
-        principalEpids: rolesOf(req.principal),
-        resourceEpid: String(req.resource),
-        reason,
-      };
+      return toResult(req.principal, String(req.resource), String(req.operation));
+    },
+
+    authorizeRead(principal, objectTypeId) {
+      return toResult(principal, `object:${objectTypeId}`, 'read');
+    },
+
+    authorizeMutation(principal, objectTypeId) {
+      return toResult(principal, `object:${objectTypeId}`, 'modify');
+    },
+
+    authorizeAction(principal, actionApiName) {
+      return toResult(principal, `action:${actionApiName}`, 'modify');
+    },
+
+    explainDecision(req) {
+      return toResult(req.principal, String(req.resource), String(req.operation));
     },
 
     canReadObjectType(principal, objectTypeId) {
@@ -179,4 +207,25 @@ export function createOntologyAuthorizer(
       );
     },
   };
+}
+
+/** Test/demo policy: every principal can read+modify everything. */
+export function createAllowAllAuthorizer(): OntologyAuthorizer {
+  return createOntologyAuthorizer({
+    everyoneRole: 'world',
+    roles: {},
+    grants: [
+      {
+        role: 'world',
+        objectTypes: ['*'],
+        actions: ['*'],
+        operations: ['read', 'modify'],
+      },
+    ],
+  });
+}
+
+/** Production-shaped deny: no roles → fail-closed. */
+export function createDenyAllAuthorizer(): OntologyAuthorizer {
+  return createOntologyAuthorizer({ roles: {}, grants: [] });
 }

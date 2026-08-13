@@ -42,9 +42,18 @@ function collectDeclaredTypes(set: ObjectSet): string[] {
 }
 
 export function createSecuredReads(ctx: PlatformContext) {
+  function policy() {
+    if (ctx.authorizer) return ctx.authorizer;
+    if (ctx.mode === 'postgres') {
+      throw new Error('postgres SecuredReads require authorizer (fail-closed)');
+    }
+    return undefined;
+  }
+
   function canRead(principal: string, objectTypeId: string): boolean {
-    if (!ctx.authorizer) return true;
-    return ctx.authorizer.canReadObjectType(principal, objectTypeId);
+    const authz = policy();
+    if (!authz) return true;
+    return authz.canReadObjectType(principal, objectTypeId);
   }
 
   function assertCanRead(principal: string, objectTypeId: string): void {
@@ -54,10 +63,11 @@ export function createSecuredReads(ctx: PlatformContext) {
   }
 
   function redact(principal: string, rec: ObjectRecord): ObjectRecord {
-    if (!ctx.authorizer) return rec;
+    const authz = policy();
+    if (!authz) return rec;
     return {
       ...rec,
-      properties: ctx.authorizer.redactProperties(principal, rec.objectTypeId, rec.properties) as Record<
+      properties: authz.redactProperties(principal, rec.objectTypeId, rec.properties) as Record<
         string,
         unknown
       >,
@@ -65,7 +75,8 @@ export function createSecuredReads(ctx: PlatformContext) {
   }
 
   function filterAndRedact(principal: string, records: readonly ObjectRecord[]): ObjectRecord[] {
-    const visible = ctx.authorizer ? ctx.authorizer.filterReadable(principal, records) : [...records];
+    const authz = policy();
+    const visible = authz ? authz.filterReadable(principal, records) : [...records];
     return visible.map((r) => redact(principal, r));
   }
 
@@ -99,12 +110,15 @@ export function createSecuredReads(ctx: PlatformContext) {
       assertCanRead(principal, objectTypeId);
       return trail.map((entry) => ({
         ...entry,
-        properties: ctx.authorizer
-          ? (ctx.authorizer.redactProperties(principal, objectTypeId, entry.properties) as Record<
-              string,
-              unknown
-            >)
-          : entry.properties,
+        properties: (() => {
+          const authz = policy();
+          return authz
+            ? (authz.redactProperties(principal, objectTypeId, entry.properties) as Record<
+                string,
+                unknown
+              >)
+            : entry.properties;
+        })(),
       }));
     },
 
@@ -160,7 +174,8 @@ export function createSecuredReads(ctx: PlatformContext) {
         objects: ctx.objects,
         links: ctx.links,
       });
-      const visible = ctx.authorizer ? ctx.authorizer.filterReadable(principal, objs) : objs;
+      const authz = policy();
+      const visible = authz ? authz.filterReadable(principal, objs) : objs;
       return aggregateRecords(visible, req.aggregations);
     },
   };

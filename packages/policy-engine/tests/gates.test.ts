@@ -10,6 +10,11 @@ import {
 } from '../src/core/determinism.js';
 import { createAuditLog } from '../src/core/audit.js';
 import { createPolicyEngine } from '../src/core/engine.js';
+import {
+  createAllowAllAuthorizer,
+  createDenyAllAuthorizer,
+  createOntologyAuthorizer,
+} from '../src/core/ontology-authorizer.js';
 import { runDemo } from '../src/cli.js';
 
 function eng() {
@@ -118,5 +123,32 @@ describe('Passo 16 gates', () => {
     const lines: string[] = [];
     expect(await runDemo((m) => lines.push(m))).toBe(0);
     expect(lines.some((l) => l.includes('demo ok'))).toBe(true);
+  });
+
+  it('OntologyAuthorizer is one source for read/action/explain', () => {
+    const authz = createOntologyAuthorizer({
+      roles: { alice: ['ops'] },
+      grants: [
+        {
+          role: 'ops',
+          objectTypes: ['ot.order'],
+          actions: ['approve'],
+          operations: ['read', 'modify'],
+        },
+      ],
+    });
+    expect(authz.authorizeRead('alice', 'ot.order').decision).toBe('allow');
+    expect(authz.authorizeMutation('alice', 'ot.order').decision).toBe('allow');
+    expect(authz.authorizeAction('alice', 'approve').decision).toBe('allow');
+    expect(authz.authorizeAction('alice', 'deleteAll').decision).toBe('deny');
+    expect(
+      authz.explainDecision({
+        principal: 'alice',
+        resource: 'action:approve',
+        operation: 'modify',
+      }).reason,
+    ).toContain('granted');
+    expect(createAllowAllAuthorizer().authorizeAction('anyone', 'x').decision).toBe('allow');
+    expect(createDenyAllAuthorizer().authorizeRead('eve', 'ot.order').decision).toBe('deny');
   });
 });

@@ -73,7 +73,10 @@ export interface CreateMemoryPlatformContextOptions {
   seed?: (ctx: PlatformContext) => void | Promise<void>;
   /** When true (default for tests), use deterministic clock/ids. */
   deterministic?: boolean;
-  /** Tests may override; default is explicit allowAll. */
+  /**
+   * Tests may override. Ignored when `authorizer` is set — Actions + Reads
+   * share one policy source.
+   */
   authorize?: AuthorizeFn;
   authorizer?: OntologyAuthorizer;
 }
@@ -108,7 +111,7 @@ export function createMemoryPlatformContext(
     audit,
     events,
     executions,
-    authorize: opts.authorize ?? allowAll,
+    authorize: opts.authorizer?.authorize ?? opts.authorize ?? allowAll,
     mode: 'memory',
     clock,
     nextId,
@@ -144,10 +147,12 @@ export interface CreatePostgresPlatformContextOptions {
   sql?: SqlClient;
   transaction?: TransactionManager;
   databaseUrl?: string;
-  /** Required. Production is fail-closed — no allowAll default. */
-  authorize: AuthorizeFn;
-  /** Optional read/redact helper used by /api/v2 GET routes. */
-  authorizer?: OntologyAuthorizer;
+  /**
+   * @deprecated Derived from `authorizer.authorize`. Ignored when authorizer is set.
+   */
+  authorize?: AuthorizeFn;
+  /** Required. Single fail-closed policy for Actions + Reads. */
+  authorizer: OntologyAuthorizer;
   /** enforce = reject undeclared writes; warn = log and allow. Default enforce. */
   governanceMode?: 'enforce' | 'warn';
   seed?: (ctx: PlatformContext) => void | Promise<void>;
@@ -160,11 +165,12 @@ export interface CreatePostgresPlatformContextOptions {
 export function createPostgresPlatformContext(
   opts: CreatePostgresPlatformContextOptions,
 ): PlatformContext {
-  if (!opts.authorize) {
+  if (!opts.authorizer) {
     throw new Error(
-      'createPostgresPlatformContext requires authorize (fail-closed; no allowAll default)',
+      'createPostgresPlatformContext requires authorizer (fail-closed Actions+Reads; no allow-all)',
     );
   }
+  const authorize = opts.authorizer.authorize;
 
   let sql = opts.sql;
   let transaction = opts.transaction;
@@ -250,7 +256,7 @@ export function createPostgresPlatformContext(
     events: root.events,
     executions: root.executions,
     outbox: root.outbox,
-    authorize: opts.authorize,
+    authorize,
     mode: 'production',
     unitOfWork,
     clock,

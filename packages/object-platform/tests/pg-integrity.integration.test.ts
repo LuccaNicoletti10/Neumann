@@ -1,6 +1,6 @@
 /**
  * object-platform — tests/pg-integrity.integration.test.ts
- * PG delete CAS + link endpoint/cardinality enforcement.
+ * PG delete CAS + RETURNING snapshot + link endpoint/cardinality + WORLD NOW.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -17,7 +17,7 @@ describe.skipIf(!db)('PG object/link integrity', () => {
     await db?.close();
   });
 
-  it('delete CAS + dangling/cardinality on links', async () => {
+  it('delete CAS + RETURNING post-state + dangling/cardinality on links', async () => {
     if (!db) return;
     const clock = createDeterministicClock();
     const nextId = createIdGenerator();
@@ -26,7 +26,6 @@ describe.skipIf(!db)('PG object/link integrity', () => {
       sql: db.sql,
       clock,
       nextId,
-      objectExists: async (oid, t, pk) => Boolean(await objects.get(oid, t, pk)),
       cardinalityOf: async () => 'N:1',
     });
 
@@ -66,7 +65,7 @@ describe.skipIf(!db)('PG object/link integrity', () => {
       }),
     ).rejects.toThrow(LinkIntegrityError);
 
-    await links.create({
+    const created = await links.create({
       ontologyId: 'o1',
       linkTypeId: 'lt.manager',
       sourceObjectTypeId: 'ot.emp',
@@ -74,6 +73,8 @@ describe.skipIf(!db)('PG object/link integrity', () => {
       targetObjectTypeId: 'ot.mgr',
       targetPrimaryKey: 'M1',
     });
+    expect(created.version).toBe(1);
+    expect(created.deleted).toBe(false);
     await expect(
       links.create({
         ontologyId: 'o1',
@@ -85,6 +86,16 @@ describe.skipIf(!db)('PG object/link integrity', () => {
       }),
     ).rejects.toThrow(LinkIntegrityError);
 
-    expect(await objects.delete('o1', 'ot.emp', 'E1', { expectedVersion: 2 })).toBe(true);
+    const post = await objects.delete('o1', 'ot.emp', 'E1', { expectedVersion: 2 });
+    expect(post?.deleted).toBe(true);
+    expect(post?.version).toBe(3);
+    expect(post?.properties).toEqual({ n: 2 });
+
+    expect(await links.listFrom('o1', 'ot.emp', 'E1', 'lt.manager')).toHaveLength(0);
+    const historical = await links.listFrom('o1', 'ot.emp', 'E1', 'lt.manager', {
+      includeDeletedEndpoints: true,
+    });
+    expect(historical).toHaveLength(1);
+    expect(historical[0]?.deleted).toBe(false);
   });
 });

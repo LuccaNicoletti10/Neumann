@@ -282,19 +282,9 @@ export function createGovernedObjectRepository(
     },
 
     async delete(ontologyId, objectTypeId, primaryKey, input?: DeleteObjectInput) {
-      const pre = await inner.get(ontologyId, objectTypeId, primaryKey);
-      const ok = await inner.delete(ontologyId, objectTypeId, primaryKey, input);
-      if (ok && pre) {
-        await snapshot(
-          {
-            ...pre,
-            deleted: true,
-            version: pre.version + 1,
-          },
-          'delete',
-        );
-      }
-      return ok;
+      const post = await inner.delete(ontologyId, objectTypeId, primaryKey, input);
+      if (post) await snapshot(post, 'delete');
+      return post;
     },
   };
 }

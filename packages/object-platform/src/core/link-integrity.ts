@@ -35,3 +35,20 @@ export function cardinalityViolation(
   }
   return undefined;
 }
+
+/** Deterministic advisory-lock keys: from-endpoint then to-endpoint. */
+export function cardinalityLockKeys(input: {
+  ontologyId: string;
+  linkTypeId: string;
+  sourceObjectTypeId: string;
+  sourcePrimaryKey: string;
+  targetObjectTypeId: string;
+  targetPrimaryKey: string;
+}): { fromKey: string; toKey: string; scopeKey: string } {
+  const scopeKey = `${input.ontologyId}\u001f${input.linkTypeId}`;
+  return {
+    fromKey: `${scopeKey}\u001ffrom\u001f${input.sourceObjectTypeId}\u001f${input.sourcePrimaryKey}`,
+    toKey: `${scopeKey}\u001fto\u001f${input.targetObjectTypeId}\u001f${input.targetPrimaryKey}`,
+    scopeKey,
+  };
+}

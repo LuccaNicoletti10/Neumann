@@ -104,15 +104,19 @@ describe('PEÇA 3 — histórico pós-mutação e asOf', () => {
     expect(asOfNow?.version).toBe(updated.version);
   });
 
-  it('delete snapshot marca deleted=true', async () => {
+  it('delete snapshot marca deleted=true a partir do post-state real', async () => {
     const { objects, history } = governed();
     const o = await objects.create({ ontologyId: 'o1', objectTypeId: 'Titulo',
       primaryKey: 't1', properties: { valor: 100, status: 'ABERTO' } });
-    await objects.delete('o1', 'Titulo', 't1');
+    const post = await objects.delete('o1', 'Titulo', 't1');
+    expect(post?.deleted).toBe(true);
+    expect(post?.version).toBe(o.version + 1);
     const trail = await history.listByObject(o.id);
     const del = trail[trail.length - 1]!;
     expect(del.operation).toBe('delete');
     expect(del.deleted).toBe(true);
+    expect(del.version).toBe(post!.version);
+    expect(del.properties.status).toBe('ABERTO');
   });
 });
 

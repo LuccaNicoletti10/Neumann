@@ -187,14 +187,14 @@ export function createMemoryObjectRepository(
         if (input?.expectedVersion != null) {
           throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
         }
-        return false;
+        return undefined;
       }
       const prev = byId.get(id);
       if (!prev || prev.deleted) {
         if (input?.expectedVersion != null) {
           throw new ObjectNotFoundError(`object not found: ${objectTypeId}/${primaryKey}`);
         }
-        return false;
+        return undefined;
       }
       if (input?.expectedVersion != null && prev.version !== input.expectedVersion) {
         throw new VersionConflictError(
@@ -207,16 +207,14 @@ export function createMemoryObjectRepository(
           },
         );
       }
-      byId.set(
-        id,
-        freezeRecord({
-          ...prev,
-          deleted: true,
-          version: prev.version + 1,
-          updatedAt: clock(),
-        }),
-      );
-      return true;
+      const post = freezeRecord({
+        ...prev,
+        deleted: true,
+        version: prev.version + 1,
+        updatedAt: clock(),
+      });
+      byId.set(id, post);
+      return post;
     },
   };
 }

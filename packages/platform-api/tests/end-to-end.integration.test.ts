@@ -99,7 +99,6 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
     const ctx = createPostgresPlatformContext({
       sql: db.sql,
       transaction: db.sql,
-      authorize: authz.authorize,
       authorizer: authz,
     });
     const { app } = await createPlatformServer(ctx);
