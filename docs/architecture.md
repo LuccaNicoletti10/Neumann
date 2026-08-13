@@ -29,7 +29,7 @@ Domain types (Customer, SalesOrder, PlanLine, Forecast, …) live only in `apps/
 | History | `ObjectHistoryRepository` | Append-only |
 | Provenance | Provenance records | Dataset/mapping/source fields |
 | Graph | `GraphQueryEngine` | Query over repositories — not a second store |
-| ObjectSets | `object-set` | Memory evaluator + (future) SQL planner |
+| ObjectSets | `object-set` | Memory evaluator (oracle) + PostgreSQL compiler (`compile-sql` / `resolver-pg`) |
 | Mutations | `OntologyObjectService` + `ActionExecutor` | Schema + policy gated |
 
 ## Runtime contexts

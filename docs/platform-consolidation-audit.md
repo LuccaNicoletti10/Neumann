@@ -29,7 +29,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 ## Baseline inventory
 
 - 39+ packages under `packages/*` (+ `api-errors`, `pagination`)
-- SQL: `0001`–`0008` (`0008_outbox_reliability.sql` = outbox status/lease + `writeback_executions`)
+- SQL: `0001`–`0009` (`0008` = outbox status/lease + writeback; `0009` = ObjectSet GIN + link indexes)
 - OpenFoundry reference: `/tmp/openfoundry-reference` (Apache-2.0)
 
 ## Still remaining (next sessions)
@@ -40,7 +40,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 | P7–P8 | OntologyObjectService | schema rejection now via governed repo + five-pieces gates; OntologyObjectService still absent |
 | P13 | Policy on every route | DONE — SecuredReads; postgres exige `authorizer` (fail-closed; AuthorizeFn derivado) |
 | P66 | Full source→action→writeback E2E | DONE — HTTP writeback + ERP simulator closed-loop; SQL-mirror remains test sink |
-| P19 | SQL ObjectSet planner | only memory evaluator |
+| P19 | SQL ObjectSet planner | DONE — `compile-sql.ts` + `resolver-pg`; memory ≡ PG (`gate:objectset-parity`); GIN/link indexes in `0009` |
 | Bearer/IAM | HS256 adapter in platform-api | IdentityProvider (Passo 3) still not wired; no JWKS |
 | schema_migrations | versioned runner + checksum lock | ALTER TABLE now safe to add |
 

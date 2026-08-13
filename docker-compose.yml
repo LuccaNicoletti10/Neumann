@@ -20,6 +20,7 @@ services:
       - ./infra/sql/0006_entity_resolution.sql:/docker-entrypoint-initdb.d/0006_entity_resolution.sql:ro
       - ./infra/sql/0007_link_versioning.sql:/docker-entrypoint-initdb.d/0007_link_versioning.sql:ro
       - ./infra/sql/0008_outbox_reliability.sql:/docker-entrypoint-initdb.d/0008_outbox_reliability.sql:ro
+      - ./infra/sql/0009_objectset_indexes.sql:/docker-entrypoint-initdb.d/0009_objectset_indexes.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neumann -d neumann"]
       interval: 5s

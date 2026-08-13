@@ -14,6 +14,12 @@ export interface PageCursor {
   offset: number;
   lastId?: string;
   sortValues?: unknown[];
+  /** Keyset: last order-by value (stringified). */
+  o?: string | null;
+  /** Keyset: last primary key. */
+  k?: string;
+  /** Fingerprint of the compiled query + orderBy (reject token reuse). */
+  h?: string;
 }
 
 export function encodePageToken(cursor: PageCursor): PageToken {
@@ -42,13 +48,19 @@ export function decodePageToken(token: string): PageCursor {
     throw new Error('Invalid page token: decoded value must be an object');
   }
   const obj = parsed as Record<string, unknown>;
-  if (typeof obj.offset !== 'number' || !Number.isFinite(obj.offset) || obj.offset < 0) {
+  const hasKeyset = typeof obj.k === 'string';
+  const offsetOk =
+    typeof obj.offset === 'number' && Number.isFinite(obj.offset) && obj.offset >= 0;
+  if (!offsetOk && !hasKeyset) {
     throw new Error('Invalid page token: offset must be a non-negative number');
   }
   return {
-    offset: obj.offset,
+    offset: offsetOk ? (obj.offset as number) : 0,
     lastId: typeof obj.lastId === 'string' ? obj.lastId : undefined,
     sortValues: Array.isArray(obj.sortValues) ? obj.sortValues : undefined,
+    o: obj.o === null || typeof obj.o === 'string' ? (obj.o as string | null) : undefined,
+    k: typeof obj.k === 'string' ? obj.k : undefined,
+    h: typeof obj.h === 'string' ? obj.h : undefined,
   };
 }
 

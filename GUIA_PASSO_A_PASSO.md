@@ -37,6 +37,7 @@ Durability checklist (DONE = implementation + wiring em `createPostgresPlatformC
 | Durable PgAuditRepository | DONE | GENESIS/EVENT/COMMIT/REDACTED; restart verify; concurrent append; redact+reload |
 | Object history na mesma tx | DONE | governed snapshot pós-mutação (delete = RETURNING *); asOf = mundo vigente; restart |
 | Link integrity + cardinality concurrente | DONE | `pg_advisory_xact_lock` + `SELECT … FOR UPDATE` nos endpoints; WORLD NOW ignora pontas deletadas; history reconstrói |
+| ObjectSet SQL planner + coerce | DONE | `compile-sql` + `createPgObjectSetResolver`; memória = oráculo; `gate:objectset-parity` (500 ASTs); GIN + link indexes (`0009`) |
 
 Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pagar` até estes gates.
 

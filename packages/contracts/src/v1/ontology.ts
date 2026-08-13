@@ -53,6 +53,8 @@ export interface PropertyTypeDef {
   /** Palavras associadas (busca futura). */
   associatedWords?: string[];
   description?: string;
+  /** When true, platform may emit an expression index on properties->>'id'. */
+  indexed?: boolean;
 }
 
 /** ObjectType — SEMÂNTICO. */

@@ -18,12 +18,14 @@ import type {
 } from 'contracts';
 import { encodePageToken, decodePageToken, clampPageSize } from 'pagination';
 
+import type { PropertyTypeLookup } from './coerce.js';
 import { evaluateFilter } from './filter.js';
 
 export interface ObjectSetResolverDeps {
   ontologyId: OntologyId;
   objects: ObjectRepository;
   links: LinkRepository;
+  propertyTypes?: PropertyTypeLookup;
 }
 
 async function asArray<T>(v: T[] | Promise<T[]>): Promise<T[]> {
@@ -50,7 +52,7 @@ export async function resolveObjectSet(
 
     case 'FILTER': {
       const source = await resolveObjectSet(def.objectSet, deps);
-      return source.filter((obj) => evaluateFilter(obj, def.filter));
+      return source.filter((obj) => evaluateFilter(obj, def.filter, deps.propertyTypes));
     }
 
     case 'UNION': {

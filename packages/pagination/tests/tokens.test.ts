@@ -9,7 +9,19 @@ describe('pagination', () => {
   it('round-trips opaque tokens', () => {
     const token = encodePageToken({ offset: 10, lastId: 'x' });
     expect(token).not.toContain('{');
-    expect(decodePageToken(token)).toEqual({ offset: 10, lastId: 'x', sortValues: undefined });
+    expect(decodePageToken(token)).toEqual({
+      offset: 10,
+      lastId: 'x',
+      sortValues: undefined,
+      o: undefined,
+      k: undefined,
+      h: undefined,
+    });
+  });
+
+  it('round-trips keyset tokens', () => {
+    const token = encodePageToken({ offset: 0, o: 'open', k: 'a', h: 'abc123' });
+    expect(decodePageToken(token)).toMatchObject({ o: 'open', k: 'a', h: 'abc123' });
   });
 
   it('rejects malformed tokens', () => {

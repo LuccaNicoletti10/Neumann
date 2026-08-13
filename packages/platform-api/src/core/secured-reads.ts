@@ -7,7 +7,16 @@
  */
 
 import type { ObjectRecord, ObjectSet, ObjectSetAggregation } from 'contracts';
-import { aggregateRecords, loadObjects, resolveObjectSet } from 'object-set';
+import {
+  aggregateObjectsPg,
+  aggregateRecords,
+  coerceObjectSet,
+  loadObjects,
+  loadObjectsPg,
+  propertyLookupFromOntology,
+  resolveObjectSet,
+  resolveObjectSetPg,
+} from 'object-set';
 
 import type { PlatformContext } from './context.js';
 
@@ -155,11 +164,20 @@ export function createSecuredReads(ctx: PlatformContext) {
       req: Parameters<typeof loadObjects>[0],
     ) {
       assertDeclaredTypes(principal, req.objectSet);
-      const loaded = await loadObjects(req, {
-        ontologyId,
-        objects: ctx.objects,
-        links: ctx.links,
-      });
+      const latest = await ctx.ontology.getLatestVersion(ontologyId);
+      const lookup = propertyLookupFromOntology(latest);
+      const objectSet = latest
+        ? coerceObjectSet(req.objectSet, lookup, 'strict')
+        : req.objectSet;
+      const loaded = ctx.sql
+        ? await loadObjectsPg(
+            { ...req, objectSet },
+            { sql: ctx.sql, ontologyId, propertyTypes: lookup },
+          )
+        : await loadObjects(
+            { ...req, objectSet },
+            { ontologyId, objects: ctx.objects, links: ctx.links, propertyTypes: lookup },
+          );
       return { ...loaded, data: filterAndRedact(principal, loaded.data) };
     },
 
@@ -169,10 +187,22 @@ export function createSecuredReads(ctx: PlatformContext) {
       req: { objectSet: ObjectSet; aggregations: ObjectSetAggregation[] },
     ) {
       assertDeclaredTypes(principal, req.objectSet);
-      const objs = await resolveObjectSet(req.objectSet, {
+      const latest = await ctx.ontology.getLatestVersion(ontologyId);
+      const lookup = propertyLookupFromOntology(latest);
+      const objectSet = latest
+        ? coerceObjectSet(req.objectSet, lookup, 'strict')
+        : req.objectSet;
+      if (ctx.sql) {
+        return aggregateObjectsPg(
+          { objectSet, aggregations: req.aggregations },
+          { sql: ctx.sql, ontologyId, propertyTypes: lookup },
+        );
+      }
+      const objs = await resolveObjectSet(objectSet, {
         ontologyId,
         objects: ctx.objects,
         links: ctx.links,
+        propertyTypes: lookup,
       });
       const authz = policy();
       const visible = authz ? authz.filterReadable(principal, objs) : objs;

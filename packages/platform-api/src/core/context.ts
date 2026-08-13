@@ -66,6 +66,8 @@ export interface PlatformContext {
   audit: ReturnType<typeof createAuditLog>;
   history: ObjectHistoryStore;
   authorizer?: OntologyAuthorizer;
+  /** Present in postgres mode — ObjectSet SQL planner. */
+  sql?: SqlClient;
   close?: () => Promise<void>;
 }
 
@@ -280,6 +282,7 @@ export function createPostgresPlatformContext(
     audit: standaloneAudit,
     history: root.history,
     authorizer: opts.authorizer,
+    sql: rootSql,
     close,
   };
   void opts.seed?.(ctx);
