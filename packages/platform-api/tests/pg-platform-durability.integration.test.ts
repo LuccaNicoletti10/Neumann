@@ -5,9 +5,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 import type { ActionTypeDef, AuthorizeFn } from 'contracts';
+import { createOutboxWorker, createSqlMirrorWritebackHandler } from 'event-bus';
 import { tryOpenIsolatedPg } from 'object-platform';
 
 import { createPostgresPlatformContext } from '../src/core/context.js';
+import { principalAls } from '../src/core/principal.js';
 
 const allow: AuthorizeFn = (req) => ({
   decision: 'allow',
@@ -72,33 +74,52 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     });
     const o = await ctx.ontology.createOntology({ name: 'prod' });
     await ctx.ontology.addPropertyType(o.id, {
-      id: 'pt.status',
+      id: 'status',
       displayName: 'Status',
       baseType: 'string',
     });
     await ctx.ontology.addObjectType(o.id, {
       id: 'ot.order',
       displayName: 'Order',
-      propertyTypeIds: ['pt.status'],
+      propertyTypeIds: ['status'],
     });
     await ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
     ctx.actions.registerActionType(o.id, approve);
 
-    await ctx.objects.create({
-      ontologyId: o.id,
-      objectTypeId: 'ot.order',
-      primaryKey: '1',
-      properties: { status: 'pending' },
+    const created = await principalAls.run('alice', async () => {
+      const rec = await ctx.objects.create({
+        ontologyId: o.id,
+        objectTypeId: 'ot.order',
+        primaryKey: '1',
+        properties: { status: 'pending' },
+      });
+      const appliedInner = await ctx.actions.apply({
+        ontologyId: o.id,
+        actionApiName: 'approve',
+        parameters: { orderId: '1', status: 'ok' },
+        principal: 'alice',
+        idempotencyKey: 'idemp-1',
+      });
+      return { rec, applied: appliedInner };
     });
-
-    const applied = await ctx.actions.apply({
-      ontologyId: o.id,
-      actionApiName: 'approve',
-      parameters: { orderId: '1', status: 'ok' },
-      principal: 'alice',
-      idempotencyKey: 'idemp-1',
-    });
+    const applied = created.applied;
     expect(applied.status).toBe('SUCCEEDED');
+
+    const trail = await ctx.history.listByObject(created.rec.id);
+    expect(trail.length).toBeGreaterThanOrEqual(2);
+    expect(trail[0]?.operation).toBe('create');
+    expect(trail[1]?.operation).toBe('update');
+    expect(trail[1]?.properties.status).toBe('pending');
+    expect(trail[1]?.principal).toBe('alice');
+    const asOf = await ctx.history.asOf(
+      o.id,
+      'ot.order',
+      '1',
+      trail[0]!.createdAt,
+    );
+    expect(asOf?.properties.status).toBe('pending');
+    expect(asOf?.operation).toBe('create');
+
     const head = await ctx.audit.head();
     expect(head).toBeTruthy();
     expect((await ctx.audit.verify()).ok).toBe(true);
@@ -107,6 +128,21 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
       `SELECT count(*)::int AS n FROM outbox_events WHERE topic = 'action.side_effect.writeback'`,
     );
     expect(Number(outbox.rows[0]?.n)).toBeGreaterThanOrEqual(1);
+
+    const worker = createOutboxWorker({
+      sql: db.sql,
+      handlers: {
+        'action.side_effect.writeback': createSqlMirrorWritebackHandler({
+          sql: db.sql,
+          table: 'erp_writeback_queue',
+        }),
+      },
+    });
+    expect(await worker.drainOnce()).toBeGreaterThanOrEqual(1);
+    const queued = await db.sql.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM erp_writeback_queue`,
+    );
+    expect(Number(queued.rows[0]?.n)).toBeGreaterThanOrEqual(1);
 
     await db.sql.close();
     const sql2 = db.reconnect();

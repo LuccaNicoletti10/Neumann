@@ -29,12 +29,12 @@ Durability checklist (DONE = implementation + wiring em `createPostgresPlatformC
 | PostgreSQL idempotency | DONE | concurrent same key → 1 execução; restart + replay não reexecuta |
 | Actions transacionais (UnitOfWork) | DONE | falha no meio → ROLLBACK; sem estado parcial |
 | Canonical outbox (`outbox_events`) | DONE | PostgresOutboxStore + Action UoW usam a migration 0001; sem tabela `outbox` paralela |
-| Connector write-back (pedido) | PARTIAL | side effect persiste no outbox na mesma tx; worker HTTP = Passo 25 |
+| Connector write-back (pedido + worker) | DONE | side effect na mesma tx; `worker.drainOnce()` → `erp_writeback_queue` (HTTP ERP = depois) |
 | PolicyEngine / authorize no ActionExecutor | DONE | production fail-closed (sem `allowAll` default); memory injeta allowAll explícito |
-| Bearer authentication | PARTIAL | stub em `/api/v2`; IAM verification = Phase D restante |
+| Bearer authentication | PARTIAL | Bearer token = principal id; IAM verification = Phase D restante |
 | PgOntologyRegistry | DONE | create+commit → restart → get ontology/version |
 | Durable PgAuditRepository | DONE | GENESIS/EVENT/COMMIT/REDACTED; restart verify; concurrent append; redact+reload |
-| Object history na mesma tx | PARTIAL | tabela `platform_object_history` existe (0003); projector ainda não grava nela no UoW |
+| Object history na mesma tx | DONE | governed snapshot pre-state; asOf; restart |
 
 Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pagar` até estes gates.
 

@@ -5,6 +5,7 @@
 
 import {
   createActionExecutor,
+  createFailureSurvivingExecutor,
   createMemoryActionExecutionStore,
   createMemoryOperationalEventStore,
   createPgActionExecutionStore,
@@ -24,21 +25,28 @@ import type {
 import { createPgOutboxRepository } from 'event-bus';
 import {
   createDeterministicClock,
+  createGovernedObjectRepository,
   createIdGenerator,
   createMemoryLinkRepository,
+  createMemoryObjectHistoryStore,
   createMemoryObjectRepository,
   createPgLinkRepository,
+  createPgObjectHistoryStore,
   createPgObjectRepository,
   createPgSqlClient,
   createSystemClock,
   createUuidIdGenerator,
+  type ObjectHistoryStore,
 } from 'object-platform';
 import { createGraphQueryEngine, type GraphQueryEngine } from 'knowledge-graph';
 import { createOntologyRegistry, createPgOntologyRegistry } from 'ontology-registry';
 import {
   createAuditLog,
   createPgAuditRepository,
+  type OntologyAuthorizer,
 } from 'policy-engine';
+
+import { getCurrentPrincipal } from './principal.js';
 
 const allowAll: AuthorizeFn = (req) => ({
   decision: 'allow',
@@ -56,6 +64,8 @@ export interface PlatformContext {
   actions: ActionExecutor;
   events: OperationalEventStore;
   audit: ReturnType<typeof createAuditLog>;
+  history: ObjectHistoryStore;
+  authorizer?: OntologyAuthorizer;
   close?: () => Promise<void>;
 }
 
@@ -65,6 +75,7 @@ export interface CreateMemoryPlatformContextOptions {
   deterministic?: boolean;
   /** Tests may override; default is explicit allowAll. */
   authorize?: AuthorizeFn;
+  authorizer?: OntologyAuthorizer;
 }
 
 /** Test/demo context — memory adapters only. */
@@ -86,6 +97,7 @@ export function createMemoryPlatformContext(
   const audit = createAuditLog({ clock, nextId });
   const events = createMemoryOperationalEventStore({ clock, nextId });
   const executions = createMemoryActionExecutionStore();
+  const history = createMemoryObjectHistoryStore({ clock, nextId });
   const actions = createActionExecutor({
     objects,
     links,
@@ -107,6 +119,8 @@ export function createMemoryPlatformContext(
     actions,
     events,
     audit,
+    history,
+    authorizer: opts.authorizer,
   };
   void opts.seed?.(ctx);
   return ctx;
@@ -128,6 +142,10 @@ export interface CreatePostgresPlatformContextOptions {
   databaseUrl?: string;
   /** Required. Production is fail-closed — no allowAll default. */
   authorize: AuthorizeFn;
+  /** Optional read/redact helper used by /api/v2 GET routes. */
+  authorizer?: OntologyAuthorizer;
+  /** enforce = reject undeclared writes; warn = log and allow. Default enforce. */
+  governanceMode?: 'enforce' | 'warn';
   seed?: (ctx: PlatformContext) => void | Promise<void>;
 }
 
@@ -171,9 +189,20 @@ export function createPostgresPlatformContext(
   const nextId = createUuidIdGenerator();
   const txManager = transaction;
   const rootSql = sql;
+  const ontology = createPgOntologyRegistry({ sql: rootSql, clock, nextId });
+  const governanceMode = opts.governanceMode ?? 'enforce';
 
   function bind(client: SqlClient) {
-    const objects = createPgObjectRepository({ sql: client, clock, nextId });
+    const rawObjects = createPgObjectRepository({ sql: client, clock, nextId });
+    const history = createPgObjectHistoryStore({ sql: client, nextId });
+    const objects = createGovernedObjectRepository({
+      inner: rawObjects,
+      resolveVersion: (oid, vid) =>
+        vid ? ontology.getVersion(vid) : ontology.getLatestVersion(oid),
+      history,
+      principal: () => getCurrentPrincipal(),
+      mode: governanceMode,
+    });
     const links = createPgLinkRepository({ sql: client, clock, nextId });
     const events = createPgOperationalEventStore({ sql: client, clock, nextId });
     const executions = createPgActionExecutionStore({ sql: client });
@@ -183,11 +212,10 @@ export function createPostgresPlatformContext(
       repository: createPgAuditRepository({ sql: client }),
     });
     const outbox = createPgOutboxRepository({ sql: client });
-    return { objects, links, events, executions, audit, outbox };
+    return { objects, links, events, executions, audit, outbox, history };
   }
 
   const root = bind(rootSql);
-  const ontology = createPgOntologyRegistry({ sql: rootSql, clock, nextId });
   const graph = createGraphQueryEngine({ objects: root.objects, links: root.links });
 
   const unitOfWork: ActionUnitOfWork = {
@@ -200,7 +228,7 @@ export function createPostgresPlatformContext(
     repository: createPgAuditRepository({ sql: rootSql, transaction: txManager }),
   });
 
-  const actions = createActionExecutor({
+  const innerActions = createActionExecutor({
     objects: root.objects,
     links: root.links,
     audit: standaloneAudit,
@@ -214,6 +242,12 @@ export function createPostgresPlatformContext(
     nextId,
   });
 
+  const actions = createFailureSurvivingExecutor({
+    inner: innerActions,
+    rootExecutions: root.executions,
+    clock,
+  });
+
   const ctx: PlatformContext = {
     mode: 'postgres',
     ontology,
@@ -223,6 +257,8 @@ export function createPostgresPlatformContext(
     actions,
     events: root.events,
     audit: standaloneAudit,
+    history: root.history,
+    authorizer: opts.authorizer,
     close,
   };
   void opts.seed?.(ctx);

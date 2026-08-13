@@ -59,9 +59,11 @@ authorize → validate → submission criteria → UnitOfWork(rules)
   → COMMIT
 ```
 
-External webhooks/writeback **after** commit, via outbox workers.
+External webhooks/writeback **after** commit, via outbox workers (`createOutboxWorker` → `erp_writeback_queue` SQL mirror until an HTTP ERP handler exists).
 
-Production `createPostgresPlatformContext({ sql, transaction, authorize })` is fail-closed: missing `authorize` is a startup error. Memory/tests pass `allowAll` explicitly.
+Production `createPostgresPlatformContext({ sql, transaction, authorize })` is fail-closed: missing `authorize` is a startup error. Memory/tests pass `allowAll` explicitly. Postgres mode wraps `ObjectRepository` with ontology validation + `platform_object_history` snapshots in the same UnitOfWork.
+
+Direct HTTP writes to `/objects` and `/links` are service-only (`svc-projector`, `svc-migration`). Humans use Actions. Generic console: `apps/console/index.html` (not a domain app).
 
 ## Package classification
 
@@ -69,6 +71,6 @@ Production `createPostgresPlatformContext({ sql, transaction, authorize })` is f
 `contracts`, `api-errors`, `pagination`, `object-platform`, `ontology-registry`, `object-set`, `knowledge-graph`, `action-engine`, `policy-engine`, `connector-sdk`, `connector-postgres`, `event-bus`, `observability`, `platform-api`
 
 **OPTIONAL / EXPERIMENTAL / SUPPORT** (CI completo ainda valida):
-`ldpc-transceiver`, `external-content-exporter`, `tagging-interface-panel`, `periodic-search-manager`, `fair-query-scheduler`, `bounded-fair-scheduler`, `cli-script-debugger`, `entity-assignment-debugger`, `inline-tag-sync`, `link-consistency-validator`, `validation-result-notifier`, and other Bloco 1–4 support packages.
+`apps/console`, `ldpc-transceiver`, `external-content-exporter`, `tagging-interface-panel`, `periodic-search-manager`, `fair-query-scheduler`, `bounded-fair-scheduler`, `cli-script-debugger`, `entity-assignment-debugger`, `inline-tag-sync`, `link-consistency-validator`, `validation-result-notifier`, and other Bloco 1–4 support packages.
 
 Do not delete optional packages. A broken experimental package must not block `pnpm gate:core`.

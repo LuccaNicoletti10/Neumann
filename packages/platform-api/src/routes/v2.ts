@@ -14,22 +14,7 @@ import { paginateArray } from 'pagination';
 import { notFound } from 'api-errors';
 
 import type { PlatformContext } from '../core/context.js';
-
-function principalOf(req: { headers: Record<string, string | string[] | undefined> }): string {
-  const allowDev = process.env.ALLOW_DEV_PRINCIPAL_HEADER === 'true';
-  const nodeEnv = process.env.NODE_ENV ?? 'development';
-  if (allowDev && nodeEnv !== 'production') {
-    const h = req.headers['x-principal'];
-    if (typeof h === 'string' && h) return h;
-  }
-  const auth = req.headers.authorization;
-  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
-    // Token verification wired via IAM in Phase D; for now accept opaque token as principal id.
-    const token = auth.slice('Bearer '.length).trim();
-    if (token) return `bearer:${token.slice(0, 32)}`;
-  }
-  return 'anonymous';
-}
+import { principalOf } from '../core/principal.js';
 
 function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
   const type = String(raw.type ?? '').toUpperCase();
@@ -78,6 +63,15 @@ export async function registerV2Routes(
   app: FastifyInstance,
   ctx: PlatformContext,
 ): Promise<void> {
+  async function ensureActionType(ontologyId: string, action: string): Promise<void> {
+    if (ctx.actions.getActionType(ontologyId, action)) return;
+    const v = await ctx.ontology.getLatestVersion(ontologyId);
+    const def = Object.values(v?.actionTypes ?? {}).find(
+      (a) => a.apiName === action || a.id === action,
+    );
+    if (def) ctx.actions.registerActionType(ontologyId, def);
+  }
+
   app.get('/api/v2/ontologies', async () => {
     return { data: await ctx.ontology.listOntologies() };
   });
@@ -104,6 +98,29 @@ export async function registerV2Routes(
   );
 
   app.get<{ Params: { ontology: string } }>(
+    '/api/v2/ontologies/:ontology/latestVersion',
+    async (req, reply) => {
+      const v = await ctx.ontology.getLatestVersion(req.params.ontology);
+      if (!v) return reply.code(404).send({ error: 'ontology not found' });
+      return v;
+    },
+  );
+
+  app.get<{ Params: { ontology: string } }>(
+    '/api/v2/ontologies/:ontology/versions/latest',
+    async (req, reply) => {
+      const v = await ctx.ontology.getLatestVersion(req.params.ontology);
+      if (!v) return reply.code(404).send({ error: 'ontology not found' });
+      return v;
+    },
+  );
+
+  app.get<{ Params: { objectId: string } }>(
+    '/api/v2/objects/:objectId/history',
+    async (req) => ({ data: await ctx.history.listByObject(req.params.objectId) }),
+  );
+
+  app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/objectTypes',
     async (req, reply) => {
       const v = await ctx.ontology.getLatestVersion(req.params.ontology);
@@ -124,8 +141,28 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string; objectType: string }; Querystring: { pageSize?: string; pageToken?: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType',
-    async (req) => {
-      const data = await ctx.objects.list(req.params.ontology, req.params.objectType);
+    async (req, reply) => {
+      const principal = principalOf(req);
+      if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, req.params.objectType)) {
+        return reply.code(403).send({
+          errorCode: 'READ_FORBIDDEN',
+          errorName: 'ObjectTypeReadDenied',
+          message: `principal "${principal}" cannot read object type "${req.params.objectType}"`,
+        });
+      }
+      const listed = await ctx.objects.list(req.params.ontology, req.params.objectType);
+      const data = listed.map((o) =>
+        ctx.authorizer
+          ? {
+              ...o,
+              properties: ctx.authorizer.redactProperties(
+                principal,
+                o.objectTypeId,
+                o.properties,
+              ),
+            }
+          : o,
+      );
       return paginateArray(data, {
         pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
         pageToken: req.query.pageToken,
@@ -136,13 +173,29 @@ export async function registerV2Routes(
   app.get<{ Params: { ontology: string; objectType: string; primaryKey: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey',
     async (req, reply) => {
+      const principal = principalOf(req);
+      if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, req.params.objectType)) {
+        return reply.code(403).send({
+          errorCode: 'READ_FORBIDDEN',
+          errorName: 'ObjectTypeReadDenied',
+          message: `principal "${principal}" cannot read object type "${req.params.objectType}"`,
+        });
+      }
       const obj = await ctx.objects.get(
         req.params.ontology,
         req.params.objectType,
         req.params.primaryKey,
       );
       if (!obj) return reply.code(404).send({ error: 'object not found' });
-      return obj;
+      if (!ctx.authorizer) return obj;
+      return {
+        ...obj,
+        properties: ctx.authorizer.redactProperties(
+          principal,
+          obj.objectTypeId,
+          obj.properties,
+        ),
+      };
     },
   );
 
@@ -328,6 +381,7 @@ export async function registerV2Routes(
     Params: { ontology: string; action: string };
     Body: { parameters: Record<string, unknown> };
   }>('/api/v2/ontologies/:ontology/actions/:action/validate', async (req) => {
+    await ensureActionType(req.params.ontology, req.params.action);
     return ctx.actions.validate({
       ontologyId: req.params.ontology,
       actionApiName: req.params.action,
@@ -344,6 +398,7 @@ export async function registerV2Routes(
       expectedObjectVersions?: Record<string, number>;
     };
   }>('/api/v2/ontologies/:ontology/actions/:action/apply', async (req) => {
+    await ensureActionType(req.params.ontology, req.params.action);
     return ctx.actions.apply({
       ontologyId: req.params.ontology,
       actionApiName: req.params.action,

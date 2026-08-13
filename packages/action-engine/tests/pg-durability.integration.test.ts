@@ -16,6 +16,7 @@ import {
 import { createAuditLog, createPgAuditRepository } from 'policy-engine';
 
 import { createActionExecutor } from '../src/core/executor.js';
+import { createFailureSurvivingExecutor } from '../src/core/failure-surviving-executor.js';
 import { createPgActionExecutionStore } from '../src/core/pg-execution-store.js';
 import { createPgOperationalEventStore } from '../src/core/pg-events.js';
 import type { ActionTransactionStores as Stores } from '../src/core/types.js';
@@ -184,7 +185,7 @@ describe.skipIf(!db)('Action PG durability', () => {
       ],
     };
     const root = storesFor(sql, clock, nextId);
-    const actions = createActionExecutor({
+    const inner = createActionExecutor({
       ...root,
       authorize: allowAll,
       mode: 'production',
@@ -195,6 +196,11 @@ describe.skipIf(!db)('Action PG durability', () => {
       nextId,
       actionTypes: { o1: [exploding] },
     });
+    const actions = createFailureSurvivingExecutor({
+      inner,
+      rootExecutions: root.executions,
+      clock,
+    });
 
     const result = await actions.apply({
       ontologyId: 'o1',
@@ -204,7 +210,9 @@ describe.skipIf(!db)('Action PG durability', () => {
     });
     expect(result.status).toBe('FAILED');
     expect(await root.objects.get('o1', 'ot.order', 'boom-1')).toBeUndefined();
-    expect(await actions.getExecution(result.executionId)).toBeUndefined();
+    const failed = await actions.getExecution(result.executionId);
+    expect(failed?.status).toBe('FAILED');
+    expect(failed?.error).toBeTruthy();
     await sql.close();
   });
 });

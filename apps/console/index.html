@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Neumann Console</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--txt:#d7dce4;--dim:#8a93a3;
+        --acc:#4f8cff;--ok:#3fb27f;--err:#e05252;--warn:#d9a13f;font-size:14px}
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--txt);font:1rem/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;height:100vh;display:flex;flex-direction:column}
+  header{display:flex;gap:.75rem;align-items:center;padding:.6rem 1rem;border-bottom:1px solid var(--line);background:var(--panel)}
+  header b{color:var(--acc)}
+  input,select,button,textarea{background:#0c0e12;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:.4rem .6rem;font:inherit}
+  input:focus,select:focus{outline:1px solid var(--acc)}
+  button{cursor:pointer}button:hover{border-color:var(--acc)}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  main{flex:1;display:grid;grid-template-columns:220px 1fr 380px;min-height:0}
+  nav,section,aside{overflow:auto;padding:1rem}
+  nav{border-right:1px solid var(--line)}
+  aside{border-left:1px solid var(--line);background:var(--panel)}
+  h3{color:var(--dim);text-transform:uppercase;font-size:.72rem;letter-spacing:.08em;margin:.9rem 0 .45rem}
+  .item{padding:.35rem .55rem;border-radius:6px;cursor:pointer;color:var(--dim)}
+  .item:hover{background:#1d2230;color:var(--txt)}
+  .item.on{background:#1d2740;color:var(--acc)}
+  table{width:100%;border-collapse:collapse;margin-top:.6rem}
+  th,td{border-bottom:1px solid var(--line);padding:.4rem .55rem;text-align:left;vertical-align:top;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  th{color:var(--dim);font-weight:600;font-size:.78rem}
+  tr:hover td{background:#161b26}
+  .pill{display:inline-block;padding:.05rem .5rem;border-radius:99px;font-size:.72rem;border:1px solid var(--line);color:var(--dim)}
+  .field{margin:.55rem 0}
+  .field label{display:block;color:var(--dim);font-size:.78rem;margin-bottom:.2rem}
+  .field input,.field select{width:100%}
+  .req{color:var(--err)}
+  #log{white-space:pre-wrap;font-size:.78rem;color:var(--dim);border-top:1px solid var(--line);margin-top:1rem;padding-top:.6rem;max-height:34vh;overflow:auto}
+  .ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}
+  .muted{color:var(--dim)}
+  #hist td{white-space:normal}
+</style>
+</head>
+<body>
+<header>
+  <b>NEUMANN</b><span class="muted">console</span>
+  <input id="base" value="http://localhost:3000" size="22" title="URL da platform-api"/>
+  <input id="who"  value="lucca" size="12" title="principal (Bearer)"/>
+  <select id="onto" title="ontologia"></select>
+  <button onclick="boot()">↻ conectar</button>
+  <span id="status" class="muted"></span>
+</header>
+<main>
+  <nav>
+    <h3>Object Types</h3><div id="types"></div>
+    <h3>Actions</h3><div id="acts"></div>
+  </nav>
+  <section>
+    <div id="grid" class="muted">Conecte e escolha um tipo à esquerda.</div>
+    <div id="hist"></div>
+  </section>
+  <aside>
+    <div id="form" class="muted">Escolha uma action para gerar o formulário.</div>
+    <div id="log"></div>
+  </aside>
+</main>
+<script>
+/* Peça 5: TODA a UI abaixo é derivada da ontologia — zero conhecimento de domínio. */
+let V=null, OID=null, TYPE=null, ACT=null;
+
+const $=id=>document.getElementById(id);
+const hdr=()=>({'Content-Type':'application/json','Authorization':'Bearer '+$('who').value.trim()});
+const api=p=>fetch($('base').value.replace(/\/$/,'')+'/api/v2'+p,{headers:hdr()}).then(r=>r.json());
+const post=(p,b)=>fetch($('base').value.replace(/\/$/,'')+'/api/v2'+p,{method:'POST',headers:hdr(),body:JSON.stringify(b)}).then(async r=>({status:r.status,body:await r.json().catch(()=>({}))}));
+function log(m,c){$('log').innerHTML=`<div class="${c||''}">[${new Date().toLocaleTimeString()}] ${m}</div>`+$('log').innerHTML}
+
+async function boot(){
+  try{
+    $('status').textContent='…';
+    const os=await api('/ontologies');
+    const list=os.data||os;
+    $('onto').innerHTML=list.map(o=>`<option value="${o.id}">${o.name||o.id}</option>`).join('');
+    $('onto').onchange=loadOntology;
+    if(list.length){ $('onto').value=list[0].id; await loadOntology(); }
+    $('status').textContent='conectado';$('status').className='ok';
+  }catch(e){$('status').textContent='falhou: '+e.message;$('status').className='err';log(e.message,'err')}
+}
+
+async function loadOntology(){
+  OID=$('onto').value;
+  V=await api(`/ontologies/${OID}/latestVersion`).catch(()=>null);
+  if(!V||!V.objectTypes){ V=await api(`/ontologies/${OID}/versions/latest`).catch(()=>null); }
+  if(!V||!V.objectTypes){ log('sem versão comitada — comite a ontologia primeiro','warn'); return; }
+  $('types').innerHTML=Object.values(V.objectTypes).map(t=>
+    `<div class="item" id="t-${t.id}" onclick="pickType('${t.id}')">${t.displayName||t.id}</div>`).join('')||'<span class="muted">nenhum</span>';
+  $('acts').innerHTML=Object.values(V.actionTypes||{}).map(a=>
+    `<div class="item" id="a-${a.apiName||a.id}" onclick="pickAction('${a.apiName||a.id}')">${a.displayName||a.apiName||a.id}</div>`).join('')||'<span class="muted">nenhuma</span>';
+  log(`ontologia ${OID} v${V.versionNumber} — ${Object.keys(V.objectTypes).length} tipos, ${Object.keys(V.actionTypes||{}).length} actions`);
+}
+
+async function pickType(id){
+  TYPE=id;
+  document.querySelectorAll('#types .item').forEach(e=>e.classList.toggle('on',e.id==='t-'+id));
+  const t=V.objectTypes[id];
+  const props=t.propertyTypeIds;
+  const rows=await api(`/ontologies/${OID}/objects/${id}?limit=100`);
+  const data=rows.data||rows||[];
+  $('hist').innerHTML='';
+  $('grid').innerHTML=`
+    <h3>${t.displayName||id} <span class="pill">${data.length} objetos</span></h3>
+    <table><thead><tr><th>pk</th>${props.map(p=>`<th>${(V.propertyTypes[p]||{}).displayName||p}</th>`).join('')}<th>v</th></tr></thead>
+    <tbody>${data.map(o=>`<tr onclick='showHistory(${JSON.stringify(o.id)},${JSON.stringify(o.primaryKey)})'>
+      <td>${o.primaryKey}</td>${props.map(p=>`<td title="${esc(o.properties[p])}">${esc(o.properties[p])}</td>`).join('')}<td class="muted">${o.version}</td></tr>`).join('')}
+    </tbody></table>
+    <p class="muted" style="margin-top:.5rem">Clique numa linha para ver o histórico (peça 3). Escrita direta é bloqueada — use Actions →</p>`;
+}
+function esc(v){return v===undefined||v===null?'':String(typeof v==='object'?JSON.stringify(v):v).replace(/</g,'&lt;')}
+
+async function showHistory(objectId,pk){
+  const h=await api(`/objects/${objectId}/history`).catch(()=>null);
+  const list=(h&&(h.data||h))||[];
+  if(!Array.isArray(list)||!list.length){$('hist').innerHTML=`<p class="muted">Sem histórico para ${pk} (rota /objects/{id}/history não montada ou objeto sem mutações governadas).</p>`;return}
+  $('hist').innerHTML=`<h3>histórico — ${pk}</h3>
+   <table><thead><tr><th>quando</th><th>op</th><th>por</th><th>v</th><th>propriedades</th></tr></thead>
+   <tbody>${list.map(e=>`<tr><td>${e.createdAt}</td><td>${e.operation}</td><td>${e.principal||'—'}</td><td>${e.version}</td><td>${esc(e.properties)}</td></tr>`).join('')}</tbody></table>`;
+}
+
+/* ---- formulário gerado do ActionTypeDef: a ontologia como alvo de compilação ---- */
+function pickAction(apiName){
+  ACT=apiName;
+  document.querySelectorAll('#acts .item').forEach(e=>e.classList.toggle('on',e.id==='a-'+apiName));
+  const def=Object.values(V.actionTypes).find(a=>(a.apiName||a.id)===apiName);
+  const fields=Object.entries(def.parameters||{}).map(([name,p])=>{
+    const req=p.required!==false;
+    let input;
+    if(p.baseType==='boolean') input=`<select id="p-${name}"><option value="">—</option><option>true</option><option>false</option></select>`;
+    else if(p.baseType==='number') input=`<input id="p-${name}" type="number" step="any"/>`;
+    else if(p.baseType==='datetime') input=`<input id="p-${name}" type="datetime-local"/>`;
+    else if(p.baseType==='object_reference') input=`<input id="p-${name}" placeholder="primary key de ${p.objectTypeId||'objeto'}"/>`;
+    else input=`<input id="p-${name}"/>`;
+    return `<div class="field"><label>${p.displayName||name}${req?' <span class="req">*</span>':''} <span class="muted">${p.baseType}${p.objectTypeId?' → '+p.objectTypeId:''}</span></label>${input}</div>`;
+  }).join('');
+  $('form').innerHTML=`<h3>${def.displayName||apiName}</h3>
+    ${def.description?`<p class="muted">${def.description}</p>`:''}
+    ${fields||'<p class="muted">sem parâmetros</p>'}
+    <div class="field"><label>idempotency key <span class="muted">(opcional)</span></label><input id="p-__idem"/></div>
+    <div style="display:flex;gap:.5rem;margin-top:.7rem">
+      <button onclick="runAction('validate')">validar</button>
+      <button class="primary" onclick="runAction('apply')">aplicar</button>
+    </div>`;
+}
+
+function collect(){
+  const def=Object.values(V.actionTypes).find(a=>(a.apiName||a.id)===ACT);
+  const params={};
+  for(const [name,p] of Object.entries(def.parameters||{})){
+    let v=$('p-'+name)?.value??'';
+    if(v==='')continue;
+    if(p.baseType==='number')v=Number(v);
+    if(p.baseType==='boolean')v=v==='true';
+    if(p.baseType==='datetime')v=new Date(v).toISOString();
+    params[name]=v;
+  }
+  return params;
+}
+
+async function runAction(mode){
+  const params=collect();
+  const body={parameters:params,principal:$('who').value.trim()};
+  const idem=$('p-__idem')?.value.trim(); if(mode==='apply'&&idem)body.idempotencyKey=idem;
+  const r=await post(`/ontologies/${OID}/actions/${ACT}/${mode}`,body);
+  const b=r.body;
+  if(mode==='validate'){
+    if(b.valid)log(`✔ ${ACT} válido`,'ok');
+    else log(`✖ ${ACT} inválido: ${(b.errors||[]).map(e=>e.message).join('; ')}`,'err');
+  }else{
+    if(b.status==='SUCCEEDED'){log(`✔ ${ACT} aplicado — exec ${b.executionId}`,'ok');if(TYPE)pickType(TYPE);}
+    else log(`✖ ${ACT} ${b.status||r.status}: ${b.error||JSON.stringify(b)}`,'err');
+  }
+}
+boot();
+</script>
+</body>
+</html>

@@ -13,7 +13,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 | P6 | High | DONE | C | ontology-registry | PgOntologyRegistry + restart gate |
 | P10 | High | DONE | B | graph-query.ts | Repository-backed GraphQueryEngine |
 | P11 | High | DONE | C | context.ts | createMemory* / createPostgres*; PG mode uses PG ontology/events/executions/audit |
-| P12 | High | PARTIAL | D | routes v2 | X-Principal gated; Bearer stub |
+| P12 | High | PARTIAL | D | routes v2 | Bearer token = principal id; IAM verification remaining |
 | P14 | Medium | DONE | D | api-errors | NeumannApiError + Fastify handler |
 | P15 | Medium | DONE | D | pagination | Opaque page tokens |
 | P17 | Medium | PARTIAL | I | object-set | NOT_EQUALS/ENDS_WITH + alias normalize |
@@ -29,7 +29,7 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 ## Baseline inventory
 
 - 39+ packages under `packages/*` (+ `api-errors`, `pagination`)
-- SQL: `0001_outbox.sql`, `0002_objects_platform.sql`, `0003_history_ontology.sql`, `0004_audit.sql`
+- SQL: `0001_outbox.sql`, `0002_objects_platform.sql`, `0003_history_ontology.sql`, `0004_audit.sql`, `0005_writeback.sql`
 - OpenFoundry reference: `/tmp/openfoundry-reference` (Apache-2.0)
 
 ## Still remaining (next sessions)
@@ -37,11 +37,10 @@ Baseline: durability wiring in `createPostgresPlatformContext` (2026-08-12). Pre
 | Area | Gap | Proves gap |
 |---|---|---|
 | P0 complete | `createObjectPlatform` still has private Maps | projector DI not fully migrated |
-| P7–P8 | OntologyObjectService | no schema rejection test on /api/v2 |
+| P7–P8 | OntologyObjectService | schema rejection now via governed repo + five-pieces gates; OntologyObjectService still absent |
 | P13 | Policy on every route | unauthorized aggregate test missing |
-| P66 | Full source→action→writeback E2E | write-back **request** is in outbox; HTTP worker = Passo 25 |
+| P66 | Full source→action→writeback E2E | SQL-mirror worker exists; HTTP ERP handler still Passo 25 |
 | P19 | SQL ObjectSet planner | only memory evaluator |
-| Object history UoW | `platform_object_history` unused by Action tx | no history row on action mutate |
 | Bearer/IAM | token accepted as opaque principal | no IdentityProvider verification |
 
 ## Working rule

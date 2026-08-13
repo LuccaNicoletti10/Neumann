@@ -16,6 +16,7 @@ services:
       - ./infra/sql/0002_objects_platform.sql:/docker-entrypoint-initdb.d/0002_objects_platform.sql:ro
       - ./infra/sql/0003_history_ontology.sql:/docker-entrypoint-initdb.d/0003_history_ontology.sql:ro
       - ./infra/sql/0004_audit.sql:/docker-entrypoint-initdb.d/0004_audit.sql:ro
+      - ./infra/sql/0005_writeback.sql:/docker-entrypoint-initdb.d/0005_writeback.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neumann -d neumann"]
       interval: 5s

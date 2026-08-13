@@ -15,6 +15,7 @@ export {
   createPostgresOutboxStore,
 } from './store/postgres-outbox.js';
 export { createPgOutboxRepository } from './store/pg-outbox-repository.js';
+export * from './worker/outbox-worker.js';
 
 export { OutboxPublisher, type PublishHandler, type OutboxPublisherOptions } from './publisher.js';
 export { IdempotentConsumer, type EventHandler } from './consumer.js';
