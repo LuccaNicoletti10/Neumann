@@ -5,11 +5,14 @@
 
 import {
   assertCanonicalEntity,
+  assertGoldPair,
   assertMatchAuditEntry,
   type CanonicalEntity,
   type CanonicalEntityId,
   type EntityRecord,
   type FingerprintMatch,
+  type GoldPair,
+  type GoldSet,
   type MatchAuditEntry,
   type MatchAuditId,
   type MergeCanonicalInput,
@@ -19,6 +22,7 @@ import {
   type ResolutionRunId,
   type SourceCanonicalLink,
   type UnmergeInput,
+  type UpsertGoldPairInput,
 } from 'contracts';
 
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
@@ -28,6 +32,7 @@ import {
   lookupFingerprintHits,
   type IndexedFingerprint,
 } from './fingerprint.js';
+import { pairKey, sortedPairIds } from './pair-key.js';
 import type { Clock, EntityLedger, IdGenerator } from './types.js';
 
 export interface CreateMemoryEntityLedgerOptions {
@@ -51,6 +56,24 @@ export function createMemoryEntityLedger(
   const events: MergeEvent[] = [];
   const fingerprints: IndexedFingerprint[] = [];
   const banned = blacklistHashes();
+  const goldPairs = new Map<string, GoldPair>();
+  const goldMeta = {
+    id: 'gold-default',
+    version: 0,
+    createdAt: '',
+    updatedAt: '',
+  };
+
+  function snapshotGold(): GoldSet {
+    const pairs = [...goldPairs.values()].sort((a, b) => a.id.localeCompare(b.id));
+    return {
+      id: goldMeta.id,
+      version: goldMeta.version,
+      pairs: pairs.map((p) => ({ ...p })),
+      createdAt: goldMeta.createdAt || clock(),
+      updatedAt: goldMeta.updatedAt || goldMeta.createdAt || clock(),
+    };
+  }
 
   return {
     async commitRun(result: ResolutionResult): Promise<ResolutionRunId> {
@@ -259,6 +282,35 @@ export function createMemoryEntityLedger(
     async searchSimilar(query: EntityRecord): Promise<FingerprintMatch[]> {
       const fp = fingerprintRecord(query);
       return lookupFingerprintHits(fp, fingerprints, banned, query.id);
+    },
+
+    async upsertGoldPairs(pairs: UpsertGoldPairInput[]): Promise<GoldSet> {
+      if (pairs.length === 0) return snapshotGold();
+      const now = clock();
+      if (!goldMeta.createdAt) goldMeta.createdAt = now;
+      goldMeta.updatedAt = now;
+      goldMeta.version += 1;
+      for (const input of pairs) {
+        const ids = sortedPairIds(input.leftId, input.rightId);
+        const key = pairKey(ids.leftId, ids.rightId);
+        const existing = goldPairs.get(key);
+        const row: GoldPair = {
+          id: input.id ?? existing?.id ?? (nextId('gold') as GoldPair['id']),
+          leftId: ids.leftId,
+          rightId: ids.rightId,
+          label: input.label,
+          labeledBy: input.labeledBy,
+          labeledAt: now,
+          note: input.note,
+        };
+        assertGoldPair(row);
+        goldPairs.set(key, row);
+      }
+      return snapshotGold();
+    },
+
+    async getGoldSet(): Promise<GoldSet> {
+      return snapshotGold();
     },
   };
 }

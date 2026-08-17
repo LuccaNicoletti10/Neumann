@@ -177,13 +177,10 @@ export function createPostgresConnector(config: PostgresConnectorConfig): Connec
 
     async *snapshot(obj: ObjectRef): AsyncIterable<CanonicalEvent> {
       const table = tableOrThrow(config.tables, obj.objectName);
-      // Retomar se já estamos em snapshot desta tabela
-      let lastPk: string | null = null;
-      if (current.kind === 'snapshot' && current.object === table.name) {
-        lastPk = current.lastPk;
-      } else {
-        current = { kind: 'snapshot', object: table.name, lastPk: null };
-      }
+      const initial = decodeCursor(config.initialCursorToken);
+      let lastPk: string | null =
+        initial.kind === 'snapshot' && initial.object === table.name ? initial.lastPk : null;
+      current = { kind: 'snapshot', object: table.name, lastPk };
 
       for (;;) {
         const pkCol = quoteIdent(table.primaryKey);

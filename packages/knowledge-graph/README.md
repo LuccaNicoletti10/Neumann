@@ -7,7 +7,9 @@ Links tipados materializados + grafo vivo Object→Link→Object.
 
 ```bash
 pnpm kg -- demo
+pnpm kg -- redact
 # aliases: links / knowledge-graph
 ```
 
 Gate: multi-hop traversal, integridade referencial, link migration, CTE SQL gerado (execução in-memory).
+Passo 27: `redactGraph` — snapshot sanitizado (nós/propriedades filtrados, arestas soltas removidas).

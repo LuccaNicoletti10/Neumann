@@ -3,8 +3,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { runDemo } from '../src/cli.js';
+import { runDemo, runRedactDemo } from '../src/cli.js';
 import { createDeterministicClock, createIdGenerator } from '../src/core/determinism.js';
+import { redactGraph, sanitizedContainsValue } from '../src/core/redact.js';
 import { createKnowledgeGraph } from '../src/core/store.js';
 
 function kg() {
@@ -90,9 +91,113 @@ describe('Passo 19 gates', () => {
     expect(g.resolveRemoteReference('nope')).toBeNull();
   });
 
+  it('Passo 26: link cruzado crm→erp; viewing Unclassified omite Confidential', () => {
+    const g = kg();
+    g.upsertObject({
+      id: 'cust',
+      objectTypeId: 'ot.customer',
+      primaryKey: 'C1',
+      sourceSystem: 'crm',
+      classification: 'Confidential',
+    });
+    g.upsertObject({
+      id: 'ord',
+      objectTypeId: 'ot.sales_order',
+      primaryKey: 'SO-1',
+      sourceSystem: 'erp',
+      classification: 'Unclassified',
+    });
+    const link = g.upsertLink({
+      linkTypeId: 'lt.placed',
+      sourceObjectId: 'cust',
+      targetObjectId: 'ord',
+      mappingVersionId: 'mv1',
+      sourceDatasetId: 'customers',
+      targetDatasetId: 'orders',
+    });
+    expect(link.sourceDatasetId).toBe('customers');
+    expect(g.getObject('cust')?.sourceSystem).toBe('crm');
+
+    const alice = g.traverseLinks({
+      startObjectId: 'cust',
+      maxHops: 1,
+      viewingLevel: 'Confidential',
+    });
+    const bob = g.traverseLinks({
+      startObjectId: 'cust',
+      maxHops: 1,
+      viewingLevel: 'Unclassified',
+    });
+    expect(alice.hops).toHaveLength(1);
+    expect(bob.nodes).toHaveLength(0);
+  });
+
+  it('Passo 27: redaction strip property + drop node + repair dangling; no leak', () => {
+    const secret = 'c1@internal.example';
+    const g = kg();
+    g.upsertObject({
+      id: 'c1',
+      objectTypeId: 'ot.customer',
+      primaryKey: 'C1',
+      classification: 'Unclassified',
+      properties: { name: 'Acme', email: secret },
+      propertyClassifications: { email: 'Confidential' },
+    });
+    g.upsertObject({
+      id: 'so1',
+      objectTypeId: 'ot.sales_order',
+      primaryKey: 'SO-1',
+      classification: 'Unclassified',
+      properties: { amount: 10 },
+    });
+    g.upsertObject({
+      id: 'note',
+      objectTypeId: 'ot.internal_note',
+      primaryKey: 'N1',
+      classification: 'Confidential',
+      properties: { text: 'internal' },
+    });
+    g.upsertLink({
+      id: 'placed',
+      linkTypeId: 'lt.placed',
+      sourceObjectId: 'c1',
+      targetObjectId: 'so1',
+      mappingVersionId: 'mv1',
+    });
+    g.upsertLink({
+      id: 'annotated',
+      linkTypeId: 'lt.annotated',
+      sourceObjectId: 'c1',
+      targetObjectId: 'note',
+      mappingVersionId: 'mv1',
+    });
+
+    const bob = redactGraph(g.listObjects(), g.listLinks(), { viewingLevel: 'Unclassified' });
+    const ids = new Set(bob.nodes.map((n) => n.id));
+    expect(ids.has('note')).toBe(false);
+    expect(bob.nodes.find((n) => n.id === 'c1')?.properties).not.toHaveProperty('email');
+    expect(bob.nodes.find((n) => n.id === 'c1')?.properties).toHaveProperty('name');
+    expect(bob.links.map((l) => l.id)).toEqual(['placed']);
+    expect(bob.links.every((l) => ids.has(l.sourceObjectId) && ids.has(l.targetObjectId))).toBe(
+      true,
+    );
+    expect(sanitizedContainsValue(bob, secret)).toBe(false);
+    expect(g.getObject('c1')?.properties?.email).toBe(secret);
+
+    const alice = redactGraph(g.listObjects(), g.listLinks(), { viewingLevel: 'Confidential' });
+    expect(alice.nodes).toHaveLength(3);
+    expect(alice.nodes.find((n) => n.id === 'c1')?.properties?.email).toBe(secret);
+  });
+
   it('cli demo exit 0', () => {
     const lines: string[] = [];
     expect(runDemo((m) => lines.push(m))).toBe(0);
     expect(lines.some((l) => l.includes('demo ok'))).toBe(true);
+  });
+
+  it('Passo 27 redact demo exit 0', () => {
+    const lines: string[] = [];
+    expect(runRedactDemo((m) => lines.push(m))).toBe(0);
+    expect(lines.some((l) => l.includes('redact ok'))).toBe(true);
   });
 });

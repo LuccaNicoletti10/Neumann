@@ -8,6 +8,8 @@ import type {
   CanonicalEntityId,
   EntityRecord,
   FingerprintMatch,
+  GoldPair,
+  GoldSet,
   MatchAuditEntry,
   MatchAuditId,
   MatchReview,
@@ -20,7 +22,9 @@ import type {
   SourceCanonicalLink,
   SqlClient,
   UnmergeInput,
+  UpsertGoldPairInput,
 } from 'contracts';
+import { assertGoldPair } from 'contracts';
 
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
 import {
@@ -29,6 +33,7 @@ import {
   lookupFingerprintHits,
   type IndexedFingerprint,
 } from './fingerprint.js';
+import { pairKey, sortedPairIds } from './pair-key.js';
 import type { Clock, EntityLedger, IdGenerator } from './types.js';
 
 export interface CreatePgEntityLedgerOptions {
@@ -401,6 +406,72 @@ export function createPgEntityLedger(opts: CreatePgEntityLedgerOptions): EntityL
         byRecord.set(recordId, entry);
       }
       return lookupFingerprintHits(fp, [...byRecord.values()], banned, query.id);
+    },
+
+    async upsertGoldPairs(pairs: UpsertGoldPairInput[]): Promise<GoldSet> {
+      const now = clock();
+      for (const input of pairs) {
+        const ids = sortedPairIds(input.leftId, input.rightId);
+        const key = pairKey(ids.leftId, ids.rightId);
+        const id = input.id ?? nextId('gold');
+        const row: GoldPair = {
+          id,
+          leftId: ids.leftId,
+          rightId: ids.rightId,
+          label: input.label,
+          labeledBy: input.labeledBy,
+          labeledAt: now,
+          note: input.note,
+        };
+        assertGoldPair(row);
+        await sql.query(
+          `INSERT INTO er_gold_pairs (
+             pair_key, id, left_id, right_id, label, labeled_by, labeled_at, note
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (pair_key) DO UPDATE SET
+             label = EXCLUDED.label,
+             labeled_by = EXCLUDED.labeled_by,
+             labeled_at = EXCLUDED.labeled_at,
+             note = EXCLUDED.note`,
+          [
+            key,
+            row.id,
+            row.leftId,
+            row.rightId,
+            row.label,
+            row.labeledBy,
+            row.labeledAt,
+            row.note ?? null,
+          ],
+        );
+      }
+      return this.getGoldSet();
+    },
+
+    async getGoldSet(): Promise<GoldSet> {
+      const res = await sql.query(
+        `SELECT * FROM er_gold_pairs ORDER BY id`,
+      );
+      const pairs: GoldPair[] = res.rows.map((r) => {
+        const row = r as Record<string, unknown>;
+        return {
+          id: String(row.id),
+          leftId: String(row.left_id),
+          rightId: String(row.right_id),
+          label: String(row.label) as GoldPair['label'],
+          labeledBy: String(row.labeled_by),
+          labeledAt: iso(row.labeled_at),
+          note: row.note == null ? undefined : String(row.note),
+        };
+      });
+      const updatedAt = pairs.reduce((m, p) => (p.labeledAt > m ? p.labeledAt : m), '');
+      return {
+        id: 'gold-default',
+        version: pairs.length,
+        pairs,
+        createdAt: pairs[0]?.labeledAt ?? clock(),
+        updatedAt: updatedAt || clock(),
+      };
     },
   };
 }

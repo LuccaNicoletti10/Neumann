@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["DATABASE_URL", "CONNECTOR_PROTOCOL", "AGE_BIN"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -7,7 +8,8 @@
     },
     "test": {
       "dependsOn": ["^build", "build"],
-      "outputs": []
+      "outputs": [],
+      "passThroughEnv": ["DATABASE_URL", "CONNECTOR_PROTOCOL", "AGE_BIN"]
     },
     "typecheck": {
       "dependsOn": ["^build"],

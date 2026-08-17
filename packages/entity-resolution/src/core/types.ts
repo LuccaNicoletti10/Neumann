@@ -8,6 +8,7 @@ import type {
   EntityRecord,
   EntityRecordId,
   FingerprintMatch,
+  GoldSet,
   MatchAuditEntry,
   MatchAuditId,
   MatchDecision,
@@ -20,6 +21,7 @@ import type {
   SourceCanonicalLink,
   SqlClient,
   UnmergeInput,
+  UpsertGoldPairInput,
 } from 'contracts';
 
 export type Clock = () => string;
@@ -41,6 +43,8 @@ export interface EntityLedger {
   listMergeEvents(canonicalId?: CanonicalEntityId): Promise<MergeEvent[]>;
   indexFingerprints(records: EntityRecord[]): Promise<void>;
   searchSimilar(query: EntityRecord): Promise<FingerprintMatch[]>;
+  upsertGoldPairs(pairs: UpsertGoldPairInput[]): Promise<GoldSet>;
+  getGoldSet(): Promise<GoldSet>;
 }
 
 export interface CreateEntityResolverOptions {

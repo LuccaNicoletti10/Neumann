@@ -11,6 +11,9 @@ export interface CreateSandboxOptions {
   clock?: Clock;
   nextId?: IdGenerator;
   policy?: Partial<SandboxPolicy>;
+  /** Default `in-process` (tests). Production should pass `worker`. */
+  isolation?: 'in-process' | 'worker';
+  timeoutMs?: number;
 }
 
 /** Host APIs expostas ao transform — todas passam pelo guard. */

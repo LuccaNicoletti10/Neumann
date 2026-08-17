@@ -6,11 +6,14 @@ import { describe, expect, it } from 'vitest';
 import {
   assertCanonicalEntity,
   assertEntityRecord,
+  assertGoldPair,
   assertMatchAuditEntry,
   assertResolutionCriteria,
   buildGoldenClusterScoringStrategy,
   buildGoldenCriteria,
   buildGoldenEntityRecord,
+  GOLD_SET_TARGET_SIZE,
+  goldLabelFromReview,
 } from '../src/v1/entity-resolution.js';
 
 describe('Passo 20 contracts — entity-resolution', () => {
@@ -83,5 +86,40 @@ describe('Passo 21 contracts — audit + canonical', () => {
         updatedAt: '2024-01-01T00:00:00.000Z',
       }),
     ).toThrow(/memberIds/);
+  });
+});
+
+describe('Passo 22 contracts — gold set', () => {
+  it('alvo do gold set é 50 pares', () => {
+    expect(GOLD_SET_TARGET_SIZE).toBe(50);
+  });
+
+  it('goldLabelFromReview fecha o loop MATCH/NO_MATCH', () => {
+    expect(goldLabelFromReview('confirm_match')).toBe('MATCH');
+    expect(goldLabelFromReview('reject_match')).toBe('NO_MATCH');
+    expect(goldLabelFromReview('needs_review')).toBeUndefined();
+  });
+
+  it('assertGoldPair rejeita label inválido e ids iguais', () => {
+    expect(() =>
+      assertGoldPair({
+        id: '',
+        leftId: 'a',
+        rightId: 'b',
+        label: 'MATCH',
+        labeledBy: 'analyst',
+        labeledAt: '2024-01-01T00:00:00.000Z',
+      }),
+    ).toThrow(/id/);
+    expect(() =>
+      assertGoldPair({
+        id: 'g1',
+        leftId: 'a',
+        rightId: 'a',
+        label: 'MATCH',
+        labeledBy: 'analyst',
+        labeledAt: '2024-01-01T00:00:00.000Z',
+      }),
+    ).toThrow(/distintos/);
   });
 });

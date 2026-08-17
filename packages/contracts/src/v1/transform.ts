@@ -46,6 +46,8 @@ export interface TransformProgram {
   createdAt: string;
   incrementalStatus: IncrementalStatus;
   computability: IncrementalComputability;
+  /** Datasets this transform materializes (asset mode). */
+  produces?: string[];
 }
 
 /** Resultado de uma execução. */

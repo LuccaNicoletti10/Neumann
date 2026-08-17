@@ -1,7 +1,7 @@
 {
   "name": "action-engine",
   "version": "1.0.0",
-  "description": "Generic ActionExecutor — authorize → validate → criteria → rules → side effects → audit (Passo 24).",
+  "description": "Generic ActionExecutor — authorize → validate → tx → write-back → audit (Passo 24).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,22 +12,31 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "action-engine": "./dist/cli.js",
+    "act": "./dist/cli.js"
+  },
   "files": ["dist", "README.md"],
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
   },
   "license": "MIT",
   "dependencies": {
     "contracts": "workspace:*",
+    "connector-sdk": "workspace:*",
     "object-platform": "workspace:*",
     "policy-engine": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "20.14.15",
     "typescript": "5.5.4",
+    "tsx": "^4.16.0",
     "vitest": "^2.1.9"
   }
 }

@@ -14,23 +14,63 @@ import {
   createHmacTokenVerifier,
   type TokenVerifier,
 } from './core/token-verifier.js';
+import { createJwksProvider, type AuthEventSink } from './auth/jwks-provider.js';
 import { registerWriteGuard } from './core/write-guard.js';
 import { registerV2Routes } from './routes/v2.js';
+import { registerErRoutes } from './routes/er.js';
+import { registerFunctionRoutes } from './routes/functions.js';
 
 export interface CreatePlatformServerOptions {
   tokenVerifier?: TokenVerifier;
   jwtSecret?: string;
   jwtIssuer?: string;
+  jwksUrl?: string;
+  authEventSink?: AuthEventSink;
 }
 
 function resolveTokenVerifier(opts: CreatePlatformServerOptions): TokenVerifier | undefined {
-  if (opts.tokenVerifier) return opts.tokenVerifier;
+  if (opts.tokenVerifier) return wrapSink(opts.tokenVerifier, opts.authEventSink);
+  const jwksUrl = opts.jwksUrl ?? process.env.PLATFORM_JWKS_URL;
+  if (jwksUrl) {
+    return createJwksProvider({
+      jwksUrl,
+      issuer: opts.jwtIssuer ?? process.env.PLATFORM_JWT_ISSUER,
+      sink: opts.authEventSink,
+    });
+  }
   const secret = opts.jwtSecret ?? process.env.PLATFORM_JWT_SECRET;
   if (!secret) return undefined;
-  return createHmacTokenVerifier({
-    secret,
-    issuer: opts.jwtIssuer ?? process.env.PLATFORM_JWT_ISSUER,
-  });
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[platform-api] PLATFORM_JWT_SECRET is HS256 dev mode; set PLATFORM_JWKS_URL for production RS256/ES256',
+    );
+  }
+  return wrapSink(
+    createHmacTokenVerifier({
+      secret,
+      issuer: opts.jwtIssuer ?? process.env.PLATFORM_JWT_ISSUER,
+    }),
+    opts.authEventSink,
+  );
+}
+
+function wrapSink(verifier: TokenVerifier, sink?: AuthEventSink): TokenVerifier {
+  if (!sink) return verifier;
+  return {
+    async verify(token: string) {
+      try {
+        const result = await verifier.verify(token);
+        sink.recordAttempt({ principal: result.principal, success: true });
+        return result;
+      } catch (err) {
+        sink.recordAttempt({
+          success: false,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
+    },
+  };
 }
 
 export async function createPlatformServer(
@@ -43,10 +83,11 @@ export async function createPlatformServer(
   }
 
   if (process.env.NODE_ENV === 'production') {
+    const jwks = opts.jwksUrl ?? process.env.PLATFORM_JWKS_URL;
     const secret = opts.jwtSecret ?? opts.tokenVerifier ?? process.env.PLATFORM_JWT_SECRET;
-    if (!secret) {
+    if (!jwks && !secret) {
       throw new Error(
-        'NODE_ENV=production requires PLATFORM_JWT_SECRET (fail-closed authentication)',
+        'NODE_ENV=production requires PLATFORM_JWKS_URL or PLATFORM_JWT_SECRET (fail-closed authentication)',
       );
     }
   }
@@ -80,8 +121,9 @@ export async function createPlatformServer(
       return reply.code(err.statusCode).send(err.toJSON());
     }
     if (err instanceof AuthenticationError) {
-      return reply.code(401).send({
-        errorCode: 'UNAUTHENTICATED',
+      const status = (err as AuthenticationError & { statusCode?: number }).statusCode ?? 401;
+      return reply.code(status).send({
+        errorCode: status === 503 ? 'UNAVAILABLE' : 'UNAUTHENTICATED',
         errorName: 'AuthenticationError',
         message: err.message,
       });
@@ -117,5 +159,7 @@ export async function createPlatformServer(
   });
 
   await registerV2Routes(app, context);
+  await registerErRoutes(app, context);
+  await registerFunctionRoutes(app, context);
   return { app, ctx: context, verifier };
 }

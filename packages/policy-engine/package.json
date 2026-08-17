@@ -1,7 +1,7 @@
 {
   "name": "policy-engine",
   "version": "1.0.0",
-  "description": "authorize() + EPID node graph + audit hash-chained (US 10,432,469 / US 10,397,229 / US20150188715).",
+  "description": "authorize() + EPID + classification dissemination (US 10,432,469 / US 10,397,229 / US 10,146,960).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,7 +28,11 @@
   },
   "license": "MIT",
   "dependencies": {
-    "contracts": "workspace:*"
+    "connector-sdk": "workspace:*",
+    "contracts": "workspace:*",
+    "data-lineage": "workspace:*",
+    "knowledge-graph": "workspace:*",
+    "query-api": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "20.14.15",

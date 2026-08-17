@@ -1,0 +1,10 @@
+{
+  "name": "connector-http",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": { "build": "tsc -p tsconfig.build.json", "typecheck": "tsc --noEmit", "test": "vitest run --passWithNoTests" },
+  "license": "MIT",
+  "dependencies": { "connector-sdk": "workspace:*", "contracts": "workspace:*" },
+  "devDependencies": { "@types/node": "20.14.15", "typescript": "5.5.4", "vitest": "^2.1.9" }
+}

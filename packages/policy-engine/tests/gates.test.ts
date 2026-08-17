@@ -8,14 +8,14 @@ import {
   createDeterministicSalt,
   createIdGenerator,
 } from '../src/core/determinism.js';
-import { createAuditLog } from '../src/core/audit.js';
+import { createAuditLog, createDecisionLogSink } from '../src/core/audit.js';
 import { createPolicyEngine } from '../src/core/engine.js';
 import {
   createAllowAllAuthorizer,
   createDenyAllAuthorizer,
   createOntologyAuthorizer,
 } from '../src/core/ontology-authorizer.js';
-import { runDemo } from '../src/cli.js';
+import { runClassifyDemo, runDemo, runNoninterferenceDemo, runRedactDemo } from '../src/cli.js';
 
 function eng() {
   return createPolicyEngine({
@@ -46,7 +46,7 @@ describe('Passo 16 gates', () => {
 
     const view = e.securedRead('bob', [{ resourceId: 'secret', x: 1 }]);
     expect(view.items).toEqual([]);
-    expect(view.count).toBeNull();
+    expect(view.count).toBe(0);
   });
 
   it('create resource admissions', () => {
@@ -150,5 +150,108 @@ describe('Passo 16 gates', () => {
     ).toContain('granted');
     expect(createAllowAllAuthorizer().authorizeAction('anyone', 'x').decision).toBe('allow');
     expect(createDenyAllAuthorizer().authorizeRead('eve', 'ot.order').decision).toBe('deny');
+  });
+
+  it('Passo 26: classification gate deny when marking exceeds principal max', () => {
+    const authz = createOntologyAuthorizer({
+      roles: { bob: ['ops'] },
+      grants: [{ role: 'ops', objectTypes: ['*'], operations: ['read'] }],
+      maxClassification: { bob: 'Unclassified' },
+    });
+    expect(
+      authz.authorize({
+        principal: 'bob',
+        resource: 'object:ot.customer',
+        operation: 'read',
+        context: { classification: 'Confidential' },
+      }).decision,
+    ).toBe('deny');
+    expect(
+      authz.filterReadable('bob', [
+        { objectTypeId: 'ot.customer', classification: 'Confidential' },
+        { objectTypeId: 'ot.order', classification: 'Unclassified' },
+      ]).map((r) => r.objectTypeId),
+    ).toEqual(['ot.order']);
+  });
+
+  it('Passo 26 classify demo exit 0', async () => {
+    const lines: string[] = [];
+    expect(await runClassifyDemo((m) => lines.push(m))).toBe(0);
+    expect(lines.some((l) => l.includes('classify ok'))).toBe(true);
+  });
+
+  it('Passo 27 redact demo: no leak, no dangling edges', () => {
+    const lines: string[] = [];
+    expect(runRedactDemo((m) => lines.push(m))).toBe(0);
+    expect(lines.some((l) => l.includes('redact ok'))).toBe(true);
+  });
+
+  it('Passo 28 ni demo: 8 canais + fuzz sem violação', () => {
+    const lines: string[] = [];
+    expect(runNoninterferenceDemo((m) => lines.push(m))).toBe(0);
+    expect(lines.some((l) => l.includes('ni ok'))).toBe(true);
+  });
+
+  it('P1-6: deny is always logged; allow is sampled deterministically', () => {
+    const denies: string[] = [];
+    const allows: string[] = [];
+    const e = createPolicyEngine({
+      clock: createDeterministicClock(),
+      nextId: createIdGenerator(),
+      allowSampleRate: 0.1,
+      sampleSeed: 'test-seed',
+      onDecision: (d) => {
+        if (d.decision === 'deny') denies.push(d.resource);
+        if (d.decision === 'allow') allows.push(d.resource);
+      },
+    });
+    e.grantPolicy('alice', 'finance');
+    e.addNode({ id: 'n1', resourceId: 'r1', policy: 'finance', parentId: null });
+    for (let i = 0; i < 50; i += 1) {
+      e.addNode({ id: `secret-${i}`, resourceId: `secret-${i}`, policy: 'ops', parentId: null });
+      e.authorize({ principal: 'alice', resource: `secret-${i}`, operation: 'read' });
+    }
+    expect(denies).toHaveLength(50);
+    e.authorize({ principal: 'alice', resource: 'r1', operation: 'read' });
+    const again = createPolicyEngine({
+      clock: createDeterministicClock(),
+      nextId: createIdGenerator(),
+      allowSampleRate: 0.1,
+      sampleSeed: 'test-seed',
+      onDecision: (d) => {
+        if (d.decision === 'allow') allows.push(`b:${d.resource}`);
+      },
+    });
+    again.grantPolicy('alice', 'finance');
+    again.addNode({ id: 'n1', resourceId: 'r1', policy: 'finance', parentId: null });
+    again.authorize({ principal: 'alice', resource: 'r1', operation: 'read' });
+    const firstAllow = allows.filter((a) => a === 'r1').length;
+    const secondAllow = allows.filter((a) => a === 'b:r1').length;
+    expect(firstAllow).toBe(secondAllow);
+  });
+
+  it('P1-6: 10k decides do not block on async append', async () => {
+    const audit = createAuditLog({
+      clock: createDeterministicClock(),
+      nextId: createIdGenerator(),
+    });
+    const sink = createDecisionLogSink(audit);
+    const e = createPolicyEngine({
+      clock: createDeterministicClock(),
+      nextId: createIdGenerator(),
+      allowSampleRate: 1,
+      onDecision: sink.onDecision,
+    });
+    e.grantPolicy('alice', 'finance');
+    e.addNode({ id: 'n1', resourceId: 'r1', policy: 'finance', parentId: null });
+    const t0 = Date.now();
+    for (let i = 0; i < 10_000; i += 1) {
+      e.authorize({ principal: 'alice', resource: 'r1', operation: 'read' });
+    }
+    const syncMs = Date.now() - t0;
+    expect(syncMs).toBeLessThan(2_000);
+    await sink.drain();
+    const listed = await audit.list();
+    expect(listed.length).toBeGreaterThan(1);
   });
 });

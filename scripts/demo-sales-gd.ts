@@ -22,6 +22,18 @@ import {
   createDeterministicClock as kgClock,
   createIdGenerator as kgIds,
 } from 'knowledge-graph';
+import {
+  createAssetGraph,
+  declareProduces,
+  isStale,
+  linkAssets,
+  markStale,
+  materialize,
+} from 'incremental-pipeline-scheduler';
+
+function expectLog(log: (m: string) => void, ok: boolean, msg: string): void {
+  log(`  assets: ${ok ? 'ok' : 'FAIL'} ${msg}`);
+}
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = resolve(root, 'datasets/sales-gd');
@@ -173,6 +185,28 @@ async function main(): Promise<number> {
     rows: fatRows,
   });
   log(`  projected customers=${p1.upserted} invoices=${p2.upserted} links=${p2.linksUpserted}`);
+
+  const assets = createAssetGraph();
+  declareProduces(assets, 'map-clientes', ['ds-gd-clientes']);
+  declareProduces(assets, 'map-fat', ['ds-gd-fat']);
+  linkAssets(assets, 'ds-gd-clientes', 'ds-objects-customer');
+  linkAssets(assets, 'ds-gd-fat', 'ds-objects-invoice');
+  linkAssets(assets, 'ds-objects-customer', 'ds-kg');
+  linkAssets(assets, 'ds-objects-invoice', 'ds-kg');
+  const staleFromClientes = markStale(assets, 'ds-gd-clientes');
+  log(`  assets: clientes arrived → stale ${staleFromClientes.join(',')}`);
+  const afterCust = materialize(assets, 'ds-objects-customer');
+  expectLog(
+    log,
+    !isStale(assets, 'ds-objects-customer') && afterCust.includes('ds-kg'),
+    'customer objects materialized; kg marked stale',
+  );
+  markStale(assets, 'ds-gd-fat');
+  materialize(assets, 'ds-objects-invoice');
+  materialize(assets, 'ds-kg');
+  log(
+    `  assets: kg stale=${isStale(assets, 'ds-kg')} invoice stale=${isStale(assets, 'ds-objects-invoice')}`,
+  );
 
   const customers = platform.queryObjects('demo', { objectTypeId: 'ot.customer' });
   const invoices = platform.queryObjects('demo', { objectTypeId: 'ot.invoice' });
@@ -341,7 +375,9 @@ async function main(): Promise<number> {
     linked > 0 &&
     integrity.ok &&
     trav.maxDepthReached === 1 &&
-    !!custNode;
+    !!custNode &&
+    !isStale(assets, 'ds-kg') &&
+    !isStale(assets, 'ds-objects-customer');
 
   log(ok ? 'demo:sales ok' : 'demo:sales FAIL');
   return ok ? 0 : 1;

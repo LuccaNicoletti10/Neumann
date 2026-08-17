@@ -7,6 +7,7 @@
 
 import {
   assertTypedLink,
+  canViewAtLevel,
   type GraphObject,
   type GraphObjectId,
   type IntegrityReport,
@@ -64,6 +65,12 @@ export function createKnowledgeGraph(
           primaryKey: obj.primaryKey,
           properties: obj.properties ? Object.freeze({ ...obj.properties }) : undefined,
           deleted: obj.deleted ?? false,
+          sourceSystem: obj.sourceSystem,
+          classification: obj.classification,
+          provenance: obj.provenance ? [...obj.provenance] : undefined,
+          propertyClassifications: obj.propertyClassifications
+            ? { ...obj.propertyClassifications }
+            : undefined,
         }),
       );
     },
@@ -180,6 +187,14 @@ export function createKnowledgeGraph(
           maxDepthReached: 0,
         };
       }
+      if (query.viewingLevel && !canViewAtLevel(start.classification, query.viewingLevel)) {
+        return {
+          startObjectId: query.startObjectId,
+          nodes: [],
+          hops: [],
+          maxDepthReached: 0,
+        };
+      }
 
       const hops: TraverseHop[] = [];
       const nodeMap = new Map<GraphObjectId, GraphObject>();
@@ -214,6 +229,9 @@ export function createKnowledgeGraph(
 
             const to = objects.get(toId);
             if (!to || to.deleted) continue;
+            if (query.viewingLevel && !canViewAtLevel(to.classification, query.viewingLevel)) {
+              continue;
+            }
 
             hops.push({
               depth,

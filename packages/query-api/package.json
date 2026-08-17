@@ -1,0 +1,39 @@
+{
+  "name": "query-api",
+  "version": "1.0.0",
+  "description": "Query API + índice permission-aware — 6 superfícies ACL, Search Around, templates, planner (US 9,031,981 / US 9,798,768 / US 8,868,537 / US 9,262,529 / US 10,726,032 / US 9,619,557 / US 8,041,714 / US 11,238,102).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "query-api": "./dist/cli.js",
+    "search": "./dist/cli.js"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*",
+    "knowledge-graph": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

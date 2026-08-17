@@ -1,6 +1,6 @@
-# entity-resolution (Passos 20–21)
+# entity-resolution (Passos 20–22)
 
-Pipeline **normalização → blocking → scoring** (soft clusters) + **auditoria persistida + canonical merge reversível + fingerprint search**.
+Pipeline **normalização → blocking → scoring** (soft clusters) + **auditoria persistida + canonical merge reversível + fingerprint search** + **gold set / métricas / fila de revisão**.
 
 - **US 8,554,719 / 9,501,552 / 9,846,731** — criteria / linking terms / exact·fuzzy·no-conflict
 - **US 12,229,154** — soft resolution + confidence
@@ -15,6 +15,5 @@ pnpm er -- demo
 ```
 
 Gate Passo 20: `"ACME LTDA"` + `"Acme Ltda."` → 1 cluster `ot.customer`.  
-Gate Passo 21: toda decisão auditável; false merge reversível (unmerge restaura o source sem apagar originais).
-
-Passo 22 = gold set + endpoint HTTP de revisão.
+Gate Passo 21: toda decisão auditável; false merge reversível (unmerge restaura o source sem apagar originais).  
+Gate Passo 22: 50 pares rotulados; precision/recall/F1/false-merge-rate documentado; `GET /api/v2/er/review-queue` + `POST /api/v2/er/review`.

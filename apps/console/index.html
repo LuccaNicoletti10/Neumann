@@ -51,6 +51,10 @@
   <nav>
     <h3>Object Types</h3><div id="types"></div>
     <h3>Actions</h3><div id="acts"></div>
+    <h3>Catálogo</h3>
+    <div class="field"><input id="catq" placeholder="buscar pk / propriedade" onkeydown="if(event.key==='Enter')catalogSearch()"/></div>
+    <button onclick="catalogSearch()">buscar</button>
+    <div id="cattypes" class="muted" style="margin-top:.5rem"></div>
   </nav>
   <section>
     <div id="grid" class="muted">Conecte e escolha um tipo à esquerda.</div>
@@ -176,6 +180,18 @@ async function runAction(mode){
   }
 }
 boot();
+
+async function catalogSearch(){
+  const q=$('catq').value.trim();
+  if(!q){log('informe q','warn');return;}
+  const r=await api('/catalog/search?q='+encodeURIComponent(q)+(OID?'&ontology='+OID:''));
+  const data=r.data||[];
+  $('grid').innerHTML=`<h3>Catálogo <span class="pill">${data.length}</span></h3>
+    <table><thead><tr><th>URN</th><th>tipo</th><th>pk</th></tr></thead>
+    <tbody>${data.map(h=>`<tr><td>${esc(h.urn)}</td><td>${esc(h.objectTypeId)}</td><td>${esc(h.primaryKey)}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">vazio (sem grant ou sem match)</td></tr>'}</tbody></table>`;
+  const types=await api('/catalog/types').catch(()=>({data:[]}));
+  $('cattypes').innerHTML=(types.data||[]).map(t=>`${t.objectTypeId}: ${t.count}`).join('<br/>')||'';
+}
 </script>
 </body>
 </html>

@@ -21,6 +21,10 @@ services:
       - ./infra/sql/0007_link_versioning.sql:/docker-entrypoint-initdb.d/0007_link_versioning.sql:ro
       - ./infra/sql/0008_outbox_reliability.sql:/docker-entrypoint-initdb.d/0008_outbox_reliability.sql:ro
       - ./infra/sql/0009_objectset_indexes.sql:/docker-entrypoint-initdb.d/0009_objectset_indexes.sql:ro
+      - ./infra/sql/0010_policy.sql:/docker-entrypoint-initdb.d/0010_policy.sql:ro
+      - ./infra/sql/0011_action_approvals.sql:/docker-entrypoint-initdb.d/0011_action_approvals.sql:ro
+      - ./infra/sql/0012_pipeline_assets.sql:/docker-entrypoint-initdb.d/0012_pipeline_assets.sql:ro
+      - ./infra/sql/0013_catalog_search.sql:/docker-entrypoint-initdb.d/0013_catalog_search.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neumann -d neumann"]
       interval: 5s

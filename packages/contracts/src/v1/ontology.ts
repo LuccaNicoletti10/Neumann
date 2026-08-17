@@ -6,7 +6,7 @@
  * US20100070426 / US 9,229,966 — object modeling (tipos semânticos).
  *
  * Regra: mudança = nova ontology_version (nunca update in-place).
- * SEMÂNTICA = o que existe · CINÉTICA = o que pode acontecer (stubs até Bloco 8).
+ * SEMÂNTICA = o que existe · CINÉTICA = o que pode acontecer (Function registry = Passo 23; Actions = Passo 24).
  */
 
 /** Identificadores opacos. */
@@ -91,6 +91,11 @@ export interface ActionParameterDef {
   required?: boolean;
   /** Quando baseType = object_reference. */
   objectTypeId?: ObjectTypeId;
+  /**
+   * Shared variable name (US 8,732,574 family). Parameters with the same
+   * `variableName` are updated together when the variable is set.
+   */
+  variableName?: string;
 }
 
 /** Critério de submissão (pré-condição declarativa). */
@@ -140,9 +145,22 @@ export type ActionRule =
       sourcePrimaryKeyFromParam: string;
       targetObjectTypeId: ObjectTypeId;
       targetPrimaryKeyFromParam: string;
+    }
+  | {
+      /**
+       * Fill a document from object properties (US 9,223,773).
+       * Template is substitution-only: `{{property}}` / `{{#each list}}`.
+       * No executable code.
+       */
+      kind: 'generate_document';
+      objectTypeId: ObjectTypeId;
+      primaryKeyFromParam: string;
+      template?: string;
+      templateFromParam?: string;
+      outputProperty: PropertyTypeId;
     };
 
-/** Side effect fora do object store (writeback futuro). */
+/** Side effect fora do object store (write-back Passo 25). */
 export type ActionSideEffect =
   | { kind: 'webhook'; urlFromParam?: string; url?: string }
   | { kind: 'notification'; channel: string; messageFromParam?: string }
@@ -161,20 +179,39 @@ export interface ActionTypeDef {
   inputObjectTypeIds: ObjectTypeId[];
   description?: string;
   parameters?: Record<string, ActionParameterDef>;
+  /** Preconditions evaluated before the transaction. */
   submissionCriteria?: ActionSubmissionCriterion[];
   rules?: ActionRule[];
   sideEffects?: ActionSideEffect[];
+  /** Evaluated after rules, before write-back / SUCCEEDED. */
+  postconditions?: ActionSubmissionCriterion[];
+  /** Inverse rules if postconditions fail (saga; UnitOfWork still rolls back). */
+  compensation?: ActionRule[];
+  /** What the audit entry must contain. Defaults: include parameters + result. */
+  auditRequirements?: {
+    includeParameters?: boolean;
+    includeResult?: boolean;
+  };
   permissions?: string[];
   version?: number;
   status?: ActionTypeStatus;
+  /** When true, apply pauses in AWAITING_APPROVAL until approve(). */
+  requiresApproval?: boolean;
+  approvals?: {
+    required: boolean;
+    /** Policy the approver must hold. Requester cannot self-approve. */
+    approverPolicy?: string;
+  };
 }
 
-/** FunctionType — CINÉTICO (definição apenas; registry = Passo 23). */
+/** FunctionType — CINÉTICO (definição; implementação executável = Passo 23). */
 export interface FunctionTypeDef {
   id: FunctionTypeId;
   displayName: string;
   inputObjectTypeIds: ObjectTypeId[];
   description?: string;
+  /** Nome de invoke na API (default = id). */
+  apiName?: string;
 }
 
 /** Snapshot imutável de uma versão da ontologia. */

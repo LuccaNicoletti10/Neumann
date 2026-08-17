@@ -18,9 +18,11 @@ export type ActionExecutionStatus =
   | 'AUTHORIZED'
   | 'VALIDATED'
   | 'RUNNING'
+  | 'AWAITING_APPROVAL'
   | 'SUCCEEDED'
   | 'FAILED'
-  | 'DENIED';
+  | 'DENIED'
+  | 'REJECTED';
 
 export interface ActionValidateRequest {
   ontologyId: OntologyId;
@@ -69,6 +71,13 @@ export interface ActionExecution {
   result?: Record<string, unknown>;
   error?: string;
   auditEntryId?: string;
+  approval?: {
+    required: boolean;
+    requestedAt?: string;
+    decidedAt?: string;
+    decidedBy?: PrincipalId;
+    decision?: 'approved' | 'rejected';
+  };
 }
 
 export interface ActionExecutionClaimResult {
@@ -91,12 +100,67 @@ export interface ActionExecutionStore {
    * Concurrent claims: exactly one `claimed: true`.
    */
   claim(execution: ActionExecution): Promise<ActionExecutionClaimResult>;
+  /**
+   * Compare-and-swap status. Returns the updated row, or undefined if `from` did not match.
+   */
+  casStatus?(
+    id: ActionExecutionId,
+    from: ActionExecutionStatus,
+    to: ActionExecutionStatus,
+    patch?: Partial<ActionExecution>,
+  ): Promise<ActionExecution | undefined>;
+}
+
+/** Nested parameter node (US 8,732,574 family — parameter tree). */
+export interface ActionParameterNode {
+  name: string;
+  value: unknown;
+  type: 'primitive' | 'object_reference' | 'variable';
+  objectTypeId?: string;
+  referencedPrimaryKey?: string;
+  variableName?: string;
+  children: ActionParameterNode[];
+}
+
+export interface ActionParameterTree {
+  actionApiName: string;
+  actionTypeId: ActionTypeId;
+  nodes: ActionParameterNode[];
+}
+
+/** Ordered action steps with dependencies (US 8,429,194 / US 8,905,597). */
+export interface ActionWorkflowStep {
+  id: string;
+  actionApiName: string;
+  /** Step param → workflow param name (`$foo`) or literal. */
+  parameterBindings: Record<string, string>;
+  dependsOn?: string[];
+}
+
+export interface ActionWorkflowDef {
+  id: string;
+  displayName: string;
+  steps: ActionWorkflowStep[];
+}
+
+export interface ActionWorkflowApplyRequest {
+  ontologyId: OntologyId;
+  workflow: ActionWorkflowDef;
+  parameters: Record<string, unknown>;
+  principal: PrincipalId;
+  idempotencyKey?: string;
+  expectedObjectVersions?: Record<string, number>;
+}
+
+export interface ActionWorkflowApplyResult {
+  status: ActionExecutionStatus;
+  stepResults: ActionApplyResult[];
+  error?: string;
 }
 
 /**
  * ActionExecutor lifecycle:
- * request → authorize → validate parameters → submission criteria
- * → ontology rules → side effects → audit → result
+ * request → authorize → validate → tx → write-back → audit
  */
 export interface ActionExecutor {
   getActionType(ontologyId: OntologyId, apiName: string): ActionTypeDef | undefined;
@@ -104,4 +168,7 @@ export interface ActionExecutor {
   validate(req: ActionValidateRequest): Promise<ActionValidateResult>;
   apply(req: ActionApplyRequest): Promise<ActionApplyResult>;
   getExecution(id: ActionExecutionId): Promise<ActionExecution | undefined>;
+  approve?(id: ActionExecutionId, principal: PrincipalId): Promise<ActionApplyResult>;
+  reject?(id: ActionExecutionId, principal: PrincipalId): Promise<ActionApplyResult>;
+  parameterTree?(req: ActionValidateRequest): Promise<ActionParameterTree>;
 }

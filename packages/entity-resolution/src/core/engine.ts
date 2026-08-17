@@ -1,7 +1,8 @@
 /**
  * entity-resolution — src/core/engine.ts
  * Pipeline ER: normalização → blocking → scoring → soft clusters (Passo 20)
- * + audit / canonical / fingerprint / rank (Passo 21).
+ * + audit / canonical / fingerprint / rank (Passo 21)
+ * + gold set / metrics / review queue / feedback (Passo 22).
  *
  * US 8,554,719 / 9,501,552 / 9,846,731 / 12,229,154 / US20140280252
  * US20250165857A1 / US 12,393,406 / US20250348288A1 / US 8,788,405 / US 8,818,892
@@ -12,6 +13,7 @@ import {
   assertResolutionCriteria,
   buildGoldenClusterScoringStrategy,
   buildGoldenCriteria,
+  goldLabelFromReview,
   type CanonicalEntityId,
   type ClusterScoringStrategy,
   type EntityRecord,
@@ -29,6 +31,7 @@ import {
   type RunResolutionInput,
   type SoftCluster,
   type UnmergeInput,
+  type UpsertGoldPairInput,
 } from 'contracts';
 
 import {
@@ -39,9 +42,12 @@ import {
 import { buildSoftClusters } from './cluster.js';
 import { rankClusters as rankClustersByStrategy } from './cluster-score.js';
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
+import { calibrateCriteria } from './feedback.js';
 import { createMemoryEntityLedger } from './ledger.js';
+import { computeMetrics, predictionsFromAudit } from './metrics.js';
 import { normalizeRecord } from './normalize.js';
 import { createPgEntityLedger } from './pg-ledger.js';
+import { buildReviewQueue } from './review-queue.js';
 import { scorePair } from './scoring.js';
 import type { CreateEntityResolverOptions, EntityLedger } from './types.js';
 
@@ -59,9 +65,10 @@ export function createEntityResolver(
   const clock = opts.clock ?? createDeterministicClock();
   const nextId = opts.nextId ?? createIdGenerator();
   const ledger = createLedger({ ...opts, clock, nextId });
+  let activeCriteria: ResolutionCriteria = buildGoldenCriteria();
 
   function runResolution(input: RunResolutionInput): ResolutionResult {
-    const criteria = input.criteria ?? buildGoldenCriteria();
+    const criteria = input.criteria ?? activeCriteria;
     assertResolutionCriteria(criteria);
     clock();
 
@@ -124,7 +131,14 @@ export function createEntityResolver(
 
   return {
     getDefaultCriteria(): ResolutionCriteria {
-      return buildGoldenCriteria();
+      return {
+        ...activeCriteria,
+        linkingTerms: activeCriteria.linkingTerms.map((t) => ({ ...t })),
+        targetObjectTypeIds: activeCriteria.targetObjectTypeIds
+          ? [...activeCriteria.targetObjectTypeIds]
+          : undefined,
+        thresholds: { ...activeCriteria.thresholds },
+      };
     },
 
     runResolution,
@@ -206,6 +220,57 @@ export function createEntityResolver(
         candidates,
         strategy ?? buildGoldenClusterScoringStrategy(),
       );
+    },
+
+    upsertGoldPairs(pairs: UpsertGoldPairInput[]) {
+      return ledger.upsertGoldPairs(pairs);
+    },
+
+    getGoldSet() {
+      return ledger.getGoldSet();
+    },
+
+    async evaluateMetrics(runId?: ResolutionRunId) {
+      const gold = await ledger.getGoldSet();
+      const audit = await ledger.listMatchAudit(runId ? { runId } : undefined);
+      return computeMetrics(gold.pairs, predictionsFromAudit(audit));
+    },
+
+    async listReviewQueue(runId?: ResolutionRunId) {
+      const gold = await ledger.getGoldSet();
+      const audit = await ledger.listMatchAudit(
+        runId ? { runId, decision: 'review' } : { decision: 'review' },
+      );
+      return buildReviewQueue(audit, gold.pairs);
+    },
+
+    async submitReview(input: RecordReviewInput) {
+      const audit = await ledger.recordReview(input);
+      const label = goldLabelFromReview(input.decision);
+      if (!label) return { audit };
+      const gold = await ledger.upsertGoldPairs([
+        {
+          leftId: audit.leftId,
+          rightId: audit.rightId,
+          label,
+          labeledBy: input.reviewer,
+          note: input.note,
+        },
+      ]);
+      const goldPair = gold.pairs.find(
+        (p) =>
+          (p.leftId === audit.leftId && p.rightId === audit.rightId) ||
+          (p.leftId === audit.rightId && p.rightId === audit.leftId),
+      );
+      return { audit, goldPair };
+    },
+
+    async applyFeedback() {
+      const gold = await ledger.getGoldSet();
+      const audit = await ledger.listMatchAudit();
+      const result = calibrateCriteria(activeCriteria, gold.pairs, audit);
+      activeCriteria = result.next;
+      return result;
     },
   };
 }

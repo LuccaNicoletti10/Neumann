@@ -89,4 +89,32 @@ describe('Passo 14 gates', () => {
     const lines: string[] = [];
     expect(runDemo((m) => lines.push(m))).toBe(0);
   });
+
+  it('worker isolation: timeout terminates; require(fs) is denied', async () => {
+    const s = createExecutionSandbox({
+      isolation: 'worker',
+      timeoutMs: 200,
+      policy: { maxCpuMs: 50, allowNetwork: false, fsAllowPrefixes: [] },
+    });
+    s.registerIdentity({ subjectId: 'u1', displayName: 'U', roles: ['run'] });
+    s.registerTransform('loop', () => {
+      while (true) {
+        /* hang */
+      }
+    });
+    const t0 = Date.now();
+    const r = await s.runAsync({ identityId: 'u1', transformId: 'loop', input: {} });
+    expect(Date.now() - t0).toBeLessThan(800);
+    expect(r.ok).toBe(false);
+    expect(r.deniedReason).toBe('TIMEOUT');
+
+    s.registerTransform('fs', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('fs');
+      return 1;
+    });
+    const escape = await s.runAsync({ identityId: 'u1', transformId: 'fs', input: {} });
+    expect(escape.ok).toBe(false);
+    expect(['FS_ESCAPE', 'FORBIDDEN_API']).toContain(escape.deniedReason);
+  }, 10_000);
 });

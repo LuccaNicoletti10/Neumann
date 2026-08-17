@@ -1,0 +1,6 @@
+name: postgres
+version: 2.0.0
+quality: certified
+allowedHosts:
+  - localhost
+  - 127.0.0.1

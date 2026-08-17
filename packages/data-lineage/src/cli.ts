@@ -9,15 +9,17 @@ import { fileURLToPath } from 'node:url';
 
 import type { LineageChangeEvent } from 'contracts';
 
+import { createColumnLineageStore } from './core/column-lineage.js';
 import { createDeterministicClock, createIdGenerator } from './core/determinism.js';
 import { hashCanonical } from './core/hash.js';
 import { createLineageStore } from './core/store.js';
 
-const USAGE = `data-lineage (lineage) — PASSO 15: lineage por versão
+const USAGE = `data-lineage (lineage) — PASSO 15 + PASSO 27: lineage por versão / coluna
   US 9,996,595 / US 9,348,879 / US20140114907 / US20150012477 / US 10,027,551
 
 Uso:
   lineage demo
+  lineage columns
 `;
 
 export interface CliDeps {
@@ -133,6 +135,67 @@ export function runDemo(log: (message: string) => void = console.log): number {
   return ok ? 0 : 1;
 }
 
+export function runColumnsDemo(log: (message: string) => void = console.log): number {
+  log('== PASSO 27: lineage colunar (customers.email → enriched.customer_email) ==');
+  const cols = createColumnLineageStore();
+  cols.registerColumn({
+    versionId: 'customers-v1',
+    column: 'email',
+    classification: 'Confidential',
+  });
+  cols.registerColumn({
+    versionId: 'orders-v1',
+    column: 'amount',
+    classification: 'Unclassified',
+  });
+  const edges = cols.recordColumnMappings({
+    pipelineRunId: 'run-join-1',
+    derivationProgramId: 'xform-join-v1',
+    mappings: [
+      {
+        sources: [{ versionId: 'customers-v1', column: 'email' }],
+        target: { versionId: 'enriched-v1', column: 'customer_email' },
+      },
+      {
+        sources: [{ versionId: 'orders-v1', column: 'amount' }],
+        target: { versionId: 'enriched-v1', column: 'amount' },
+      },
+    ],
+  });
+  const emailOut = cols.effectiveColumnClassification({
+    versionId: 'enriched-v1',
+    column: 'customer_email',
+  });
+  const amountOut = cols.effectiveColumnClassification({
+    versionId: 'enriched-v1',
+    column: 'amount',
+  });
+  log(`  edges=${edges.length} customer_email=${emailOut} amount=${amountOut}`);
+
+  cols.registerColumn({
+    versionId: 'customers-v1',
+    column: 'email',
+    classification: 'Secret',
+  });
+  const affected = cols.propagateColumnClassification({
+    versionId: 'customers-v1',
+    column: 'email',
+  });
+  const after = cols.effectiveColumnClassification({
+    versionId: 'enriched-v1',
+    column: 'customer_email',
+  });
+  log(`  propagate Secret → ${affected.map((r) => r.column).join(',')} now=${after}`);
+
+  const ok =
+    emailOut === 'Confidential' &&
+    amountOut === 'Unclassified' &&
+    after === 'Secret' &&
+    affected.some((r) => r.column === 'customer_email');
+  log(ok ? '== columns ok ==' : '== columns FAIL ==');
+  return ok ? 0 : 1;
+}
+
 export async function runCommandLine(
   argv: readonly string[],
   deps: CliDeps = {},
@@ -147,6 +210,7 @@ export async function runCommandLine(
     return 0;
   }
   if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'columns') return runColumnsDemo(log);
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);
   return 1;

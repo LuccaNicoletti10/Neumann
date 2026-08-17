@@ -33,6 +33,14 @@ export interface GraphObject {
   primaryKey: string;
   properties?: Record<string, unknown>;
   deleted?: boolean;
+  /** Connector / source system that produced this object (Passo 26). */
+  sourceSystem?: string;
+  /** Inherited or assigned classification marking. */
+  classification?: string;
+  /** Provenance source ids (Passo 27 — critério de redação). */
+  provenance?: string[];
+  /** Per-property classification (column/property lineage). */
+  propertyClassifications?: Record<string, string>;
 }
 
 /** Link tipado materializado (FK cruzada / relação). */
@@ -76,6 +84,11 @@ export interface TraverseQuery {
   /** Evita ciclos (default true). */
   uniqueNodes?: boolean;
   principal?: PrincipalId;
+  /**
+   * Dissemination viewing level (Passo 26). When set, hops to objects
+   * whose classification exceeds this level are omitted.
+   */
+  viewingLevel?: string;
 }
 
 export interface TraverseResult {

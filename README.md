@@ -94,7 +94,14 @@ pnpm dev:up                       # Postgres (+ objects schema) + Jaeger + Prome
 | `ontology-registry` | Passo 17 |
 | `object-platform` | Passo 18 + Object/Link repositories |
 | `knowledge-graph` | Passo 19 |
-| `entity-resolution` | Passo 20 |
+| `query-api` | Passo 29 — Query API + índice ACL |
+| `explore-api` | Passo 30 — exploração genérica (grafo/blocos) |
+| `federation` | Passo 31 — pushdown + TemporaryObject (T1.5) |
+| `edge-control` | Passo 32 — edge subscribe → CanonicalEvent + baseline/anomalia |
+| `replication` | Passo 33 — replicação incremental / cross-ontology / cross-ACL |
+| `offline-sync` | Passo 34 — offline + deconflição (snapshot autorizado, 3+ réplicas) |
+| `entity-resolution` | Passos 20–22 |
+| `function-registry` | Passo 23 |
 | `object-set` | ObjectSet algebra |
 | `action-engine` | Generic ActionExecutor |
 | `platform-api` | Foundry-like `/api/v2` |
@@ -104,7 +111,13 @@ pnpm dev:up                       # Postgres (+ objects schema) + Jaeger + Prome
 ## Validate
 
 ```bash
-pnpm onto -- demo && pnpm obj -- demo && pnpm kg -- demo && pnpm er -- demo
+pnpm onto -- demo && pnpm obj -- demo && pnpm kg -- demo && pnpm er -- demo && pnpm fn -- demo
+pnpm search -- demo
+pnpm explore -- demo
+pnpm fed -- demo
+pnpm edge -- demo
+pnpm repl -- demo
+pnpm offline -- demo
 pnpm --filter object-set test
 pnpm --filter action-engine test
 pnpm --filter platform-api test

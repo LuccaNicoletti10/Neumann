@@ -1,0 +1,38 @@
+{
+  "name": "replication",
+  "version": "1.0.0",
+  "description": "Replication protocol: incremental chunks, cross-ontology map, cross-ACL redaction, ACL-as-mutation (US 8,886,601 / 9,785,694 / 9,330,157 / 10,061,828 / 8,527,461 / 8,782,004 / 9,715,518 / 10,089,345 / 10,621,198 / 8,838,538). Gate Passo 33.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "replication": "./dist/cli.js",
+    "repl": "./dist/cli.js"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

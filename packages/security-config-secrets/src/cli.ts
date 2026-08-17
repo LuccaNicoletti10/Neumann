@@ -12,7 +12,7 @@
  * O gate do CI e o scan-deps: sai com exit code 1 quando a politica falha.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { DependencyInventory } from './security/dependency-inventory.js';
 import { AdvisoryDatabase, severityLevels, type Severity } from './security/advisory-db.js';
 import { VulnerabilityScanner } from './security/scanner.js';
@@ -22,7 +22,8 @@ import { SecurityReport } from './security/report.js';
 import { ConfigServer } from './env-config/config-service.js';
 import { ChangeComputer, type ScalarValue } from './env-config/change-computer.js';
 import { GuiGenerator } from './env-config/gui-generator.js';
-import { AgeLikeCrypto } from './secrets/age-crypto.js';
+import { AgeBackend } from './secrets/age-backend.js';
+import { migrateSecretsFile } from './secrets/migrate.js';
 import { SecretsManager } from './secrets/secrets-manager.js';
 import { RepoLayoutGuard } from './secrets/layout-guard.js';
 import { startServer } from './server/index.js';
@@ -202,9 +203,23 @@ export async function main(argv: string[]): Promise<number> {
     case 'secrets': {
       const [sub] = args.positional;
       if (sub === 'keygen') {
-        const kp = AgeLikeCrypto.generateKeyPair();
+        const kp = await AgeBackend.generateKeyPair();
         console.log(`public: ${kp.publicKey}`);
         console.log(`secret: ${kp.secretKey}  # guarde fora do repo (AGE_SECRET_KEY)`);
+        return 0;
+      }
+      if (sub === 'migrate') {
+        const [env] = args.positional.slice(1);
+        if (!env) throw new Error('uso: secrets migrate <env> --legacy-key <AGE-LIKE-SECRET>');
+        const legacy = requireFlag(args, 'legacy-key');
+        const identity = ageKeyFromEnv();
+        const file = join(root, 'secrets', `${env}.enc`);
+        const result = await migrateSecretsFile({
+          filePath: file,
+          legacySecretKey: legacy,
+          identity,
+        });
+        console.log(`migrate ${env}: ${result}`);
         return 0;
       }
       const manager = new SecretsManager(root, ageKeyFromEnv(), []);
@@ -212,23 +227,23 @@ export async function main(argv: string[]): Promise<number> {
         const [env, key] = args.positional.slice(1);
         if (!env || !key) throw new Error('uso: secrets set <env> <key> [--value v | stdin]');
         const value = flagStr(args, 'value') ?? (await readStdin());
-        manager.set(env, key, value.replace(/\n$/, ''));
+        await manager.set(env, key, value.replace(/\n$/, ''));
         console.log(`secret gravado (cifrado): ${env}/${key}`);
         return 0;
       }
       if (sub === 'get') {
         const [env, key] = args.positional.slice(1);
         if (!env || !key) throw new Error('uso: secrets get <env> <key>');
-        console.log(manager.get(env, key));
+        console.log(await manager.get(env, key));
         return 0;
       }
       if (sub === 'list-keys') {
         const [env] = args.positional.slice(1);
         if (!env) throw new Error('uso: secrets list-keys <env>');
-        for (const k of manager.listKeys(env)) console.log(k);
+        for (const k of await manager.listKeys(env)) console.log(k);
         return 0;
       }
-      throw new Error('uso: secrets keygen|set|get|list-keys ...');
+      throw new Error('uso: secrets keygen|set|get|list-keys|migrate ...');
     }
 
     case 'guard': {

@@ -27,13 +27,17 @@
     "api-errors": "workspace:*",
     "contracts": "workspace:*",
     "fastify": "^4.28.0",
+    "jose": "^5.9.6",
     "knowledge-graph": "workspace:*",
     "event-bus": "workspace:*",
+    "entity-resolution": "workspace:*",
+    "function-registry": "workspace:*",
     "object-platform": "workspace:*",
     "object-set": "workspace:*",
     "ontology-registry": "workspace:*",
     "pagination": "workspace:*",
-    "policy-engine": "workspace:*"
+    "policy-engine": "workspace:*",
+    "explore-api": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "20.14.15",

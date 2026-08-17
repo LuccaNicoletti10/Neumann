@@ -1,36 +1,37 @@
 /**
  * Passo 3 / SOPS+age (gestao de secrets):
  * SecretsManager — secrets por ambiente em `secrets/<env>.enc`, cifrados
- * com AgeLikeCrypto. Operacoes set/get/list-keys (list NUNCA imprime
- * valores). O decrypt acontece em memoria, sob demanda, via interface
- * SecretProvider. Nenhum valor em claro toca o disco ou o log.
+ * com age real (age-encryption.org/v1). Operacoes set/get/list-keys (list NUNCA
+ * imprime valores). O decrypt acontece em memoria, sob demanda.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AgeLikeCrypto } from './age-crypto.js';
+
+import { AgeBackend } from './age-backend.js';
 
 /** Interface de acesso sob demanda: decifra apenas a chave pedida. */
 export interface SecretProvider {
-  getSecret(key: string): string;
-  has(key: string): boolean;
-  keys(): string[];
+  getSecret(key: string): Promise<string>;
+  has(key: string): Promise<boolean>;
+  keys(): Promise<string[]>;
 }
 
 export class SecretsManager {
   /**
    * @param rootDir raiz do layout do repo (secrets ficam em rootDir/secrets).
-   * @param secretKey chave secreta age-like usada para decifrar (em memoria).
-   * @param recipients chaves publicas age-like para as quais cifrar.
+   * @param secretKey identidade age (AGE-SECRET-KEY-1...).
+   * @param recipients chaves publicas age1... para as quais cifrar.
    */
   constructor(
     private readonly rootDir: string,
     private readonly secretKey: string,
-    private readonly recipients: string[],
-  ) {
-    if (recipients.length === 0) {
-      // Deriva o destinatario da propria chave secreta por padrao.
-      this.recipients = [AgeLikeCrypto.publicKeyFromSecret(secretKey)];
-    }
+    private recipients: string[],
+  ) {}
+
+  private async resolvedRecipients(): Promise<string[]> {
+    if (this.recipients.length > 0) return this.recipients;
+    this.recipients = [await AgeBackend.publicKeyFromSecret(this.secretKey)];
+    return this.recipients;
   }
 
   private get secretsDir(): string {
@@ -42,61 +43,59 @@ export class SecretsManager {
     return join(this.secretsDir, `${env}.enc`);
   }
 
-  /** Le e decifra o mapa de secrets do ambiente (em memoria). */
-  private loadMap(env: string): Map<string, string> {
+  private async loadMap(env: string): Promise<Map<string, string>> {
     const file = this.fileFor(env);
     if (!existsSync(file)) return new Map();
-    const plain = AgeLikeCrypto.decrypt(readFileSync(file, 'utf8'), this.secretKey);
+    const plain = await AgeBackend.decrypt(readFileSync(file, 'utf8'), this.secretKey);
     const obj = JSON.parse(plain.toString('utf8')) as Record<string, string>;
     return new Map(Object.entries(obj));
   }
 
-  private saveMap(env: string, map: Map<string, string>): void {
+  private async saveMap(env: string, map: Map<string, string>): Promise<void> {
     mkdirSync(this.secretsDir, { recursive: true });
     const obj = Object.fromEntries(map);
-    const encrypted = AgeLikeCrypto.encrypt(JSON.stringify(obj), this.recipients);
-    writeFileSync(this.fileFor(env), encrypted, 'utf8');
+    const encrypted = await AgeBackend.encrypt(JSON.stringify(obj), await this.resolvedRecipients());
+    const dest = this.fileFor(env);
+    const tmp = `${dest}.tmp`;
+    writeFileSync(tmp, encrypted, 'utf8');
+    renameSync(tmp, dest);
   }
 
-  set(env: string, key: string, value: string): void {
+  async set(env: string, key: string, value: string): Promise<void> {
     if (!key) throw new Error('chave de secret vazia');
-    const map = this.loadMap(env);
+    const map = await this.loadMap(env);
     map.set(key, value);
-    this.saveMap(env, map);
+    await this.saveMap(env, map);
   }
 
-  /** Retorna as chaves (nunca os valores) do ambiente. */
-  listKeys(env: string): string[] {
-    return [...this.loadMap(env).keys()].sort();
+  async listKeys(env: string): Promise<string[]> {
+    return [...(await this.loadMap(env)).keys()].sort();
   }
 
-  /** Provider com decrypt em memoria sob demanda. */
-  provider(env: string): SecretProvider {
+  async provider(env: string): Promise<SecretProvider> {
     const manager = this;
-    // O mapa decifrado vive apenas nesta closure, em memoria.
     let cache: Map<string, string> | null = null;
-    const load = (): Map<string, string> => {
-      cache ??= manager.loadMap(env);
+    const load = async (): Promise<Map<string, string>> => {
+      cache ??= await manager.loadMap(env);
       return cache;
     };
     return {
-      getSecret(key: string): string {
-        const v = load().get(key);
+      async getSecret(key: string): Promise<string> {
+        const v = (await load()).get(key);
         if (v === undefined) throw new Error(`secret inexistente: ${env}/${key}`);
         return v;
       },
-      has(key: string): boolean {
-        return load().has(key);
+      async has(key: string): Promise<boolean> {
+        return (await load()).has(key);
       },
-      keys(): string[] {
-        return [...load().keys()].sort();
+      async keys(): Promise<string[]> {
+        return [...(await load()).keys()].sort();
       },
     };
   }
 
-  /** Atalho: getSecret sem criar o provider. */
-  get(env: string, key: string): string {
-    return this.provider(env).getSecret(key);
+  async get(env: string, key: string): Promise<string> {
+    return (await this.provider(env)).getSecret(key);
   }
 
   listEnvs(): string[] {

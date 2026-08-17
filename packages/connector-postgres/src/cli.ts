@@ -12,6 +12,7 @@ import {
   createIdGenerator,
   createMemoryCheckpointStore,
   runSnapshot,
+  asConnectorV2,
 } from 'connector-sdk';
 import type { ObjectRef } from 'contracts';
 
@@ -26,6 +27,8 @@ const USAGE = `connector-postgres — snapshot + CDC + checkpoint (Passo 6 / T1.
 Uso:
   connector-postgres demo
   connector-postgres gate-t1.3 [--rows <n>] [--abort <n>]
+
+CONNECTOR_PROTOCOL=v2 usa SPEC/CHECK/DISCOVER/READ no demo (v1 continua o default).
 `;
 
 export interface CliDeps {
@@ -96,6 +99,35 @@ async function runDemo(log: (message: string) => void): Promise<number> {
   return 0;
 }
 
+async function runDemoV2(log: (message: string) => void): Promise<number> {
+  const connector = createPostgresConnector({
+    connectorId: 'pg-demo',
+    sourceSystem: 'crm',
+    tables: [{ name: 'people', primaryKey: 'id', columns: PEOPLE_COLUMNS }],
+    client: createMemorySqlClient(seedPeople(5)),
+    pageSize: 2,
+    clock: createFixedClock('2024-06-01T00:00:00.000Z'),
+    nextId: createIdGenerator(),
+  });
+  const v2 = asConnectorV2(connector, '2.0.0');
+  const spec = await v2.spec();
+  log(`== v2 spec ${spec.connectorId}@${spec.version} ==`);
+  const check = await v2.check();
+  log(`check ok=${check.ok}`);
+  for (const s of await v2.discover()) log(`  stream ${s.sourceSystem}.${s.name}`);
+  let records = 0;
+  for await (const msg of v2.read({ fullRefresh: true })) {
+    if (msg.type === 'RECORD') records += 1;
+    if (msg.type === 'ERROR') {
+      log(`error ${msg.message}`);
+      return 1;
+    }
+  }
+  log(`read records=${records}`);
+  log('ok');
+  return check.ok && records === 5 ? 0 : 1;
+}
+
 /**
  * Gate T1.3: seed N rows; abort após A eventos; reinicia com checkpoint; sem dupes/skips.
  */
@@ -164,12 +196,36 @@ export async function runCommandLine(
     log(USAGE);
     return cmd === undefined ? 1 : 0;
   }
-  if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'demo') {
+    if (process.env.CONNECTOR_PROTOCOL === 'v2') return runDemoV2(log);
+    return runDemo(log);
+  }
   if (cmd === 'gate-t1.3') {
     const rows = Number(flagValue(args, '--rows') ?? '15000');
     const abortAfter = Number(flagValue(args, '--abort') ?? '10000');
     const result = await runGateT13({ rows, abortAfter, log });
-    return result.ok ? 0 : 1;
+    if (!result.ok) return 1;
+    if (process.env.CONNECTOR_PROTOCOL === 'v2') {
+      const v2 = asConnectorV2(
+        createPostgresConnector({
+          connectorId: 'pg-t13',
+          sourceSystem: 'crm',
+          tables: [{ name: 'people', primaryKey: 'id', columns: PEOPLE_COLUMNS }],
+          client: createMemorySqlClient(seedPeople(rows)),
+          pageSize: 1000,
+          clock: createFixedClock('2024-06-01T00:00:00.000Z'),
+          nextId: createIdGenerator(),
+        }),
+        '2.0.0',
+      );
+      let n = 0;
+      for await (const msg of v2.read({ fullRefresh: true })) {
+        if (msg.type === 'RECORD') n += 1;
+      }
+      log(`  v2 full-refresh records=${n}`);
+      if (n !== rows) return 1;
+    }
+    return 0;
   }
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);

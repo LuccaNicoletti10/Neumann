@@ -35,7 +35,7 @@
  *   })
  */
 
-import type { AuthorizeRequest, AuthorizeResult } from 'contracts';
+import { canViewAtLevel, type AuthorizeRequest, type AuthorizeResult } from 'contracts';
 
 export type PolicyOp = 'read' | 'modify';
 
@@ -57,6 +57,11 @@ export interface OntologyAuthorizerConfig {
   grants: OntologyGrant[];
   /** Papel implícito de todo principal autenticado (opcional). */
   everyoneRole?: string;
+  /**
+   * principal → max classification (Passo 26). Ausente = sem gate de classificação.
+   * Authorize com context.classification deny se marking > max do principal.
+   */
+  maxClassification?: Record<string, string>;
 }
 
 /**
@@ -147,8 +152,20 @@ export function createOntologyAuthorizer(
     principal: string,
     resource: string,
     operation: string,
+    classification?: string,
   ): AuthorizeResult {
     const { allow, reason } = decide(principal, resource, operation);
+    if (allow && classification && config.maxClassification) {
+      const max = config.maxClassification[principal];
+      if (max && !canViewAtLevel(classification, max)) {
+        return {
+          decision: 'deny',
+          principalEpids: rolesOf(principal),
+          resourceEpid: resource,
+          reason: `classification "${classification}" exceeds max "${max}"`,
+        };
+      }
+    }
     return {
       decision: allow ? 'allow' : 'deny',
       principalEpids: rolesOf(principal),
@@ -159,7 +176,12 @@ export function createOntologyAuthorizer(
 
   return {
     authorize(req: AuthorizeRequest): AuthorizeResult {
-      return toResult(req.principal, String(req.resource), String(req.operation));
+      return toResult(
+        req.principal,
+        String(req.resource),
+        String(req.operation),
+        req.context?.classification,
+      );
     },
 
     authorizeRead(principal, objectTypeId) {
@@ -202,9 +224,14 @@ export function createOntologyAuthorizer(
     },
 
     filterReadable(principal, records) {
-      return records.filter((r) =>
-        decide(principal, `object:${r.objectTypeId}`, 'read').allow,
-      );
+      const max = config.maxClassification?.[principal];
+      return records.filter((r) => {
+        if (!decide(principal, `object:${r.objectTypeId}`, 'read').allow) return false;
+        if (!max) return true;
+        const marking = (r as { classification?: string }).classification;
+        if (!marking) return true;
+        return canViewAtLevel(marking, max);
+      });
     },
   };
 }

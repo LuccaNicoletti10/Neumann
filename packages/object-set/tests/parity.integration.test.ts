@@ -333,4 +333,49 @@ describe.skipIf(!db)('gate:objectset-parity', () => {
     );
     expect(pgAgg).toEqual(memAgg);
   });
+
+  it('mixed number + string + absent aggregations match memory (null-safe)', async () => {
+    if (!db) return;
+    const ontologyId = 'onto-mixed-agg';
+    const clock = createDeterministicClock();
+    const nextId = createIdGenerator();
+    const memObjects = createMemoryObjectRepository({ clock, nextId });
+    const memLinks = createMemoryLinkRepository({ clock, nextId });
+    const pgObjects = createPgObjectRepository({ sql: db.sql });
+
+    const rows = [
+      { pk: 'n1', properties: { mixed: 10 } },
+      { pk: 'n2', properties: { mixed: 20 } },
+      { pk: 's1', properties: { mixed: 'not-a-number' } },
+      { pk: 's2', properties: { mixed: '12.5' } },
+      { pk: 'a1', properties: {} },
+    ];
+    for (const row of rows) {
+      const rec = {
+        ontologyId,
+        objectTypeId: 'ot.item',
+        primaryKey: row.pk,
+        properties: row.properties,
+      };
+      await memObjects.create(rec);
+      await pgObjects.create(rec);
+    }
+
+    const memDeps = { ontologyId, objects: memObjects, links: memLinks };
+    const pgDeps = { sql: db.sql, ontologyId };
+    const objectSet: ObjectSet = { type: 'BASE', objectType: 'ot.item' };
+    const aggregations = [
+      { kind: 'sum' as const, property: 'mixed', name: 'sumM' },
+      { kind: 'min' as const, property: 'mixed', name: 'minM' },
+      { kind: 'max' as const, property: 'mixed', name: 'maxM' },
+      { kind: 'avg' as const, property: 'mixed', name: 'avgM' },
+    ];
+    const memAgg = await aggregateObjects({ objectSet, aggregations }, memDeps);
+    const pgAgg = await aggregateObjectsPg({ objectSet, aggregations }, pgDeps);
+    expect(pgAgg).toEqual(memAgg);
+    expect(memAgg.sumM).toBe(30);
+    expect(memAgg.minM).toBe(10);
+    expect(memAgg.maxM).toBe(20);
+    expect(memAgg.avgM).toBe(15);
+  });
 });

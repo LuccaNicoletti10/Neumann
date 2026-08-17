@@ -10,16 +10,17 @@ Lineage por versão: toda `pipeline_run` grava `input_versions[] → output_vers
 - Nós compostos (dataset → sub-entradas de versão) para visualização **serializada** (sem GUI)
 - Dirty bit + propagação de invalidação
 - Notificação mínima via callback `onChange`
+- Lineage colunar (Passo 27): `customers.email` Confidential → `enriched.customer_email` herda
 
 ## Fora deste passo
 
 - Policy / EPID / `authorize()` → Passo 16
-- Lineage colunar → Passo 27
 - Spark/MapReduce / GUI
 
 ## Uso
 
 ```bash
 pnpm lineage -- demo
+pnpm lineage -- columns
 pnpm --filter data-lineage test
 ```

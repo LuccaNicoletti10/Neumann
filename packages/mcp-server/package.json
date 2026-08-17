@@ -1,0 +1,36 @@
+{
+  "name": "mcp-server",
+  "version": "1.0.0",
+  "description": "MCP tools over Neumann platform-api (HTTP).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "neumann-mcp": "./dist/stdio.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/stdio.ts",
+    "http": "tsx src/http.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.17.5",
+    "contracts": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

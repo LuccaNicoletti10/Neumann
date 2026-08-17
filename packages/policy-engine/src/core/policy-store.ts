@@ -1,0 +1,113 @@
+/**
+ * policy-engine — src/core/policy-store.ts
+ * Durable backing for grants / nodes / EPID tuples. Memory is the test default.
+ */
+
+import type { Epid, PolicyNode, PolicyNodeId, PrincipalId } from 'contracts';
+
+export interface PolicyEpidTuple {
+  epid: Epid;
+  policy: string;
+  parentId: PolicyNodeId | null;
+}
+
+export interface PolicySnapshot {
+  grants: Array<{ principal: PrincipalId; policy: string }>;
+  nodes: PolicyNode[];
+  epids: PolicyEpidTuple[];
+  generation: number;
+}
+
+export interface PolicyStore {
+  getGrants(principal: PrincipalId): Promise<Set<string>>;
+  listNodes(): Promise<PolicyNode[]>;
+  getEpid(policy: string, parentId: PolicyNodeId | null): Promise<Epid | undefined>;
+  putEpid(policy: string, parentId: PolicyNodeId | null, epid: Epid): Promise<void>;
+  grant(principal: PrincipalId, policy: string): Promise<void>;
+  revoke(principal: PrincipalId, policy: string): Promise<void>;
+  createNode(node: PolicyNode): Promise<void>;
+  updateNode(node: PolicyNode): Promise<void>;
+  snapshot(): Promise<PolicySnapshot>;
+  bumpGeneration(): Promise<number>;
+  getGeneration(): Promise<number>;
+}
+
+const ROOT = 'ROOT';
+
+function parentKey(parentId: PolicyNodeId | null): string {
+  return parentId ?? ROOT;
+}
+
+export function createMemoryPolicyStore(initial?: PolicySnapshot): PolicyStore {
+  const grants = new Map<PrincipalId, Set<string>>();
+  const nodes = new Map<PolicyNodeId, PolicyNode>();
+  const epids = new Map<string, PolicyEpidTuple>();
+  let generation = initial?.generation ?? 0;
+
+  if (initial) {
+    for (const g of initial.grants) {
+      let set = grants.get(g.principal);
+      if (!set) {
+        set = new Set();
+        grants.set(g.principal, set);
+      }
+      set.add(g.policy);
+    }
+    for (const n of initial.nodes) nodes.set(n.id, { ...n });
+    for (const t of initial.epids) {
+      epids.set(`${t.policy}::${parentKey(t.parentId)}`, { ...t });
+    }
+  }
+
+  return {
+    async getGrants(principal) {
+      return new Set(grants.get(principal) ?? []);
+    },
+    async listNodes() {
+      return [...nodes.values()].map((n) => ({ ...n }));
+    },
+    async getEpid(policy, parentId) {
+      return epids.get(`${policy}::${parentKey(parentId)}`)?.epid;
+    },
+    async putEpid(policy, parentId, epid) {
+      epids.set(`${policy}::${parentKey(parentId)}`, { epid, policy, parentId });
+    },
+    async grant(principal, policy) {
+      let set = grants.get(principal);
+      if (!set) {
+        set = new Set();
+        grants.set(principal, set);
+      }
+      set.add(policy);
+    },
+    async revoke(principal, policy) {
+      grants.get(principal)?.delete(policy);
+    },
+    async createNode(node) {
+      if (nodes.has(node.id)) throw new Error(`nó já existe: ${node.id}`);
+      nodes.set(node.id, { ...node });
+    },
+    async updateNode(node) {
+      nodes.set(node.id, { ...node });
+    },
+    async snapshot() {
+      const grantRows: PolicySnapshot['grants'] = [];
+      for (const [principal, set] of grants) {
+        for (const policy of set) grantRows.push({ principal, policy });
+      }
+      return {
+        grants: grantRows,
+        nodes: [...nodes.values()].map((n) => ({ ...n })),
+        epids: [...epids.values()].map((t) => ({ ...t })),
+        generation,
+      };
+    },
+    async bumpGeneration() {
+      generation += 1;
+      return generation;
+    },
+    async getGeneration() {
+      return generation;
+    },
+  };
+}

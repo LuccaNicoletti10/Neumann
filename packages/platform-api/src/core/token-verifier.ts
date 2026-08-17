@@ -8,9 +8,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export class AuthenticationError extends Error {
   readonly errorCode = 'UNAUTHENTICATED';
-  constructor(message: string) {
+  readonly statusCode: number;
+  constructor(message: string, statusCode = 401) {
     super(message);
     this.name = 'AuthenticationError';
+    this.statusCode = statusCode;
   }
 }
 
@@ -75,6 +77,13 @@ export function signDevToken(opts: SignDevTokenOptions): string {
 }
 
 export function createHmacTokenVerifier(
+  opts: CreateHmacTokenVerifierOptions,
+): TokenVerifier {
+  return createHs256Verifier(opts);
+}
+
+/** Current HS256 verifier, renamed for IdentityProvider composition. */
+export function createHs256Verifier(
   opts: CreateHmacTokenVerifierOptions,
 ): TokenVerifier {
   const tolerance = opts.clockToleranceSec ?? 0;

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -17,7 +17,9 @@ import {
   VersionConflictError,
 } from '../src/env-config/config-service.js';
 import { GuiGenerator } from '../src/env-config/gui-generator.js';
-import { AgeLikeCrypto } from '../src/secrets/age-crypto.js';
+import { AgeLikeCrypto } from '../src/secrets/legacy/age-crypto-legacy.js';
+import { AgeBackend } from '../src/secrets/age-backend.js';
+import { migrateSecretsFile } from '../src/secrets/migrate.js';
 import { SecretsManager } from '../src/secrets/secrets-manager.js';
 import { RepoLayoutGuard } from '../src/secrets/layout-guard.js';
 import { main } from '../src/cli.js';
@@ -303,7 +305,7 @@ describe('GuiGenerator', () => {
   });
 });
 
-describe('AgeLikeCrypto', () => {
+describe('AgeLikeCrypto (legacy)', () => {
   it('encrypt/decrypt roundtrip', () => {
     const kp = AgeLikeCrypto.generateKeyPair();
     const plaintext = 'secret payload for testing';
@@ -325,28 +327,90 @@ describe('AgeLikeCrypto', () => {
   });
 });
 
+describe('AgeBackend', () => {
+  it('round-trip age encrypt/decrypt', async () => {
+    const kp = await AgeBackend.generateKeyPair();
+    const encrypted = await AgeBackend.encrypt('hello age', [kp.publicKey]);
+    const decrypted = await AgeBackend.decrypt(encrypted, kp.secretKey);
+    expect(decrypted.toString('utf8')).toBe('hello age');
+  });
+
+  it.skipIf(!process.env.AGE_BIN && !existsSync('/opt/homebrew/bin/age') && !existsSync('/usr/local/bin/age'))(
+    'interop: decrypt with official age CLI',
+    async () => {
+      const { execFileSync } = await import('node:child_process');
+      const kp = await AgeBackend.generateKeyPair();
+      const encrypted = await AgeBackend.encrypt('cli-interop', [kp.publicKey]);
+      const dir = mkdtempSync(join(tmpdir(), 'age-interop-'));
+      const ident = join(dir, 'key.txt');
+      const payload = join(dir, 'secret.age');
+      writeFileSync(ident, kp.secretKey);
+      writeFileSync(payload, encrypted);
+      try {
+        const out = execFileSync('age', ['-d', '-i', ident, payload], { encoding: 'utf8' });
+        expect(out).toBe('cli-interop');
+      } catch {
+        // binary present but format mismatch — still a skip-level concern
+        throw new Error('age CLI failed to decrypt library ciphertext');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe('secrets migrate', () => {
+  it('legacy fixture → age payload; corrupt file is left intact', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'age-mig-'));
+    const legacyKp = AgeLikeCrypto.generateKeyPair();
+    const ageKp = await AgeBackend.generateKeyPair();
+    const file = join(dir, 'prod.enc');
+    writeFileSync(file, AgeLikeCrypto.encrypt(JSON.stringify({ K: 'v' }), [legacyKp.publicKey]));
+    const result = await migrateSecretsFile({
+      filePath: file,
+      legacySecretKey: legacyKp.secretKey,
+      identity: ageKp.secretKey,
+    });
+    expect(result).toBe('migrated');
+    const plain = await AgeBackend.decrypt(readFileSync(file, 'utf8'), ageKp.secretKey);
+    expect(JSON.parse(plain.toString('utf8'))).toEqual({ K: 'v' });
+
+    const bad = join(dir, 'bad.enc');
+    writeFileSync(bad, 'not-a-payload');
+    await expect(
+      migrateSecretsFile({
+        filePath: bad,
+        legacySecretKey: legacyKp.secretKey,
+        identity: ageKp.secretKey,
+      }),
+    ).rejects.toThrow(/intacto|legado/i);
+    expect(readFileSync(bad, 'utf8')).toBe('not-a-payload');
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('SecretsManager', () => {
   let tmp: string;
   let secretKey: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = mkdtempSync(join(tmpdir(), 'passo03-sec-'));
-    secretKey = AgeLikeCrypto.generateKeyPair().secretKey;
+    secretKey = (await AgeBackend.generateKeyPair()).secretKey;
   });
 
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('set/get/listKeys — listKeys never returns values', () => {
+  it('set/get/listKeys — listKeys never returns values', async () => {
     const manager = new SecretsManager(tmp, secretKey, []);
-    manager.set('prod', 'DB_PASSWORD', 'hunter2');
-    manager.set('prod', 'API_TOKEN', 'tok_abc123');
+    await manager.set('prod', 'DB_PASSWORD', 'hunter2');
+    await manager.set('prod', 'API_TOKEN', 'tok_abc123');
 
-    expect(manager.get('prod', 'DB_PASSWORD')).toBe('hunter2');
-    expect(manager.get('prod', 'API_TOKEN')).toBe('tok_abc123');
+    expect(await manager.get('prod', 'DB_PASSWORD')).toBe('hunter2');
+    expect(await manager.get('prod', 'API_TOKEN')).toBe('tok_abc123');
 
-    const keys = manager.listKeys('prod');
+    const keys = await manager.listKeys('prod');
     expect(keys).toEqual(['API_TOKEN', 'DB_PASSWORD']);
     expect(keys).not.toContain('hunter2');
     expect(keys).not.toContain('tok_abc123');

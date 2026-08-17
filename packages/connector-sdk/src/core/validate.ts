@@ -10,6 +10,7 @@ const KNOWN: ReadonlySet<Capability> = new Set([
   'cdc',
   'pushdown',
   'subscribe',
+  'writeback',
 ]);
 
 export interface ConnectorValidationResult {
@@ -41,6 +42,15 @@ export function validateConnectorShape(connector: Connector): ConnectorValidatio
     if (typeof connector[m] !== 'function') {
       errors.push(`método ausente: ${m}`);
     }
+  }
+  if (connector.capabilities?.includes('writeback') && typeof connector.writeBack !== 'function') {
+    errors.push('capability writeback exige método writeBack');
+  }
+  if (connector.capabilities?.includes('pushdown') && typeof connector.federatedQuery !== 'function') {
+    errors.push('capability pushdown exige método federatedQuery');
+  }
+  if (connector.capabilities?.includes('subscribe') && typeof connector.subscribe !== 'function') {
+    errors.push('capability subscribe exige método subscribe');
   }
   return { ok: errors.length === 0, errors };
 }

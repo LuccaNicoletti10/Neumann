@@ -289,6 +289,18 @@ export function compileResolve(def: ObjectSet, ctx: CompileCtx): SqlFragment {
   };
 }
 
+/** JSONB numeric that ignores non-numeric values (parity with the memory evaluator). */
+export function numericOrNull(prop: string, ctx: CompileCtx): string {
+  const p = bind(ctx, prop);
+  // jsonb_typeof distinguishes JSON numbers from numeric-looking strings so SQL
+  // matches memory (`typeof v === 'number'`). The regex covers untyped text that
+  // is a JSON string of a number AND would otherwise throw 22P02 on ::numeric;
+  // those strings are still ignored here because memory ignores them — only
+  // jsonb number is aggregated. Missing keys and JSON null become NULL (skipped
+  // by SUM/MIN/MAX/AVG).
+  return `(CASE WHEN jsonb_typeof(o.properties->${p}) = 'number' THEN (o.properties->>${p})::numeric ELSE NULL END)`;
+}
+
 export function compileAggregate(
   def: ObjectSet,
   aggregations: ObjectSetAggregation[],
@@ -314,19 +326,19 @@ export function compileAggregate(
         return `count(*)::bigint AS ${alias}`;
       case 'sum':
         return a.property
-          ? `sum((o.properties->>${bind(ctx, a.property)})::numeric) AS ${alias}`
+          ? `sum(${numericOrNull(a.property, ctx)}) AS ${alias}`
           : `NULL::numeric AS ${alias}`;
       case 'min':
         return a.property
-          ? `min((o.properties->>${bind(ctx, a.property)})::numeric) AS ${alias}`
+          ? `min(${numericOrNull(a.property, ctx)}) AS ${alias}`
           : `NULL::numeric AS ${alias}`;
       case 'max':
         return a.property
-          ? `max((o.properties->>${bind(ctx, a.property)})::numeric) AS ${alias}`
+          ? `max(${numericOrNull(a.property, ctx)}) AS ${alias}`
           : `NULL::numeric AS ${alias}`;
       case 'avg':
         return a.property
-          ? `avg((o.properties->>${bind(ctx, a.property)})::numeric) AS ${alias}`
+          ? `avg(${numericOrNull(a.property, ctx)}) AS ${alias}`
           : `NULL::numeric AS ${alias}`;
     }
   });

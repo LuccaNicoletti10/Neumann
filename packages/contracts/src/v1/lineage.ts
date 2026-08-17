@@ -58,6 +58,11 @@ export interface LineageVersionNode {
   createdBy: string;
   /** Se RAW sem run; se DERIVED, aponta para o PipelineRun que a criou. */
   pipelineRunId?: PipelineRunId;
+  /**
+   * Classification marking (Passo 26). DERIVED inherits max(inputs).
+   * Default when omitted: Unclassified.
+   */
+  classification?: string;
 }
 
 /** Nó composto: um dataset agrupando sub-entradas (versões). */
@@ -89,7 +94,7 @@ export interface LineageCompletenessReport {
 
 /** Evento de mudança de lineage (US20150012477 — notificação mínima). */
 export interface LineageChangeEvent {
-  kind: 'run_recorded' | 'invalidated' | 'propagated_invalid';
+  kind: 'run_recorded' | 'invalidated' | 'propagated_invalid' | 'propagated_classification';
   versionId: VersionId;
   at: string;
   detail?: string;
@@ -104,6 +109,8 @@ export interface RegisterRawVersionInput {
   contentHash: string;
   createdAt?: string;
   createdBy?: string;
+  /** Source marking; omitted → Unclassified. */
+  classification?: string;
 }
 
 /** Input para gravar um pipeline_run (derivação). */
@@ -140,6 +147,13 @@ export interface LineageStore {
   flagInvalid(versionId: VersionId, reason: string): void;
   /** Propaga invalidação visual/lógica aos descendentes. */
   propagateInvalid(versionId: VersionId): VersionId[];
+  /** Raise (or set) a version's classification marking. */
+  flagClassification(versionId: VersionId, classification: string): void;
+  /**
+   * Descendants inherit max(own, upstream). Monotonic raise.
+   * A confidencial → transform(A) herda → objeto herda.
+   */
+  propagateClassification(versionId: VersionId): VersionId[];
   completeness(): LineageCompletenessReport;
   listRuns(): PipelineRun[];
   listEdges(): LineageEdge[];

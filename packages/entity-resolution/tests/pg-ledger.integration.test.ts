@@ -48,6 +48,15 @@ describe.skipIf(!db)('PgEntityLedger durability', () => {
       principal: 'analyst.1',
       reason: 'false merge',
     });
+    const gold = await er.upsertGoldPairs([
+      {
+        leftId: 'rec-A',
+        rightId: 'rec-B',
+        label: 'MATCH',
+        labeledBy: 'analyst.1',
+      },
+    ]);
+    expect(gold.pairs).toHaveLength(1);
 
     await db.sql.close();
     const sql2 = db.reconnect();
@@ -65,5 +74,8 @@ describe.skipIf(!db)('PgEntityLedger durability', () => {
       properties: { name: 'ACME LTDA', document: '12345678000190' },
     });
     expect(similar.some((s) => s.recordId === 'rec-A')).toBe(true);
+    const loadedGold = await er2.getGoldSet();
+    expect(loadedGold.pairs).toHaveLength(1);
+    expect(loadedGold.pairs[0]?.label).toBe('MATCH');
   });
 });

@@ -3,6 +3,7 @@
  */
 
 export { createPostgresConnector } from './core/connector.js';
+export { asConnectorV2 } from 'connector-sdk';
 export {
   createMemorySqlClient,
   type SqlClient,

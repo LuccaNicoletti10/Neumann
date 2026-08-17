@@ -86,6 +86,22 @@ describe('connector-sdk', () => {
     expect(() => assertConnectorShape(stub)).not.toThrow();
   });
 
+  it('capability pushdown exige federatedQuery', () => {
+    const stub = makeStub([]);
+    const bad = { ...stub, capabilities: ['pushdown'] as const };
+    const result = validateConnectorShape(bad);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes('federatedQuery'))).toBe(true);
+  });
+
+  it('capability subscribe exige subscribe', () => {
+    const stub = makeStub([]);
+    const bad = { ...stub, capabilities: ['subscribe'] as const };
+    const result = validateConnectorShape(bad);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes('subscribe'))).toBe(true);
+  });
+
   it('CheckpointStore memória get/set/delete', async () => {
     const store = createMemoryCheckpointStore();
     expect(await store.get('a', 'people')).toBeNull();
@@ -132,5 +148,39 @@ describe('connector-sdk', () => {
       object,
     });
     expect(second.events.map((e) => e.source_primary_key)).toEqual(['4', '5']);
+  });
+
+  it('v2 protocol + connector.yaml + asConnectorV2', async () => {
+    const { asConnectorV2 } = await import('../src/core/as-v2.js');
+    const { parseConnectorYaml } = await import('../src/core/protocol.js');
+    const yaml = parseConnectorYaml('name: stub\nversion: 1.0.0\nquality: community\n');
+    expect(yaml).toMatchObject({ name: 'stub', version: '1.0.0', quality: 'community' });
+    const factory = createEventFactory({
+      clock: createFixedClock('2024-01-01T00:00:00.000Z'),
+      nextId: createIdGenerator(),
+    });
+    const v2 = asConnectorV2(
+      makeStub([
+        factory.create({
+          source_system: 'crm',
+          source_object: 'people',
+          source_primary_key: '1',
+          schema_version: '1',
+          connector_id: 'stub',
+          checkpoint: '1',
+          principal: 'sa',
+          payload: { id: 1 },
+        }),
+      ]),
+    );
+    const spec = await v2.spec();
+    expect(spec.connectorId).toBe('stub');
+    expect((await v2.check()).ok).toBe(true);
+    expect((await v2.discover()).length).toBeGreaterThanOrEqual(1);
+    const records: unknown[] = [];
+    for await (const msg of v2.read({ fullRefresh: true })) {
+      if (msg.type === 'RECORD') records.push(msg.record);
+    }
+    expect(records).toHaveLength(1);
   });
 });

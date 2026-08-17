@@ -1,0 +1,40 @@
+{
+  "name": "explore-api",
+  "version": "1.0.0",
+  "description": "APIs de exploração genéricas — padrão de grafo, índice em blocos, scoring ponderado, path de rich objects (US 8,799,240 / US 9,639,580 / US 9,280,532 / US 9,880,993).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "explore-api": "./dist/cli.js",
+    "explore": "./dist/cli.js"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*",
+    "knowledge-graph": "workspace:*",
+    "policy-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}

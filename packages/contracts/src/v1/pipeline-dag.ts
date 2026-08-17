@@ -60,6 +60,22 @@ export interface ScheduleTickResult {
   rebuiltDatasetIds: string[];
 }
 
+export interface DatasetAsset {
+  id: string;
+  datasetId: string;
+  upstreamOf?: string[];
+}
+
+export type SensorKind = 'dataset_changed' | 'cron' | 'webhook';
+
+export interface SensorDef {
+  id: string;
+  kind: SensorKind;
+  target: string;
+  cron?: string;
+  datasetId?: string;
+}
+
 export function buildGoldenPipelineEdge(): PipelineEdge {
   return { sourceId: 'R1', targetId: 'D1', kind: 'DIRECT' };
 }

@@ -1,7 +1,7 @@
 {
   "name": "entity-resolution",
   "version": "1.0.0",
-  "description": "ER pipeline normalize→block→score + audit/canonical/fingerprint (Passos 20–21).",
+  "description": "ER pipeline normalize→block→score + audit/canonical + gold set/review (Passos 20–22).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

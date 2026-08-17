@@ -23,6 +23,8 @@ export interface ObjectRecord {
   /** Provenance / source system label. */
   source?: string;
   provenance?: Record<string, unknown>;
+  /** Derived stable URN — not persisted. */
+  urn?: string;
 }
 
 export interface CreateObjectInput {
@@ -157,4 +159,9 @@ export interface LinkRepository {
     linkTypeId?: LinkTypeId,
     opts?: ListLinksOptions,
   ): Promise<LinkRecord[]> | LinkRecord[];
+}
+
+/** Stable catalog URN: urn:neumann:<ontology>:<type>:<pk> */
+export function urnOf(ontologyId: string, objectTypeId: string, primaryKey: string): string {
+  return `urn:neumann:${ontologyId}:${objectTypeId}:${primaryKey}`;
 }

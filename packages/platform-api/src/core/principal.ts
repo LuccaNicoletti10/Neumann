@@ -109,6 +109,17 @@ export function bindPrincipalHook(verifier?: TokenVerifier) {
             : err instanceof Error
               ? err.message
               : 'authentication failed';
+        const status =
+          err instanceof AuthenticationError ? err.statusCode : 401;
+        if (status === 503) {
+          void reply.code(503).send({
+            errorCode: 'UNAVAILABLE',
+            errorName: 'AuthenticationError',
+            message,
+          });
+          done();
+          return;
+        }
         sendUnauthenticated(reply, message);
         done();
       });

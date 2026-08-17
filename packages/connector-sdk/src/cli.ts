@@ -10,11 +10,17 @@ import { fileURLToPath } from 'node:url';
 import { createMemoryCheckpointStore } from './core/checkpoint-store.js';
 import { createFixedClock, createIdGenerator } from './core/determinism.js';
 import { createEventFactory } from './core/event-factory.js';
+import {
+  propertiesToSourceFields,
+  sourceFieldsToProperties,
+} from './core/inverse-map.js';
+import { createMemoryWriteBackConnector } from './core/memory-writeback.js';
 
-const USAGE = `connector-sdk — helpers de Connector (Passo 5)
+const USAGE = `connector-sdk — helpers de Connector (Passo 5 + Passo 25 write-path)
 
 Uso:
   connector-sdk demo
+  connector-sdk writeback
 `;
 
 export interface CliDeps {
@@ -49,6 +55,52 @@ async function runDemo(log: (message: string) => void): Promise<number> {
   return 0;
 }
 
+export async function runWritebackDemo(
+  log: (message: string) => void = console.log,
+): Promise<number> {
+  const mappings = [
+    { sourceField: 'order_status', propertyTypeId: 'status' as const },
+    { sourceField: 'amt', propertyTypeId: 'amount' as const, transform: 'number' as const },
+  ];
+  const src = createMemoryWriteBackConnector({
+    records: { 'SO-1': { order_status: 'pending', amt: 150 } },
+  });
+
+  log('== 1. observe fonte ==');
+  const observed = sourceFieldsToProperties(src.getRecord('SO-1') ?? {}, mappings);
+  log(`  SO-1 status=${String(observed.status)} amount=${String(observed.amount)}`);
+
+  log('== 2. act (object properties) + writeBack ==');
+  const decided = { ...observed, status: 'approved' };
+  const fields = propertiesToSourceFields(decided, mappings);
+  const wb = await src.writeBack!({
+    object: { sourceSystem: 'ext', objectName: 'orders' },
+    primaryKey: 'SO-1',
+    operation: 'update_order_status',
+    fields,
+    idempotencyKey: 'neumann:demo-1',
+  });
+  log(`  source.order_status=${String(wb.record?.order_status)}`);
+
+  log('== 3. connector detecta → ontology converge ==');
+  const events = [];
+  for await (const ev of src.snapshot({ sourceSystem: 'ext', objectName: 'orders' })) {
+    events.push(ev);
+  }
+  const converged = sourceFieldsToProperties(src.getRecord('SO-1') ?? {}, mappings);
+  log(`  snapshot=${events.length} object.status=${String(converged.status)}`);
+
+  const ok =
+    observed.status === 'pending' &&
+    wb.ok &&
+    wb.record?.order_status === 'approved' &&
+    converged.status === 'approved' &&
+    events.some((e) => e.payload.order_status === 'approved');
+
+  log(ok ? 'demo ok — write-back: fonte muda e o objeto converge' : 'demo FAIL');
+  return ok ? 0 : 1;
+}
+
 export async function runCommandLine(
   argv: readonly string[] = [],
   deps: CliDeps = {},
@@ -62,6 +114,7 @@ export async function runCommandLine(
     return cmd === undefined ? 1 : 0;
   }
   if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'writeback') return runWritebackDemo(log);
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);
   return 1;

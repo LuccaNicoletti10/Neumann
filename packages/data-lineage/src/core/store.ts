@@ -5,6 +5,8 @@
 
 import {
   assertPipelineRun,
+  inheritClassification,
+  resolveClassification,
   type CompoundLineageNode,
   type LineageChangeEvent,
   type LineageCompletenessReport,
@@ -87,6 +89,7 @@ export function createLineageStore(opts: CreateLineageStoreOptions = {}): Lineag
         invalid: false,
         createdAt: input.createdAt ?? clock(),
         createdBy: input.createdBy ?? 'system',
+        classification: resolveClassification(input.classification).name,
       };
       versions.set(input.versionId, node);
       return node;
@@ -124,6 +127,9 @@ export function createLineageStore(opts: CreateLineageStoreOptions = {}): Lineag
       };
       assertPipelineRun(run);
 
+      const inherited = inheritClassification(
+        input.inputVersions.map((id) => versions.get(id)?.classification),
+      );
       const node: LineageVersionNode = {
         versionId: input.outputVersion,
         datasetId: input.datasetId,
@@ -135,6 +141,7 @@ export function createLineageStore(opts: CreateLineageStoreOptions = {}): Lineag
         createdAt: completedAt,
         createdBy: run.createdBy,
         pipelineRunId: run.id,
+        classification: inherited.name,
       };
 
       versions.set(input.outputVersion, node);
@@ -257,6 +264,35 @@ export function createLineageStore(opts: CreateLineageStoreOptions = {}): Lineag
             detail: versionId,
           });
         }
+      }
+      return affected;
+    },
+
+    flagClassification(versionId, classification) {
+      const v = versions.get(versionId);
+      if (!v) throw new Error(`versão desconhecida: ${versionId}`);
+      v.classification = resolveClassification(classification).name;
+    },
+
+    propagateClassification(versionId) {
+      const root = versions.get(versionId);
+      if (!root) throw new Error(`versão desconhecida: ${versionId}`);
+      const sourceMark = resolveClassification(root.classification);
+
+      const affected: VersionId[] = [];
+      for (const desc of store.fullDescendants(versionId)) {
+        const node = versions.get(desc);
+        if (!node) continue;
+        const current = resolveClassification(node.classification);
+        if (sourceMark.rank <= current.rank) continue;
+        node.classification = sourceMark.name;
+        affected.push(desc);
+        emit({
+          kind: 'propagated_classification',
+          versionId: desc,
+          at: clock(),
+          detail: `${versionId}:${sourceMark.name}`,
+        });
       }
       return affected;
     },

@@ -20,7 +20,8 @@
   "dependencies": {
     "fastify": "^4.28.1",
     "pino": "^9.4.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "age-encryption": "^0.2.4"
   },
   "devDependencies": {
     "@types/node": "20.14.15",

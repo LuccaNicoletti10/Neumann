@@ -109,7 +109,8 @@ describe('SecuredReads — no bypass via ObjectSet/history/links', () => {
       headers: { authorization: 'Bearer intruso' },
       payload: { objectSet: { type: 'BASE', objectType: 'ot.order' } },
     });
-    expect(load.statusCode).toBe(403);
+    expect(load.statusCode).toBe(200);
+    expect(load.json().data).toEqual([]);
 
     const agg = await app.inject({
       method: 'POST',
@@ -120,7 +121,8 @@ describe('SecuredReads — no bypass via ObjectSet/history/links', () => {
         aggregations: [{ kind: 'count' }],
       },
     });
-    expect(agg.statusCode).toBe(403);
+    expect(agg.statusCode).toBe(200);
+    expect(agg.json()).toEqual({ data: { count: 0 } });
     await app.close();
   });
 
@@ -142,7 +144,8 @@ describe('SecuredReads — no bypass via ObjectSet/history/links', () => {
       url: `/api/v2/objects/${orderId}/history`,
       headers: { authorization: 'Bearer intruso' },
     });
-    expect(hist.statusCode).toBe(403);
+    expect(hist.statusCode).toBe(200);
+    expect(hist.json().data).toEqual([]);
 
     const histOk = await app.inject({
       method: 'GET',
@@ -157,7 +160,23 @@ describe('SecuredReads — no bypass via ObjectSet/history/links', () => {
       url: `/api/v2/ontologies/${ontologyId}/objects/ot.order/O1/links/lt.staff`,
       headers: { authorization: 'Bearer fernanda' },
     });
-    expect(linksDenied.statusCode).toBe(403);
+    expect(linksDenied.statusCode).toBe(200);
+    expect(linksDenied.json().data).toEqual([]);
+
+    const deniedGet = await app.inject({
+      method: 'GET',
+      url: `/api/v2/ontologies/${ontologyId}/objects/ot.order/O1`,
+      headers: { authorization: 'Bearer intruso' },
+    });
+    const missingGet = await app.inject({
+      method: 'GET',
+      url: `/api/v2/ontologies/${ontologyId}/objects/ot.order/NOPE`,
+      headers: { authorization: 'Bearer fernanda' },
+    });
+    expect(deniedGet.statusCode).toBe(404);
+    expect(missingGet.statusCode).toBe(404);
+    expect(deniedGet.json()).toEqual(missingGet.json());
+    expect(deniedGet.json()).toEqual({ error: 'object not found' });
 
     await app.close();
   });

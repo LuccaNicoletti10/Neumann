@@ -3,19 +3,31 @@
  * Foundry-like /api/v2 routes (adapted from OpenFoundry Apache-2.0 conventions).
  */
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type {
   ActionTypeDef,
+  GraphPattern,
   ObjectSet,
   ObjectSetAggregation,
 } from 'contracts';
-import { normalizeFilter } from 'object-set';
+import { assertGraphPattern, urnOf } from 'contracts';
+import { renderDocumentTemplate } from 'action-engine';
+import { compileCatalogSearch, catalogHitUrn, normalizeFilter } from 'object-set';
+import { catalogFromRepos, executeGraphPattern } from 'explore-api';
 import { paginateArray } from 'pagination';
 import { notFound } from 'api-errors';
 
 import type { PlatformContext } from '../core/context.js';
 import { principalOf } from '../core/principal.js';
 import { createSecuredReads } from '../core/secured-reads.js';
+
+function hmacHexEqual(raw: string, secret: string, signature: string): boolean {
+  const expected = createHmac('sha256', secret).update(raw).digest('hex');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
   const type = String(raw.type ?? '').toUpperCase();
@@ -306,6 +318,28 @@ export async function registerV2Routes(
     return { data };
   });
 
+  app.post<{
+    Params: { ontology: string };
+    Body: { pattern: GraphPattern; limit?: number };
+  }>('/api/v2/ontologies/:ontology/graphPatterns/execute', async (req) => {
+    const pattern = req.body.pattern;
+    assertGraphPattern(pattern);
+    const objectTypeIds = [...new Set(pattern.nodes.map((n) => String(n.objectTypeId)))];
+    const catalog = await catalogFromRepos({
+      ontologyId: req.params.ontology,
+      objectTypeIds,
+      objects: ctx.objects,
+      links: ctx.links,
+    });
+    return executeGraphPattern({
+      catalog,
+      pattern,
+      principal: principalOf(req),
+      authorizer: ctx.authorizer,
+      limit: req.body.limit,
+    });
+  });
+
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/actionTypes',
     async (req, reply) => {
@@ -356,5 +390,176 @@ export async function registerV2Routes(
       idempotencyKey: req.body.idempotencyKey,
       expectedObjectVersions: req.body.expectedObjectVersions,
     });
+  });
+
+  app.post<{
+    Params: { ontology: string; action: string };
+    Body: { parameters?: Record<string, unknown> };
+  }>('/api/v2/ontologies/:ontology/actions/:action/parameter-tree', async (req) => {
+    await ensureActionType(req.params.ontology, req.params.action);
+    if (!ctx.actions.parameterTree) {
+      throw new Error('parameterTree not supported');
+    }
+    return ctx.actions.parameterTree({
+      ontologyId: req.params.ontology,
+      actionApiName: req.params.action,
+      parameters: req.body.parameters ?? {},
+      principal: principalOf(req),
+    });
+  });
+
+  app.post<{
+    Params: { ontology: string; objectType: string; primaryKey: string };
+    Body: { template: string };
+  }>(
+    '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey/render',
+    async (req) => {
+      const obj = await ctx.objects.get(
+        req.params.ontology,
+        req.params.objectType,
+        req.params.primaryKey,
+      );
+      if (!obj) {
+        throw notFound('ObjectNotFound', 'object not found', {
+          ontology: req.params.ontology,
+          objectType: req.params.objectType,
+          primaryKey: req.params.primaryKey,
+        });
+      }
+      return {
+        document: renderDocumentTemplate(req.body.template ?? '', obj.properties),
+      };
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/v2/actions/executions/:id/approve',
+    async (req) => {
+      const principal = principalOf(req);
+      const authz = ctx.authorizer?.authorize({
+        principal,
+        resource: `action-execution:${req.params.id}`,
+        operation: 'modify',
+      }) ?? { decision: 'allow' as const, reason: 'default-allow', principalEpids: [], resourceEpid: null };
+      if (authz.decision === 'deny') {
+        throw new Error(authz.reason);
+      }
+      if (!ctx.actions.approve) throw new Error('approvals not supported');
+      return ctx.actions.approve(req.params.id, principal);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/v2/actions/executions/:id/reject',
+    async (req) => {
+      const principal = principalOf(req);
+      const authz = ctx.authorizer?.authorize({
+        principal,
+        resource: `action-execution:${req.params.id}`,
+        operation: 'modify',
+      }) ?? { decision: 'allow' as const, reason: 'default-allow', principalEpids: [], resourceEpid: null };
+      if (authz.decision === 'deny') {
+        throw new Error(authz.reason);
+      }
+      if (!ctx.actions.reject) throw new Error('approvals not supported');
+      return ctx.actions.reject(req.params.id, principal);
+    },
+  );
+
+  app.get<{ Querystring: { q?: string; ontology?: string; limit?: string } }>(
+    '/api/v2/catalog/search',
+    async (req) => {
+      const q = String(req.query.q ?? '').trim();
+      const principal = principalOf(req);
+      if (!q) return { data: [] };
+      if (ctx.sql) {
+        const compiled = compileCatalogSearch({
+          q,
+          ontologyId: req.query.ontology,
+          limit: req.query.limit ? Number(req.query.limit) : 25,
+        });
+        const result = await ctx.sql.query(compiled.text, compiled.params);
+        const hits = [];
+        for (const row of result.rows as Array<Record<string, unknown>>) {
+          const objectTypeId = String(row.object_type_id);
+          if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, objectTypeId)) {
+            continue;
+          }
+          hits.push({
+            urn: catalogHitUrn({
+              ontology_id: String(row.ontology_id),
+              object_type_id: objectTypeId,
+              primary_key: String(row.primary_key),
+            }),
+            ontologyId: String(row.ontology_id),
+            objectTypeId,
+            primaryKey: String(row.primary_key),
+            properties: (row.properties as Record<string, unknown>) ?? {},
+          });
+        }
+        return { data: hits };
+      }
+      const ontologies = req.query.ontology
+        ? [{ id: req.query.ontology }]
+        : await ctx.ontology.listOntologies();
+      const needle = q.toLowerCase();
+      const data = [];
+      for (const onto of ontologies) {
+        const v = await ctx.ontology.getLatestVersion(onto.id);
+        for (const t of Object.values(v?.objectTypes ?? {})) {
+          const listed = await ctx.objects.list(onto.id, t.id);
+          for (const o of listed) {
+            if (o.deleted) continue;
+            if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, o.objectTypeId)) {
+              continue;
+            }
+            const blob = JSON.stringify(o.properties).toLowerCase();
+            if (!o.primaryKey.toLowerCase().includes(needle) && !blob.includes(needle)) continue;
+            data.push({
+              urn: urnOf(o.ontologyId, o.objectTypeId, o.primaryKey),
+              ontologyId: o.ontologyId,
+              objectTypeId: o.objectTypeId,
+              primaryKey: o.primaryKey,
+              properties: o.properties,
+            });
+          }
+        }
+      }
+      return { data };
+    },
+  );
+
+  app.post<{ Params: { connectorId: string }; Body: unknown }>(
+    '/api/v2/ingest/:connectorId',
+    async (req, reply) => {
+      const secret = process.env.PLATFORM_INGEST_SECRET ?? '';
+      const signature = String(
+        (req.headers['x-neumann-signature'] as string | undefined) ?? '',
+      );
+      const raw = JSON.stringify(req.body ?? {});
+      if (!secret || !signature || !hmacHexEqual(raw, secret, signature)) {
+        return reply.code(401).send({ error: 'invalid webhook signature' });
+      }
+      return reply.code(202).send({ accepted: true, connectorId: req.params.connectorId });
+    },
+  );
+
+  app.get('/api/v2/catalog/types', async () => {
+    const ontologies = await ctx.ontology.listOntologies();
+    const data = [];
+    for (const o of ontologies) {
+      const v = await ctx.ontology.getLatestVersion(o.id);
+      const types = Object.values(v?.objectTypes ?? {});
+      for (const t of types) {
+        const objs = await ctx.objects.list(o.id, t.id);
+        data.push({
+          ontologyId: o.id,
+          objectTypeId: t.id,
+          displayName: t.displayName,
+          count: objs.filter((x) => !x.deleted).length,
+        });
+      }
+    }
+    return { data };
   });
 }

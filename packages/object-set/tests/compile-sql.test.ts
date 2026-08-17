@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  compileAggregate,
   compileFilter,
   compileObjectSet,
   createCompileCtx,
@@ -113,5 +114,22 @@ describe('compile-sql', () => {
       ctx,
     );
     expect(sql.text).toMatch(/EXCEPT/i);
+  });
+
+  it('aggregations use null-safe numeric (no bare ::numeric on untyped JSON)', () => {
+    const ctx = createCompileCtx('o');
+    const sql = compileAggregate(
+      { type: 'BASE', objectType: 'ot.item' },
+      [
+        { kind: 'sum', property: 'n', name: 'sumN' },
+        { kind: 'min', property: 'n', name: 'minN' },
+        { kind: 'max', property: 'n', name: 'maxN' },
+        { kind: 'avg', property: 'n', name: 'avgN' },
+      ],
+      ctx,
+    );
+    expect(sql.text).toMatch(/jsonb_typeof/);
+    expect(sql.text).toMatch(/CASE WHEN/i);
+    expect(sql.text).not.toMatch(/sum\(\(o\.properties->>\$\d+\)::numeric\)/);
   });
 });

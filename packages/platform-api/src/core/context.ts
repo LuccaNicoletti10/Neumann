@@ -15,6 +15,8 @@ import {
 import type {
   ActionExecutor,
   AuthorizeFn,
+  EntityResolutionEngine,
+  FunctionRegistry,
   LinkRepository,
   ObjectRepository,
   OperationalEventStore,
@@ -23,6 +25,8 @@ import type {
   TransactionManager,
 } from 'contracts';
 import { createPgOutboxRepository } from 'event-bus';
+import { createEntityResolver } from 'entity-resolution';
+import { createFunctionRegistry } from 'function-registry';
 import {
   createDeterministicClock,
   createGovernedObjectRepository,
@@ -42,7 +46,11 @@ import { createGraphQueryEngine, type GraphQueryEngine } from 'knowledge-graph';
 import { createOntologyRegistry, createPgOntologyRegistry } from 'ontology-registry';
 import {
   createAuditLog,
+  createDecisionLogSink,
   createPgAuditRepository,
+  createPgPolicyStore,
+  createPolicyEngine,
+  type HydratablePolicyEngine,
   type OntologyAuthorizer,
 } from 'policy-engine';
 
@@ -65,7 +73,11 @@ export interface PlatformContext {
   events: OperationalEventStore;
   audit: ReturnType<typeof createAuditLog>;
   history: ObjectHistoryStore;
+  er: EntityResolutionEngine;
+  functions: FunctionRegistry;
   authorizer?: OntologyAuthorizer;
+  policy?: HydratablePolicyEngine;
+  policyReady?: Promise<void>;
   /** Present in postgres mode — ObjectSet SQL planner. */
   sql?: SqlClient;
   close?: () => Promise<void>;
@@ -118,6 +130,8 @@ export function createMemoryPlatformContext(
     clock,
     nextId,
   });
+  const er = createEntityResolver({ clock, nextId });
+  const functions = createFunctionRegistry();
 
   const ctx: PlatformContext = {
     mode: 'memory',
@@ -129,6 +143,8 @@ export function createMemoryPlatformContext(
     events,
     audit,
     history,
+    er,
+    functions,
     authorizer: opts.authorizer,
   };
   void opts.seed?.(ctx);
@@ -251,6 +267,16 @@ export function createPostgresPlatformContext(
     repository: createPgAuditRepository({ sql: rootSql, transaction: txManager }),
   });
 
+  const decisionSink = createDecisionLogSink(standaloneAudit);
+  const policyStore = createPgPolicyStore({ sql: rootSql });
+  const policy = createPolicyEngine({
+    clock,
+    nextId,
+    store: policyStore,
+    onDecision: decisionSink.onDecision,
+  });
+  const policyReady = policy.hydrate();
+
   const innerActions = createActionExecutor({
     objects: root.objects,
     links: root.links,
@@ -271,6 +297,9 @@ export function createPostgresPlatformContext(
     clock,
   });
 
+  const er = createEntityResolver({ sql: rootSql, clock, nextId });
+  const functions = createFunctionRegistry();
+
   const ctx: PlatformContext = {
     mode: 'postgres',
     ontology,
@@ -281,7 +310,11 @@ export function createPostgresPlatformContext(
     events: root.events,
     audit: standaloneAudit,
     history: root.history,
+    er,
+    functions,
     authorizer: opts.authorizer,
+    policy,
+    policyReady,
     sql: rootSql,
     close,
   };

@@ -50,8 +50,17 @@ export function createFailureSurvivingExecutor(
     getActionType: (o, a) => inner.getActionType(o, a),
     registerActionType: (o, d) => inner.registerActionType(o, d),
     validate: (req) => inner.validate(req),
+    parameterTree: inner.parameterTree
+      ? (req) => inner.parameterTree!(req)
+      : undefined,
     getExecution: async (id) =>
       (await rootExecutions.get(id)) ?? inner.getExecution(id),
+    approve: inner.approve
+      ? (id, principal) => inner.approve!(id, principal)
+      : undefined,
+    reject: inner.reject
+      ? (id, principal) => inner.reject!(id, principal)
+      : undefined,
 
     async apply(req: ActionApplyRequest): Promise<ActionApplyResult> {
       const result = await inner.apply(req);

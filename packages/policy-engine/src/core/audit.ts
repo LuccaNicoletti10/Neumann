@@ -15,12 +15,43 @@ import {
   createIdGenerator,
 } from './determinism.js';
 import { createMemoryAuditRepository } from './memory-audit-repository.js';
-import type { CreateAuditLogOptions } from './types.js';
+import type { CreateAuditLogOptions, DecisionRecord } from './types.js';
 
 export { computeLogHash, computeSummaryHash, verifyEntries } from './audit-hash.js';
 export { createMemoryAuditRepository } from './memory-audit-repository.js';
 export { createPgAuditRepository } from './pg-audit-repository.js';
 export type { CreatePgAuditRepositoryOptions } from './pg-audit-repository.js';
+
+export async function recordDecision(audit: AuditLog, d: DecisionRecord) {
+  return audit.append(
+    JSON.stringify(d),
+    {
+      kind: 'PolicyDecision',
+      decision: d.decision,
+      resource: d.resource,
+      operation: d.operation,
+    },
+    d.principal,
+  );
+}
+
+export function createDecisionLogSink(audit: AuditLog): {
+  onDecision: (d: DecisionRecord) => void;
+  drain: () => Promise<void>;
+} {
+  let chain = Promise.resolve();
+  return {
+    onDecision(d) {
+      chain = chain
+        .then(() => recordDecision(audit, d))
+        .then(() => undefined)
+        .catch((err) => {
+          console.error('[policy-engine] decision log append failed:', err);
+        });
+    },
+    drain: () => chain,
+  };
+}
 
 export function createAuditLog(opts: CreateAuditLogOptions = {}): AuditLog {
   const clock = opts.clock ?? createDeterministicClock();

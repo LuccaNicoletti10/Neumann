@@ -15,6 +15,7 @@ import { SandboxEscapeError } from './errors.js';
 import { createRestrictedHost, type HostState } from './host.js';
 import { byteLength, resolvePolicy } from './policy.js';
 import type { CreateSandboxOptions, SandboxedFn } from './types.js';
+import { runInWorker } from './worker-runner.js';
 
 export interface ExecutionSandbox {
   registerIdentity(identity: SandboxIdentity): void;
@@ -25,6 +26,11 @@ export interface ExecutionSandbox {
     transformId: string;
     input: unknown;
   }): SandboxRunResult;
+  runAsync(args: {
+    identityId: string;
+    transformId: string;
+    input: unknown;
+  }): Promise<SandboxRunResult>;
   auditLog(): SandboxAuditEvent[];
   policy(): SandboxPolicy;
 }
@@ -38,8 +44,11 @@ export function createExecutionSandbox(
 
   const identities = new Map<string, SandboxIdentity>();
   const transforms = new Map<string, SandboxedFn>();
+  const transformSource = new Map<string, string>();
   const files = new Map<string, string>();
   const audit: SandboxAuditEvent[] = [];
+  const isolation = options.isolation ?? 'in-process';
+  const timeoutMs = options.timeoutMs ?? policy.maxCpuMs;
 
   function deny(
     identityId: string,
@@ -83,12 +92,55 @@ export function createExecutionSandbox(
     },
     registerTransform(id, fn) {
       transforms.set(id, fn);
+      transformSource.set(id, fn.toString());
     },
     policy() {
       return { ...policy, fsAllowPrefixes: [...policy.fsAllowPrefixes] };
     },
     auditLog() {
       return audit.map((e) => ({ ...e }));
+    },
+    async runAsync(args: { identityId: string; transformId: string; input: unknown }) {
+      if (isolation !== 'worker') {
+        return this.run(args);
+      }
+      const started = Date.now();
+      const bytesIn = byteLength(args.input);
+      if (!identities.has(args.identityId)) {
+        return deny(args.identityId, args.transformId, 'IDENTITY_REQUIRED', 'unknown identity', 0, bytesIn);
+      }
+      const source = transformSource.get(args.transformId);
+      if (!source) {
+        return deny(args.identityId, args.transformId, 'FORBIDDEN_API', `unknown transform: ${args.transformId}`, 0, bytesIn);
+      }
+      const result = await runInWorker({
+        transformSource: source,
+        input: args.input,
+        policy,
+        files: Object.fromEntries(files),
+        timeoutMs,
+      });
+      const durationMs = Date.now() - started;
+      if (!result.ok) {
+        const reason = (result.reason as SandboxRunResult['deniedReason']) ?? 'FORBIDDEN_API';
+        return deny(args.identityId, args.transformId, reason, result.error ?? 'worker failed', durationMs, bytesIn);
+      }
+      if (result.files) {
+        for (const [k, v] of Object.entries(result.files)) files.set(k, v);
+      }
+      const bytesOut = byteLength(result.output);
+      const auditId = nextId('audit');
+      audit.push({
+        id: auditId,
+        at: clock(),
+        identityId: args.identityId,
+        transformId: args.transformId,
+        ok: true,
+        durationMs,
+        bytesIn,
+        bytesOut,
+      });
+      return { ok: true, output: result.output, auditId, durationMs };
     },
     run({ identityId, transformId, input }) {
       const started = clock();

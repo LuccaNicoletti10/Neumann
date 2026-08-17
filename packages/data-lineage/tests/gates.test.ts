@@ -5,8 +5,9 @@ import { describe, expect, it } from 'vitest';
 
 import { createDeterministicClock, createIdGenerator } from '../src/core/determinism.js';
 import { hashCanonical } from '../src/core/hash.js';
+import { createColumnLineageStore } from '../src/core/column-lineage.js';
 import { createLineageStore } from '../src/core/store.js';
-import { runDemo } from '../src/cli.js';
+import { runColumnsDemo, runDemo } from '../src/cli.js';
 
 function store() {
   return createLineageStore({
@@ -146,9 +147,98 @@ describe('Passo 15 gates', () => {
     expect(s.getVersion('d1')?.invalidReason).toContain('r1');
   });
 
+  it('Passo 26: transform herda max(inputs) e propagateClassification sobe descendentes', () => {
+    const s = store();
+    s.registerRaw({
+      versionId: 'cust',
+      datasetId: 'customers',
+      datasetName: 'customers',
+      versionNumber: 1,
+      contentHash: hashCanonical('c'),
+      classification: 'Confidential',
+    });
+    s.registerRaw({
+      versionId: 'ord',
+      datasetId: 'orders',
+      datasetName: 'orders',
+      versionNumber: 1,
+      contentHash: hashCanonical('o'),
+      classification: 'Unclassified',
+    });
+    s.recordRun({
+      inputVersions: ['cust', 'ord'],
+      outputVersion: 'join',
+      datasetId: 'enriched',
+      datasetName: 'enriched',
+      versionNumber: 1,
+      derivationProgramId: 'join-v1',
+      contentHash: hashCanonical('j'),
+      durationMs: 1,
+    });
+    expect(s.getVersion('join')?.classification).toBe('Confidential');
+
+    s.flagClassification('ord', 'Secret');
+    const affected = s.propagateClassification('ord');
+    expect(affected).toEqual(['join']);
+    expect(s.getVersion('join')?.classification).toBe('Secret');
+  });
+
+  it('Passo 27: coluna de saída herda max(inputs); amount fica Unclassified', () => {
+    const cols = createColumnLineageStore();
+    cols.registerColumn({
+      versionId: 'customers-v1',
+      column: 'email',
+      classification: 'Confidential',
+    });
+    cols.registerColumn({
+      versionId: 'orders-v1',
+      column: 'amount',
+      classification: 'Unclassified',
+    });
+    cols.recordColumnMappings({
+      pipelineRunId: 'r1',
+      derivationProgramId: 'join',
+      mappings: [
+        {
+          sources: [{ versionId: 'customers-v1', column: 'email' }],
+          target: { versionId: 'enriched-v1', column: 'customer_email' },
+        },
+        {
+          sources: [{ versionId: 'orders-v1', column: 'amount' }],
+          target: { versionId: 'enriched-v1', column: 'amount' },
+        },
+      ],
+    });
+    expect(
+      cols.effectiveColumnClassification({ versionId: 'enriched-v1', column: 'customer_email' }),
+    ).toBe('Confidential');
+    expect(
+      cols.effectiveColumnClassification({ versionId: 'enriched-v1', column: 'amount' }),
+    ).toBe('Unclassified');
+    cols.registerColumn({
+      versionId: 'customers-v1',
+      column: 'email',
+      classification: 'Secret',
+    });
+    const affected = cols.propagateColumnClassification({
+      versionId: 'customers-v1',
+      column: 'email',
+    });
+    expect(affected.map((r) => r.column)).toContain('customer_email');
+    expect(
+      cols.effectiveColumnClassification({ versionId: 'enriched-v1', column: 'customer_email' }),
+    ).toBe('Secret');
+  });
+
   it('cli demo exit 0', () => {
     const lines: string[] = [];
     expect(runDemo((m) => lines.push(m))).toBe(0);
     expect(lines.some((l) => l.includes('demo ok'))).toBe(true);
+  });
+
+  it('Passo 27 columns demo exit 0', () => {
+    const lines: string[] = [];
+    expect(runColumnsDemo((m) => lines.push(m))).toBe(0);
+    expect(lines.some((l) => l.includes('columns ok'))).toBe(true);
   });
 });

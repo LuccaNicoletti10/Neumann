@@ -50,5 +50,13 @@ export function createMemoryActionExecutionStore(): ActionExecutionStore {
       await this.save(execution);
       return { claimed: true, execution: { ...execution } };
     },
+
+    async casStatus(id, from, to, patch) {
+      const existing = executions.get(id);
+      if (!existing || existing.status !== from) return undefined;
+      const next = { ...existing, ...patch, status: to };
+      executions.set(id, next);
+      return { ...next };
+    },
   };
 }

@@ -2,21 +2,25 @@
 /**
  * entity-resolution — src/cli.ts
  * demo: ACME LTDA + Acme Ltda. → 1 cluster Customer (Passo 20)
- *       + audit persistido + merge/unmerge reversível (Passo 21).
+ *       + audit persistido + merge/unmerge reversível (Passo 21)
+ *       + gold set 50 + métricas + fila de revisão (Passo 22).
  */
 
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { GOLD_SET_TARGET_SIZE } from 'contracts';
+
 import { createDeterministicClock, createIdGenerator } from './core/determinism.js';
 import { createEntityResolver } from './core/engine.js';
+import { buildPasso22GoldCorpus } from './core/gold-corpus.js';
 import {
   normalizeDocument,
   normalizeEmail,
   normalizeText,
 } from './core/normalize.js';
 
-const USAGE = `entity-resolution (er / resolve) — PASSO 20–21: normalize → block → score → audit/canonical
+const USAGE = `entity-resolution (er / resolve) — PASSO 20–22: normalize → block → score → audit/canonical → gold/review
   US 8,554,719 / 9,501,552 / 9,846,731 / 12,229,154 / US20140280252
   US20250165857A1 / US 12,393,406 / US20250348288A1 / US 8,788,405 / US 8,818,892
 
@@ -213,6 +217,74 @@ export async function runAuditDemo(log: (message: string) => void = console.log)
   return ok ? 0 : 1;
 }
 
+export async function runGoldDemo(log: (message: string) => void = console.log): Promise<number> {
+  const er = createEntityResolver({
+    clock: createDeterministicClock('2024-06-01T12:00:00.000Z'),
+    nextId: createIdGenerator(),
+  });
+  const corpus = buildPasso22GoldCorpus();
+
+  log('== 9. Passo 22 — gold set 50 pares MATCH/NO_MATCH ==');
+  const result = er.runResolution({ records: corpus.records });
+  await er.commitRun(result);
+  const gold = await er.upsertGoldPairs(
+    corpus.labels.map((l) => ({
+      leftId: l.leftId,
+      rightId: l.rightId,
+      label: l.label,
+      labeledBy: 'gold-analyst',
+    })),
+  );
+  const matchN = gold.pairs.filter((p) => p.label === 'MATCH').length;
+  const noMatchN = gold.pairs.filter((p) => p.label === 'NO_MATCH').length;
+  log(`  pairs=${gold.pairs.length} MATCH=${matchN} NO_MATCH=${noMatchN}`);
+
+  log('== 10. métricas vs gold ==');
+  const metrics = await er.evaluateMetrics(result.runId);
+  log(`  precision=${metrics.precision.toFixed(4)} recall=${metrics.recall.toFixed(4)} f1=${metrics.f1.toFixed(4)}`);
+  log(`  ${metrics.falseMergeNote}`);
+  log(
+    `  false-split-rate=${metrics.falseSplitRate.toFixed(4)} manual-review-rate=${metrics.manualReviewRate.toFixed(4)} grey=${metrics.greyZoneCount}`,
+  );
+
+  log('== 11. fila de revisão (zona cinzenta) ==');
+  const queue = await er.listReviewQueue(result.runId);
+  log(`  queue=${queue.length}`);
+  for (const item of queue.slice(0, 5)) {
+    log(`  ${item.leftId}↔${item.rightId} score=${item.score.toFixed(3)} gold=${item.goldLabel ?? '-'}`);
+  }
+  if (queue[0]) {
+    const submitted = await er.submitReview({
+      auditId: queue[0].auditId,
+      decision: queue[0].goldLabel === 'NO_MATCH' ? 'reject_match' : 'confirm_match',
+      reviewer: 'analyst.1',
+      note: 'passo22 review',
+    });
+    log(`  reviewed ${submitted.audit.id} → ${submitted.audit.review?.decision} gold=${submitted.goldPair?.label ?? '-'}`);
+  }
+
+  log('== 12. feedback humano recalibra criteria ==');
+  const fb = await er.applyFeedback();
+  log(`  ${fb.previous.ruleVersionId} → ${fb.next.ruleVersionId} terms=[${fb.adjustedTerms.join(',')}]`);
+
+  const sizeOk = gold.pairs.length === GOLD_SET_TARGET_SIZE && matchN === 25 && noMatchN === 25;
+  const metricsOk =
+    Number.isFinite(metrics.precision) &&
+    Number.isFinite(metrics.f1) &&
+    Number.isFinite(metrics.falseMergeRate) &&
+    metrics.goldPairCount === GOLD_SET_TARGET_SIZE &&
+    metrics.falseMergeNote.includes('false-merge-rate');
+  const queueOk = queue.every((q) => q.decision === 'review');
+
+  const ok = sizeOk && metricsOk && queueOk;
+  log(
+    ok
+      ? 'demo ok — gold set 50 + métricas + fila de revisão'
+      : 'demo FAIL (passo 22)',
+  );
+  return ok ? 0 : 1;
+}
+
 export async function runCommandLine(argv: readonly string[], deps: CliDeps = {}): Promise<number> {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
@@ -226,7 +298,9 @@ export async function runCommandLine(argv: readonly string[], deps: CliDeps = {}
   if (cmd === 'demo') {
     const passo20 = runDemo(log);
     if (passo20 !== 0) return passo20;
-    return runAuditDemo(log);
+    const passo21 = await runAuditDemo(log);
+    if (passo21 !== 0) return passo21;
+    return runGoldDemo(log);
   }
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);

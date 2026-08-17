@@ -21,6 +21,7 @@ export {
   compileLoad,
   compileResolve,
   compileAggregate,
+  numericOrNull,
   createCompileCtx,
   queryFingerprint,
   type CompileCtx,
@@ -41,3 +42,4 @@ export {
   aggregateObjectsPg,
   type PgObjectSetResolverDeps,
 } from './core/resolver-pg.js';
+export { compileCatalogSearch, catalogHitUrn } from './core/search-sql.js';

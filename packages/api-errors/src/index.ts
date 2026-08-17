@@ -131,3 +131,12 @@ export function permissionDenied(message = 'Permission denied', parameters: Reco
     parameters,
   });
 }
+
+/** 404 canônico: recurso negado ≡ recurso inexistente (Passo 28). */
+export function hiddenMiss(): NeumannApiError {
+  return new NeumannApiError({
+    errorCode: 'NOT_FOUND',
+    errorName: 'ResourceNotFound',
+    message: 'not found',
+  });
+}

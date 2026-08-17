@@ -15,7 +15,6 @@ import {
   loadObjectsPg,
   propertyLookupFromOntology,
   resolveObjectSet,
-  resolveObjectSetPg,
 } from 'object-set';
 
 import type { PlatformContext } from './context.js';
@@ -65,12 +64,6 @@ export function createSecuredReads(ctx: PlatformContext) {
     return authz.canReadObjectType(principal, objectTypeId);
   }
 
-  function assertCanRead(principal: string, objectTypeId: string): void {
-    if (!canRead(principal, objectTypeId)) {
-      throw new ReadForbiddenError(principal, objectTypeId);
-    }
-  }
-
   function redact(principal: string, rec: ObjectRecord): ObjectRecord {
     const authz = policy();
     if (!authz) return rec;
@@ -89,25 +82,19 @@ export function createSecuredReads(ctx: PlatformContext) {
     return visible.map((r) => redact(principal, r));
   }
 
-  function assertDeclaredTypes(principal: string, objectSet: ObjectSet): void {
-    for (const typeId of collectDeclaredTypes(objectSet)) {
-      assertCanRead(principal, typeId);
-    }
-  }
-
   return {
-    assertCanRead,
+    canRead,
     redact,
     filterAndRedact,
 
     async getObject(principal: string, ontologyId: string, objectTypeId: string, primaryKey: string) {
-      assertCanRead(principal, objectTypeId);
+      if (!canRead(principal, objectTypeId)) return undefined;
       const obj = await ctx.objects.get(ontologyId, objectTypeId, primaryKey);
       return obj ? redact(principal, obj) : undefined;
     },
 
     async listObjects(principal: string, ontologyId: string, objectTypeId: string) {
-      assertCanRead(principal, objectTypeId);
+      if (!canRead(principal, objectTypeId)) return [];
       const listed = await ctx.objects.list(ontologyId, objectTypeId);
       return listed.map((o) => redact(principal, o));
     },
@@ -116,7 +103,7 @@ export function createSecuredReads(ctx: PlatformContext) {
       const trail = await ctx.history.listByObject(objectId);
       if (trail.length === 0) return [];
       const objectTypeId = trail[0]!.objectTypeId;
-      assertCanRead(principal, objectTypeId);
+      if (!canRead(principal, objectTypeId)) return [];
       return trail.map((entry) => ({
         ...entry,
         properties: (() => {
@@ -138,10 +125,10 @@ export function createSecuredReads(ctx: PlatformContext) {
       sourcePrimaryKey: string,
       linkTypeId: string,
     ) {
-      assertCanRead(principal, sourceObjectTypeId);
+      if (!canRead(principal, sourceObjectTypeId)) return [];
       const latest = await ctx.ontology.getLatestVersion(ontologyId);
       const targetType = latest?.linkTypes[linkTypeId]?.targetObjectTypeId;
-      if (targetType) assertCanRead(principal, targetType);
+      if (targetType && !canRead(principal, targetType)) return [];
 
       const edges = await ctx.links.listFrom(
         ontologyId,
@@ -163,7 +150,8 @@ export function createSecuredReads(ctx: PlatformContext) {
       ontologyId: string,
       req: Parameters<typeof loadObjects>[0],
     ) {
-      assertDeclaredTypes(principal, req.objectSet);
+      const denied = collectDeclaredTypes(req.objectSet).some((t) => !canRead(principal, t));
+      if (denied) return { data: [] as ObjectRecord[] };
       const latest = await ctx.ontology.getLatestVersion(ontologyId);
       const lookup = propertyLookupFromOntology(latest);
       const objectSet = latest
@@ -186,7 +174,8 @@ export function createSecuredReads(ctx: PlatformContext) {
       ontologyId: string,
       req: { objectSet: ObjectSet; aggregations: ObjectSetAggregation[] },
     ) {
-      assertDeclaredTypes(principal, req.objectSet);
+      const denied = collectDeclaredTypes(req.objectSet).some((t) => !canRead(principal, t));
+      if (denied) return aggregateRecords([], req.aggregations);
       const latest = await ctx.ontology.getLatestVersion(ontologyId);
       const lookup = propertyLookupFromOntology(latest);
       const objectSet = latest

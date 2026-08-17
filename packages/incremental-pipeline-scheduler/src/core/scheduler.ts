@@ -20,6 +20,15 @@ import {
   transitiveDependents,
   type DependencyGraph,
 } from './dag.js';
+import {
+  createAssetGraph,
+  declareProduces as declareProducesOnGraph,
+  isStale as assetIsStale,
+  linkAssets as linkAssetEdge,
+  markStale as markAssetStale,
+  materialize as materializeAsset,
+  type AssetGraph,
+} from './assets.js';
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
 import { hashCanonical } from './hash.js';
 import type {
@@ -57,6 +66,12 @@ export interface IncrementalPipelineScheduler {
     datasetId: string,
     kind: 'NON_DIRECTIONAL_GROUP' | 'DIRECTIONAL_GROUP',
   ): void;
+  /** Asset mode (opt-in; legacy DAG ticks are unchanged). */
+  declareProduces(transformId: string, datasets: string[]): void;
+  linkAssets(upstream: string, downstream: string): void;
+  markStale(datasetId: string): string[];
+  materialize(datasetId: string): string[];
+  isStale(datasetId: string): boolean;
 }
 
 const defaultBuild: BuildHandler = ({ target, sources }) => ({
@@ -74,6 +89,7 @@ export function createIncrementalPipelineScheduler(
   const nextId: IdGenerator = options.nextId ?? createIdGenerator();
   const build = options.build ?? defaultBuild;
   const graph: DependencyGraph = createEmptyGraph();
+  const assets: AssetGraph = createAssetGraph();
   const jobs: BuildJobSpec[] = [];
   const partial = new Set<string>();
   let cutoffReached = false;
@@ -264,6 +280,21 @@ export function createIncrementalPipelineScheduler(
       if (!members.includes(datasetId)) members.push(datasetId);
       graph.groups.set(groupId, members);
       graph.groupKinds.set(groupId, kind);
+    },
+    declareProduces(transformId, datasets) {
+      declareProducesOnGraph(assets, transformId, datasets);
+    },
+    linkAssets(upstream, downstream) {
+      linkAssetEdge(assets, upstream, downstream);
+    },
+    markStale(datasetId) {
+      return markAssetStale(assets, datasetId);
+    },
+    materialize(datasetId) {
+      return materializeAsset(assets, datasetId);
+    },
+    isStale(datasetId) {
+      return assetIsStale(assets, datasetId);
     },
   };
 }

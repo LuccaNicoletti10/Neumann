@@ -6,9 +6,9 @@
 > Fluxo: ingestão → memória imutável → transform → qualidade → lineage/policy → ontologia → …  
 > **Não** é app de fábrica, planejamento, forecasting nem vertical de negócio. Especialização na empresa só **depois** dos gates em datasets de teste, e sempre como app em cima do kernel.  
 > Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).  
-> **Status:** Blocos **1–6 entregues** + **Passos 20–21** (ER + audit/canonical) + **milestone Object/Action `/api/v2`**.  
-> **Em andamento:** consolidação/hardening (ver `docs/platform-consolidation-audit.md`) — uma fonte de verdade Objects/Links, Postgres CAS, auth, Actions transacionais.  
-> Próximo roadmap clássico após gates de consolidação: **Passo 22** (gold set + revisão humana).
+> **Status:** Blocos **1–6 entregues** + **Passos 20–32** (ER + gold/review + functions + Action engine + write-back + 2ª fonte/classificação + lineage colunar/redaction + noninterference/fuzz + Query API + exploração genérica + federation T1.5 + edge/subscribe CanonicalEvent) + **Passos 33–34** (replicação cross-ACL + offline/conflitos) + **milestone Object/Action `/api/v2`**.
+> **Em andamento:** consolidação/hardening (ver `docs/platform-consolidation-audit.md`) — uma fonte de verdade Objects/Links, Postgres CAS, auth, Actions transacionais.
+> Próximo roadmap clássico após gates de consolidação: **Passo 35** (AIP / AI Gateway).
 
 ---
 
@@ -200,7 +200,7 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 
 ---
 
-## ▶ PRÓXIMO — PASSO 22
+## ▶ PRÓXIMO — PASSO 26
 
 ## BLOCO 6 — ONTOLOGY (ENTREGUE)
 
@@ -244,7 +244,7 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 ## BLOCO 7 — ENTITY RESOLUTION (quem é quem entre as fontes)
 
 ### PASSO 20 — Pipeline de ER: normalização → blocking → scoring
-<!-- ENTREGUE: contracts entity-resolution + packages/entity-resolution (er). Normalize→block→score + soft clusters. Sem audit persistido / gold set / GUI (Passos 21–22). -->
+<!-- ENTREGUE: contracts entity-resolution + packages/entity-resolution (er). Normalize→block→score + soft clusters. Sem gold set / GUI (Passos 21–22). -->
 **Construir:** normalização (lowercase, sem acentos, CNPJ só dígitos); blocking por chave exata + nome normalizado (nunca O(n²)); scoring por regras ponderadas com thresholds match/no-match/review.
 **Patentes:**
 - **US 8,554,719** — serve para: resolução de entidades (fundação da família).
@@ -265,22 +265,24 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 **Gate:** toda decisão auditável; false merge reversível. *(tasks 064–067)* — `pnpm er -- demo`
 
 ### PASSO 22 — Gold set + revisão humana
+<!-- ENTREGUE: packages/entity-resolution (gold corpus 50 + metrics + feedback) + infra/sql/0014_er_gold_set.sql + GET/POST /api/v2/er/review-queue|review. Sem Functions/Actions (Passo 23+). -->
 **Construir:** 50 pares rotulados (MATCH/NO_MATCH); métricas precision/recall/F1/**false-merge-rate**/false-split-rate/manual-review-rate; fila + endpoint de revisão para zona cinzenta.
 **Patentes:**
 - **US20250165857A1** — serve para: o feedback humano melhorando a resolução (a mesma do Passo 21 — fecha o loop de aprendizado).
-**Gate:** métricas medidas; false merge rate documentado (contamina o grafo se alto). *(tasks 068–070)*
+**Gate:** métricas medidas; false merge rate documentado (contamina o grafo se alto). *(tasks 068–070)* — `pnpm er -- demo`
 
 ---
 
 ## BLOCO 8 — FUNCTIONS + ACTIONS (dados provocando mudança no mundo)
 
 ### PASSO 23 — Function registry
+<!-- ENTREGUE: packages/function-registry + contracts function-runtime + POST /api/v2/ontologies/{id}/functions/{apiName}/execute. Pura, versionada. Sem Action apply (Passo 24). -->
 **Construir:** `f(objects) → result` — nunca altera estado (ex.: `scoreRecord`, `aggregateMetrics`, `deriveFlags`); versionada, testável, registrada.
 **Patentes:** (camada cinética — definida pela separação semântico/cinético das Dynamic Ontology patents do Passo 17).
-**Gate:** function pura, versionada, invocável via API. *(tasks 071–073)*
+**Gate:** function pura, versionada, invocável via API. *(tasks 071–073)* — `pnpm fn -- demo`
 
 ### PASSO 24 — Action engine (o momento mais importante)
-<!-- MILESTONE: packages/action-engine + platform-api /api/v2 + ObjectRepository/LinkRepository + ObjectSet algebra. Domain-neutral test: Customer/SalesOrder/Product + approve-sales-order. -->
+<!-- ENTREGUE: packages/action-engine + platform-api /api/v2 apply/validate/parameter-tree/render. Pipeline authorize → validate → tx → write-back → audit. ActionDef: postconditions, compensation, auditRequirements, generate_document. Parameter tree + workflow ordenado. LLM/UI nunca escrevem. Domain-neutral: Customer/SalesOrder/Product + approve-sales-order. Gate: pnpm act -- demo -->
 **Construir:** ActionDef (input_object_types, parameter_schema, preconditions, authorization_policy, validation, transaction, side_effects, postconditions, compensation, audit_requirements); pipeline FIXO: **authorize → validate → tx → write-back → audit**; `expectedObjectVersions` (optimistic concurrency); `idempotencyKey`; LLM/UI NUNCA escrevem direto.
 **Patentes:**
 - **US 8,429,194** — serve para: workflows sobre documentos/objetos (fundação da família de workflow).
@@ -291,16 +293,18 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US 10,706,220** — serve para: workflow generation (continuação).
 - **US 9,223,773** — serve para: geração de documentos a partir do modelo.
 - **US20240386347A1 / EP4465217** — servem para: gestão de processos baseada em objetos (actions tipadas por ObjectType).
-**Gate:** unauthorized → denied; duplicate (idempotencyKey) → 1 execução; stale object → conflict; audit completo. *(tasks 074–080)*
+**Gate:** unauthorized → denied; duplicate (idempotencyKey) → 1 execução; stale object → conflict; audit completo. *(tasks 074–080)* — `pnpm act -- demo`
 
 ### PASSO 25 — Write-back (fechar o ciclo na fonte)
+<!-- ENTREGUE: Connector.writeBack + inverse map (PropertyType ↔ source field) + drain outbox → fonte → object version + audit WriteBackConverged. Sem GUI de tagging / DSL. Gate: pnpm act -- writeback / pnpm csdk -- writeback -->
 **Construir:** write-path no Connector SDK; Action escreve na fonte pelo connector; fonte muda → connector detecta → nova versão → ontology converge.
 **Patentes:**
 - **US 8,930,897** — serve para: a via de retorno — o object model sincronizado de volta com a fonte externa.
 - **US 10,552,524** — serve para: object synchronization (sincronização de objetos com sistemas externos).
-**Gate: O GATE DO PRODUTO** — ciclo observe→decide→act→write-back→novo estado visível no audit. *(tasks 081–085)*
+**Gate: O GATE DO PRODUTO** — ciclo observe→decide→act→write-back→novo estado visível no audit. *(tasks 081–085)* — `pnpm act -- writeback`
 
 ### PASSO 26 — 2ª fonte + links cruzados + propagação de classificação
+<!-- ENTREGUE: 2 connectors (crm Confidential + erp Unclassified) → lineage inherit max(inputs) → objeto herda → link cruzado sharing constraint. Dissemination view por viewing level. Sem map GUI / share anônimo / vaults. Gate: pnpm policy -- classify -->
 **Construir:** segundo connector; links entre objetos de fontes diferentes; classificação propaga via lineage (A confidencial → transform(A) herda → objeto herda).
 **Patentes:**
 - **US 10,146,960 / US 11,720,713** — servem para: ambientes colaborativos / acesso por classificação.
@@ -309,13 +313,14 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US 12,066,982** — serve para: compartilhamento de data assets.
 - **US 12,353,582** — serve para: exploração/acesso a data assets.
 - **US 12,619,785** — serve para: permissões por hierarquia de documentos.
-**Gate:** propagação de classificação comprovada de ponta a ponta. *(tasks 086–092)*
+**Gate:** propagação de classificação comprovada de ponta a ponta. *(tasks 086–092)* — `pnpm policy -- classify`
 
 ---
 
 ## BLOCO 9 — SEGURANÇA COMPLETA (hardening)
 
 ### PASSO 27 — Lineage colunar + redaction de grafo
+<!-- ENTREGUE: column lineage (customers.email Confidential → enriched.customer_email herda); redactGraph remove nós/propriedades acima do viewing level, repara arestas soltas, snapshot sanitizado sem vazar. Sem GUI/investigation/vector clocks. Gate: pnpm policy -- redact -->
 **Construir:** lineage até coluna/property; redaction: remove nós e propriedades não autorizados, repara arestas soltas, entrega grafo sanitizado.
 **Patentes:**
 - **US 9,501,761** — serve para: **colaboração com grafo redigido** (redacted graph) — a base da redaction.
@@ -324,21 +329,24 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US 11,327,641** — serve para: colaboração (continuação).
 - **US 12,386,496** — serve para: colaboração (continuação).
 - **US20250328230A1** — serve para: continuations da colaboração.
-**Gate:** grafo sanitizado sem vazar e sem arestas quebradas. *(tasks 093–097)*
+**Gate:** grafo sanitizado sem vazar e sem arestas quebradas. *(tasks 093–097)* — `pnpm policy -- redact`
 
-### PASSO 28 — Noninterference + fuzzing de autorização
+### PASSO 28 — Noninterference + fuzzing de autorização — **ENTREGUE**
+<!-- ENTREGUE: 8 canais (count/error/autocomplete/index/embeddings/cache/LLM/logs); deny≡miss (404 not found); count=|autorizados| (0≡vazio); cache por principal; embeddings/LLM fail-closed (não são produto); fuzzer PRNG seed 28 × oracle independente. Gate: pnpm policy -- ni -->
 **Construir:** usuário sem acesso não infere NADA por: count, erro diferente, autocomplete, índice, embeddings, cache, LLM, logs; fuzzer gerando principal × resource × action × context.
 **Patentes:**
 - **WO2022245989** — serve para: controle de ações/acesso de usuários.
 - **US 10,044,745** — serve para: avaliação de risco de segurança de rede.
-**Gate:** suite noninterference (8 canais) verde; fuzzing sem violação. *(tasks 098–105)*
+**Gate:** suite noninterference (8 canais) verde; fuzzing sem violação. *(tasks 098–105)* — `pnpm policy -- ni`
 
 ---
 
 ## BLOCO 10 — SEARCH + APLICAÇÕES
 
-### PASSO 29 — Índice permission-aware + Query API
+### PASSO 29 — Índice permission-aware + Query API — **ENTREGUE**
 **Construir:** Meilisearch com ACL no documento; Query API → Ontology Query Planner → Object Store / Search Index / Graph / Federation; segurança nas 6 superfícies (hit, autocomplete, facet, suggestion, snippet, ranking).
+**Kernel:** `packages/query-api` + `contracts` `SearchDocument`/`SearchQuery`. Índice in-memory com ACL+classificação no doc (Meilisearch = sidecar de escala, mesmo shape). Planner: texto → search-index; filtro/tipo → object-store; Search Around → knowledge-graph; `federate` → federation (Passo 31).
+**Gate:** `pnpm search -- demo` — leakage = 0 nas 6 superfícies; `indexLagMs` medido; p95 ≤ 50ms (in-memory).
 **Patentes:**
 - **US 9,031,981** — serve para: Search Around (busca ao redor de um objeto).
 - **US 9,798,768** — serve para: Search Around (continuação).
@@ -350,35 +358,37 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US 11,238,102** — serve para: busca em linguagem natural.
 **Gate:** permission leakage = 0; index freshness medido; p95 no alvo. *(tasks 106–115)*
 
-### PASSO 30 — APIs de exploração genéricas (SEM app de negócio)
-<!-- ADIADO: 1ª app / UIs só depois dos gates em datasets de teste + pedido explícito. -->
+### PASSO 30 — APIs de exploração genéricas (SEM app de negócio) — **ENTREGUE**
+<!-- ENTREGUE: GraphPattern (nós/arestas/opcional) + índice em blocos 1/2 níveis (US8799240) + scoring ponderado sem mapa (US9639580) + slot.property/autocomplete/projeção sem spreadsheet UI (US9280532/US9880993). HTTP POST graphPatterns/execute. Sem app/GUI. Gate: pnpm explore -- demo -->
 **Construir (kernel):** queries de padrão no grafo; APIs de leitura de objetos/links; **não** entregar app vertical nem UI de negócio neste passo.
 **Quando houver app:** entra em `apps/<nome>/` sobre a mesma Ontology — fora do core.
 **Patentes (referência, usar sob demanda):**
 - **US 8,799,240** e continuações — exploração em larga escala (capacidade de plataforma).
 - **US 9,639,580 / US 9,280,532 / US 9,880,993** — visualização / rich objects (só se a app pedida exigir).
-**Gate (kernel):** Query/API de objetos + grafo sem vazar permissão; **sem** app de negócio no core. *(tasks 116–125 — parte app suspensa)*
+**Gate (kernel):** Query/API de objetos + grafo sem vazar permissão; **sem** app de negócio no core. *(tasks 116–125 — parte app suspensa)* — `pnpm explore -- demo`
 
-### PASSO 31 — Federation (quando houver fonte que não pode ser copiada)
+### PASSO 31 — Federation (quando houver fonte que não pode ser copiada) — **ENTREGUE**
+<!-- ENTREGUE: packages/federation + contracts PushdownSpec/TemporaryObject + Connector.federatedQuery. Planner → pushdown → vista TTL provenance=federated → promote opcional copy-on-write. ACL da fonte + redaction. Sem GUI/DuckDB físico. Gate T1.5: pnpm fed -- demo -->
 **Construir:** federation planner → pushdown query → fonte → representação temporária → materialização opcional.
 **Patentes:**
 - **US 10,402,397** — serve para: federação de dados.
 - **US 11,281,659** — serve para: **representações temporárias de dados federados** — acessar antes de materializar definitivamente.
 - **US 11,681,690** — serve para: federation (continuação).
-**Gate:** T1.5 — consultar registro remoto sem copiá-lo. *(tasks 126–130)*
+**Gate:** T1.5 — consultar registro remoto sem copiá-lo. *(tasks 126–130)* — `pnpm fed -- demo`
 
-### PASSO 32 — Fonte remota / edge (SOMENTE sob demanda explícita)
-<!-- NÃO é o default. Só se houver fonte concreta que exija connector edge. -->
+### PASSO 32 — Fonte remota / edge — **ENTREGUE** (pedido explícito)
+<!-- ENTREGUE: packages/edge-control + Connector.subscribe → CanonicalEvent + baseline/anomalia/transmissão (US 11,799,877 / 12,261,861 / US20250233873A1). Sem GUI / sem vertical de fábrica. Gate: pnpm edge -- demo -->
 **Construir (se pedido):** connector via o mesmo SDK (`capabilities[]`) — eventos entram como `CanonicalEvent`.
 **Patentes (opcionais):**
 - **US 11,799,877 / US 12,261,861 / US20250233873A1** — integração edge (só com fonte real).
-**Gate:** dados remotos entram pelo mesmo envelope canônico; **zero** camada de domínio no core. *(tasks 131–135)*
+**Gate:** dados remotos entram pelo mesmo envelope canônico; **zero** camada de domínio no core. *(tasks 131–135)* — `pnpm edge -- demo`
 
 ---
 
 ## BLOCO 11 — REPLICATION + OFFLINE (só com objetos/actions existindo)
 
 ### PASSO 33 — Replication protocol cross-ACL
+<!-- ENTREGUE: packages/replication + contracts/v1/replication — mutation+checkpoint, chunks, ontology map, redaction cross-ACL. Gate: pnpm repl -- demo -->
 **Construir:** mutation (mutation_id, source_replica, logical_clock, object, operation, payload, policy, timestamp, dependencies); vector checkpoints; convergência mesmo com evento parcialmente redigido; mudança de ACL = mutation.
 **Patentes:**
 - **US 8,886,601 / US 9,785,694** — servem para: replicação incremental.
@@ -386,14 +396,15 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US 8,527,461 / US 8,782,004 / US 9,715,518 / US 10,089,345** — servem para: replicação cross-ACL (réplicas com permissões diferentes).
 - **US 10,621,198** — serve para: replicação segura.
 - **US 8,838,538** — serve para: mudanças de ACL durante replicação.
-**Gate:** réplica sem permissão converge mesmo recebendo mudança redigida. *(tasks 136–143)*
+**Gate:** réplica sem permissão converge mesmo recebendo mudança redigida. *(tasks 136–143)* — `pnpm repl -- demo`
 
 ### PASSO 34 — Offline + conflitos
+<!-- ENTREGUE: packages/offline-sync + contracts/v1/offline — snapshot autorizado, version vectors, catálogo de conflitos, .base/.dsco. Sem GUI. Gate: pnpm offline -- demo -->
 **Construir:** snapshot autorizado local → disconnect → mutations locais → reconnect → conflict detector → resolution → estado convergido.
 **Patentes:**
 - **US 8,515,912 / US 9,569,070** — servem para: detecção e resolução de conflitos (deconfliction).
 - **US 8,364,642 / US 8,812,444 / US 9,275,069** — servem para: investigações desconectadas (trabalho offline).
-**Gate (invariante):** rede estabilizou → `authorized_state(A) == authorized_state(B)` na porção compartilhável; testado com partition + reorder + duplicate + drop + 3+ réplicas. *(tasks 144–150)*
+**Gate (invariante):** rede estabilizou → `authorized_state(A) == authorized_state(B)` na porção compartilhável; testado com partition + reorder + duplicate + drop + 3+ réplicas. *(tasks 144–150)* — `pnpm offline -- demo`
 
 ---
 
@@ -454,10 +465,10 @@ BLOCO 3  Store imutável (versões, deltas, time travel) → passos 8–10  ✓ 
 BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14  ✓ ENTREGUE
 BLOCO 5  Lineage + Policy + Audit                      → passos 15–16  ✓ ENTREGUE
 BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19  ✓ ENTREGUE
-BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22  ◀ Passos 20–21 ✓; 22 próximo
-BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ★ CICLO DA PLATAFORMA
+BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22  ✓ ENTREGUE
+BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ◀ Passos 23–25 ✓; 26 próximo clássico
 BLOCO 9  Security hardening                            → passos 27–28
-BLOCO 10 Search + APIs (+Federation; Edge só se pedido)→ passos 29–32
+BLOCO 10 Search + APIs (+Federation; Edge só se pedido)→ passos 29–32  ◀ 29–32 ✓
 BLOCO 11 Replication + Offline                         → passos 33–34
 BLOCO 12 AIP (4 degraus + evals)                       → passos 35–37
 BLOCO 13 Closed-loop E2E + hardening                   → passos 38–39
@@ -465,7 +476,7 @@ BLOCO 13 Closed-loop E2E + hardening                   → passos 38–39
 
 **Dataset-first:** validar cada bloco com datasets de teste genéricos. App real da empresa (qualquer vertical) entra em `apps/<nome>/` **só depois** — nunca no core.
 
-**Ordem obrigatória daqui pra frente:** Passo 22 (gold set / revisão humana) → demais.
+**Ordem obrigatória daqui pra frente:** Passo 26 (2ª fonte) → demais.
 
 **Não vira core (patentes verticais — ficam fora da fundação):**
 US 9,129,219 / 9,836,694 (crime-risk) · US 9,501,202 (genomic) · US 9,431,507 (acoustic sensing) · US 9,872,083 / 10,708,669 (media/ads) · US 8,494,941 (financial similarity) · US 9,830,157 / 9,676,662 (image metadata) · US 9,606,647 (gestures) · US 11,706,090 (network troubleshooting).

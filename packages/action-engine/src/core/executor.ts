@@ -8,6 +8,7 @@ import type {
   ActionApplyResult,
   ActionExecution,
   ActionExecutor,
+  ActionParameterTree,
   ActionRule,
   ActionSideEffect,
   ActionSubmissionCriterion,
@@ -17,6 +18,7 @@ import type {
   AuthorizeFn,
   ObjectRecord,
   OntologyId,
+  OperationalEventKind,
 } from 'contracts';
 
 import {
@@ -25,8 +27,13 @@ import {
 } from 'object-platform';
 import { createAuditLog } from 'policy-engine';
 
+import {
+  renderDocumentTemplate,
+  templateContextFrom,
+} from './document-template.js';
 import { createMemoryActionExecutionStore } from './execution-store.js';
 import { createMemoryOperationalEventStore } from './events.js';
+import { buildParameterTree } from './parameter-tree.js';
 import type {
   ActionTransactionStores,
   CreateActionExecutorOptions,
@@ -147,7 +154,12 @@ export function createActionExecutor(
         candidates.push({ objectTypeId: c.objectTypeId, pkParam: c.primaryKeyParam });
       }
     }
-    for (const rule of def.rules ?? []) {
+    for (const c of def.postconditions ?? []) {
+      if (c.objectTypeId && c.primaryKeyParam) {
+        candidates.push({ objectTypeId: c.objectTypeId, pkParam: c.primaryKeyParam });
+      }
+    }
+    for (const rule of [...(def.rules ?? []), ...(def.compensation ?? [])]) {
       if ('primaryKeyFromParam' in rule && 'objectTypeId' in rule) {
         candidates.push({
           objectTypeId: rule.objectTypeId,
@@ -213,7 +225,8 @@ export function createActionExecutor(
       const pk = String(paramValue(params, rule.primaryKeyFromParam) ?? '');
       const properties: Record<string, unknown> = {};
       for (const [prop, paramName] of Object.entries(rule.propertiesFromParams ?? {})) {
-        properties[prop] = paramValue(params, paramName);
+        const v = paramValue(params, paramName);
+        if (v !== undefined) properties[prop] = v;
       }
       const obj = await asValue(
         objects.create({
@@ -240,7 +253,8 @@ export function createActionExecutor(
       const pk = String(paramValue(params, rule.primaryKeyFromParam) ?? '');
       const properties: Record<string, unknown> = {};
       for (const [prop, paramName] of Object.entries(rule.setPropertiesFromParams)) {
-        properties[prop] = paramValue(params, paramName);
+        const v = paramValue(params, paramName);
+        if (v !== undefined) properties[prop] = v;
       }
       const obj = await asValue(
         objects.update(ontologyId, rule.objectTypeId, pk, {
@@ -317,7 +331,77 @@ export function createActionExecutor(
         principal,
         linkTypeId: rule.linkTypeId,
       });
+      return;
     }
+
+    if (rule.kind === 'generate_document') {
+      const pk = String(paramValue(params, rule.primaryKeyFromParam) ?? '');
+      const current = await asValue(objects.get(ontologyId, rule.objectTypeId, pk));
+      if (!current) {
+        throw new Error(`generate_document: object ${rule.objectTypeId}::${pk} not found`);
+      }
+      const template =
+        rule.templateFromParam != null
+          ? String(paramValue(params, rule.templateFromParam) ?? '')
+          : (rule.template ?? '');
+      const rendered = renderDocumentTemplate(
+        template,
+        templateContextFrom(current.properties, params),
+      );
+      const obj = await asValue(
+        objects.update(ontologyId, rule.objectTypeId, pk, {
+          properties: { [rule.outputProperty]: rendered },
+          expectedVersion: expectedVersionOf(expectedObjectVersions, rule.objectTypeId, pk),
+        }),
+      );
+      modified.push(obj);
+      await events.append({
+        kind: 'ObjectModified',
+        ontologyId,
+        principal,
+        objectId: obj.id,
+        objectTypeId: obj.objectTypeId,
+        primaryKey: obj.primaryKey,
+        payload: { properties: { [rule.outputProperty]: rendered } },
+      });
+    }
+  }
+
+  async function recordAudit(
+    stores: ActionTransactionStores,
+    def: ActionTypeDef,
+    execution: ActionExecution,
+    kind: Extract<OperationalEventKind, 'ActionApplied' | 'ActionDenied' | 'ActionFailed'>,
+  ): Promise<string> {
+    const reqs = def.auditRequirements ?? {};
+    const payload: Record<string, unknown> = {
+      kind,
+      actionTypeId: def.id,
+      actionApiName: apiNameOf(def),
+      status: execution.status,
+    };
+    if (reqs.includeParameters !== false) payload.parameters = execution.parameters;
+    if (reqs.includeResult !== false && execution.result) payload.result = execution.result;
+    if (execution.error) payload.error = execution.error;
+    const entry = await stores.audit.append(
+      JSON.stringify(payload),
+      {
+        ontologyId: execution.ontologyId,
+        executionId: execution.id,
+        actionApiName: apiNameOf(def),
+        kind,
+      },
+      execution.principal,
+    );
+    await stores.events.append({
+      kind,
+      ontologyId: execution.ontologyId,
+      principal: execution.principal,
+      actionTypeId: def.id,
+      actionExecutionId: execution.id,
+      payload,
+    });
+    return entry.id;
   }
 
   async function runRules(
@@ -432,6 +516,8 @@ export function createActionExecutor(
   async function applyWith(
     stores: ActionTransactionStores,
     req: ActionApplyRequest,
+    onPersisted?: (execution: ActionExecution) => void,
+    resume?: ActionExecution,
   ): Promise<ActionApplyResult> {
     const def = getDef(req.ontologyId, req.actionApiName);
     if (!def) {
@@ -443,75 +529,112 @@ export function createActionExecutor(
       };
     }
 
-    const executionId = nextId('aex');
-    const startedAt = clock();
-    let execution: ActionExecution = {
-      id: executionId,
-      ontologyId: req.ontologyId,
-      actionTypeId: def.id,
-      actionApiName: apiNameOf(def),
-      parameters: { ...req.parameters },
-      principal: req.principal,
-      status: 'PENDING',
-      idempotencyKey: req.idempotencyKey,
-      startedAt,
-    };
-
-    if (req.idempotencyKey) {
-      const claimed = await stores.executions.claim(execution);
-      if (!claimed.claimed) {
-        return resultOf(claimed.execution);
-      }
-      execution = claimed.execution;
+    let execution: ActionExecution;
+    if (resume) {
+      execution = resume;
+      onPersisted?.(execution);
     } else {
-      await stores.executions.save(execution);
-    }
+      const executionId = nextId('aex');
+      const startedAt = clock();
+      execution = {
+        id: executionId,
+        ontologyId: req.ontologyId,
+        actionTypeId: def.id,
+        actionApiName: apiNameOf(def),
+        parameters: { ...req.parameters },
+        principal: req.principal,
+        status: 'PENDING',
+        idempotencyKey: req.idempotencyKey,
+        startedAt,
+      };
 
-    const authz = authorize({
-      principal: req.principal,
-      resource: `action:${apiNameOf(def)}`,
-      operation: 'modify',
-    });
-    if (authz.decision === 'deny') {
-      execution.status = 'DENIED';
-      execution.finishedAt = clock();
-      execution.error = authz.reason;
-      await stores.executions.save(execution);
-      return resultOf(execution);
-    }
-    execution.status = 'AUTHORIZED';
-    await stores.executions.save(execution);
-
-    const validation = await validateWith(stores, {
-      ontologyId: req.ontologyId,
-      actionApiName: req.actionApiName,
-      parameters: req.parameters,
-      principal: req.principal,
-    });
-    if (!validation.valid) {
-      execution.status = 'FAILED';
-      execution.finishedAt = clock();
-      execution.error = validation.errors.map((e) => e.message).join('; ');
-      await stores.executions.save(execution);
-      return resultOf(execution);
-    }
-    execution.status = 'VALIDATED';
-    await stores.executions.save(execution);
-
-    if (req.expectedObjectVersions) {
-      for (const [key, expected] of Object.entries(req.expectedObjectVersions)) {
-        const [objectTypeId, primaryKey] = key.split('::');
-        if (!objectTypeId || !primaryKey) continue;
-        const obj = await asValue(
-          stores.objects.get(req.ontologyId, objectTypeId, primaryKey),
-        );
-        if (!obj || obj.version !== expected) {
-          execution.status = 'FAILED';
-          execution.finishedAt = clock();
-          execution.error = `version conflict on ${key}`;
-          await stores.executions.save(execution);
-          return resultOf(execution);
+      if (req.idempotencyKey) {
+        const claimed = await stores.executions.claim(execution);
+        if (!claimed.claimed) {
+          // Failed executions are not re-runnable: a repeated idempotencyKey
+          // returns the original FAILED (or terminal) record without re-executing.
+          return resultOf(claimed.execution);
         }
+        execution = claimed.execution;
+      } else {
+        await stores.executions.save(execution);
+      }
+      onPersisted?.(execution);
+
+      const authz = authorize({
+        principal: req.principal,
+        resource: `action:${apiNameOf(def)}`,
+        operation: 'modify',
+      });
+      if (authz.decision === 'deny') {
+        execution.status = 'DENIED';
+        execution.finishedAt = clock();
+        execution.error = authz.reason;
+        execution.auditEntryId = await recordAudit(stores, def, execution, 'ActionDenied');
+        await stores.executions.save(execution);
+        return resultOf(execution);
+      }
+      execution.status = 'AUTHORIZED';
+      await stores.executions.save(execution);
+
+      const validation = await validateWith(stores, {
+        ontologyId: req.ontologyId,
+        actionApiName: req.actionApiName,
+        parameters: req.parameters,
+        principal: req.principal,
+      });
+      if (!validation.valid) {
+        execution.status = 'FAILED';
+        execution.finishedAt = clock();
+        execution.error = validation.errors.map((e) => e.message).join('; ');
+        execution.auditEntryId = await recordAudit(stores, def, execution, 'ActionFailed');
+        await stores.executions.save(execution);
+        return resultOf(execution);
+      }
+      execution.status = 'VALIDATED';
+      await stores.executions.save(execution);
+
+      if (req.expectedObjectVersions) {
+        for (const [key, expected] of Object.entries(req.expectedObjectVersions)) {
+          const [objectTypeId, primaryKey] = key.split('::');
+          if (!objectTypeId || !primaryKey) continue;
+          const obj = await asValue(
+            stores.objects.get(req.ontologyId, objectTypeId, primaryKey),
+          );
+          if (!obj || obj.version !== expected) {
+            execution.status = 'FAILED';
+            execution.finishedAt = clock();
+            execution.error = `version conflict on ${key}`;
+            execution.auditEntryId = await recordAudit(stores, def, execution, 'ActionFailed');
+            await stores.executions.save(execution);
+            return resultOf(execution);
+          }
+        }
+      }
+
+      const needsApproval = def.requiresApproval === true || def.approvals?.required === true;
+      if (needsApproval) {
+        execution.status = 'AWAITING_APPROVAL';
+        execution.approval = { required: true, requestedAt: clock() };
+        await stores.executions.save(execution);
+        await stores.events.append({
+          kind: 'ApprovalRequested',
+          ontologyId: req.ontologyId,
+          principal: req.principal,
+          actionTypeId: def.id,
+          actionExecutionId: execution.id,
+        });
+        if (stores.outbox) {
+          await stores.outbox.insert({
+            topic: 'action.approval.requested',
+            key: `${req.ontologyId}+${execution.id}`,
+            payload: { executionId: execution.id, actionApiName: apiNameOf(def) },
+            principal: req.principal,
+            tenantId: 'default',
+            traceId: execution.id,
+          });
+        }
+        return resultOf(execution);
       }
     }
 
@@ -526,6 +649,34 @@ export function createActionExecutor(
       req.principal,
       req.expectedObjectVersions,
     );
+
+    const refsAfter = await loadReferencedObjects(
+      stores.objects,
+      def,
+      req.parameters,
+      req.ontologyId,
+    );
+    for (const c of def.postconditions ?? []) {
+      if (!evaluateCriterion(c, req.parameters, refsAfter)) {
+        if (def.compensation?.length) {
+          await runRules(
+            stores,
+            { ...def, rules: def.compensation },
+            req.ontologyId,
+            req.parameters,
+            req.principal,
+          );
+        }
+        execution.status = 'FAILED';
+        execution.finishedAt = clock();
+        execution.error = `postcondition failed: ${c.kind}`;
+        execution.result = result;
+        execution.auditEntryId = await recordAudit(stores, def, execution, 'ActionFailed');
+        await stores.executions.save(execution);
+        return resultOf(execution);
+      }
+    }
+
     await runSideEffects(
       stores,
       def.sideEffects,
@@ -535,35 +686,10 @@ export function createActionExecutor(
       execution.id,
     );
 
-    const auditEntry = await stores.audit.append(
-      JSON.stringify({
-        kind: 'ActionApplied',
-        actionTypeId: def.id,
-        actionApiName: apiNameOf(def),
-        parameters: req.parameters,
-        result,
-      }),
-      {
-        ontologyId: req.ontologyId,
-        executionId: execution.id,
-        actionApiName: apiNameOf(def),
-      },
-      req.principal,
-    );
-
-    await stores.events.append({
-      kind: 'ActionApplied',
-      ontologyId: req.ontologyId,
-      principal: req.principal,
-      actionTypeId: def.id,
-      actionExecutionId: execution.id,
-      payload: result,
-    });
-
     execution.status = 'SUCCEEDED';
     execution.finishedAt = clock();
     execution.result = result;
-    execution.auditEntryId = auditEntry.id;
+    execution.auditEntryId = await recordAudit(stores, def, execution, 'ActionApplied');
     await stores.executions.save(execution);
     return resultOf(execution);
   }
@@ -581,19 +707,45 @@ export function createActionExecutor(
       return validateWith(defaultStores, req);
     },
 
+    async parameterTree(req: ActionValidateRequest): Promise<ActionParameterTree> {
+      const def = getDef(req.ontologyId, req.actionApiName);
+      if (!def) {
+        throw new Error(`unknown action: ${req.actionApiName}`);
+      }
+      const refs = await loadReferencedObjects(
+        defaultStores.objects,
+        def,
+        req.parameters,
+        req.ontologyId,
+      );
+      return buildParameterTree(def, req.parameters, refs);
+    },
+
     async apply(req: ActionApplyRequest): Promise<ActionApplyResult> {
-      const run = (stores: ActionTransactionStores) => applyWith(stores, req);
+      let persisted: ActionExecution | undefined;
+      const run = (stores: ActionTransactionStores) =>
+        applyWith(stores, req, (e) => {
+          persisted = e;
+        });
       try {
         if (opts.unitOfWork) {
           return await opts.unitOfWork.run(run);
         }
         return await run(defaultStores);
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (persisted) {
+          persisted.status = 'FAILED';
+          persisted.finishedAt = clock();
+          persisted.error = msg;
+          await defaultStores.executions.save(persisted);
+          return resultOf(persisted);
+        }
         return {
           executionId: nextId('aex'),
           status: 'FAILED',
           actionTypeId: req.actionApiName,
-          error: err instanceof Error ? err.message : String(err),
+          error: msg,
         };
       }
     },
@@ -601,7 +753,119 @@ export function createActionExecutor(
     async getExecution(id) {
       return defaultStores.executions.get(id);
     },
+
+    async approve(id, principal) {
+      return decideApproval(id, principal, 'approved');
+    },
+
+    async reject(id, principal) {
+      return decideApproval(id, principal, 'rejected');
+    },
   };
+
+  async function decideApproval(
+    id: string,
+    principal: string,
+    decision: 'approved' | 'rejected',
+  ): Promise<ActionApplyResult> {
+    const current = await defaultStores.executions.get(id);
+    if (!current) {
+      return {
+        executionId: id,
+        status: 'FAILED',
+        actionTypeId: '',
+        error: `unknown execution: ${id}`,
+      };
+    }
+    if (current.status !== 'AWAITING_APPROVAL') {
+      throw new Error(`illegal transition: ${current.status} → ${decision}`);
+    }
+    const def = getDef(current.ontologyId, current.actionApiName);
+    if (!def) {
+      throw new Error(`unknown action: ${current.actionApiName}`);
+    }
+    if (def.approvals?.approverPolicy && principal === current.principal) {
+      throw new Error('self-approval is blocked when approverPolicy is set');
+    }
+    const authz = authorize({
+      principal,
+      resource: `action-execution:${id}`,
+      operation: 'modify',
+    });
+    if (authz.decision === 'deny') {
+      throw new Error(authz.reason);
+    }
+    if (decision === 'rejected') {
+      const swapped = defaultStores.executions.casStatus
+        ? await defaultStores.executions.casStatus(id, 'AWAITING_APPROVAL', 'REJECTED', {
+            finishedAt: clock(),
+            error: `rejected by ${principal}`,
+            approval: {
+              required: true,
+              requestedAt: current.approval?.requestedAt,
+              decidedAt: clock(),
+              decidedBy: principal,
+              decision: 'rejected',
+            },
+          })
+        : undefined;
+      if (!swapped && defaultStores.executions.casStatus) {
+        throw new Error('concurrent approval decision won');
+      }
+      const rejected = swapped ?? {
+        ...current,
+        status: 'REJECTED' as const,
+        finishedAt: clock(),
+        error: `rejected by ${principal}`,
+      };
+      if (!swapped) await defaultStores.executions.save(rejected);
+      await defaultStores.events.append({
+        kind: 'ApprovalDecided',
+        ontologyId: current.ontologyId,
+        principal,
+        actionExecutionId: id,
+        payload: { decision: 'rejected' },
+      });
+      return resultOf(rejected);
+    }
+
+    const swapped = defaultStores.executions.casStatus
+      ? await defaultStores.executions.casStatus(id, 'AWAITING_APPROVAL', 'RUNNING', {
+          approval: {
+            required: true,
+            requestedAt: current.approval?.requestedAt,
+            decidedAt: clock(),
+            decidedBy: principal,
+            decision: 'approved',
+          },
+        })
+      : undefined;
+    if (defaultStores.executions.casStatus && !swapped) {
+      throw new Error('concurrent approval decision won');
+    }
+    const running = swapped ?? { ...current, status: 'RUNNING' as const };
+    if (!swapped) await defaultStores.executions.save(running);
+
+    const req: ActionApplyRequest = {
+      ontologyId: current.ontologyId,
+      actionApiName: current.actionApiName,
+      parameters: current.parameters,
+      principal: current.principal,
+      idempotencyKey: current.idempotencyKey,
+    };
+    const run = (stores: ActionTransactionStores) => applyWith(stores, req, undefined, running);
+    try {
+      if (opts.unitOfWork) return await opts.unitOfWork.run(run);
+      return await run(defaultStores);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      running.status = 'FAILED';
+      running.finishedAt = clock();
+      running.error = msg;
+      await defaultStores.executions.save(running);
+      return resultOf(running);
+    }
+  }
 }
 
 export { createMemoryOperationalEventStore };

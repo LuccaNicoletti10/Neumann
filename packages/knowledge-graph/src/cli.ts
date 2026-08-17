@@ -8,13 +8,16 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { createDeterministicClock, createIdGenerator } from './core/determinism.js';
+import { detectRedactionCriteria, redactGraph, sanitizedContainsValue } from './core/redact.js';
 import { createKnowledgeGraph } from './core/store.js';
 
-const USAGE = `knowledge-graph (kg / links) — PASSO 19: Links + Knowledge Graph
+const USAGE = `knowledge-graph (kg / links) — PASSO 19 + PASSO 27: Links + Knowledge Graph + redaction
   US20250077899A1 / US 9,378,526 / US 9,621,676 / US 9,906,623
+  US 9,501,761 / US 9,857,960 (grafo redigido)
 
 Uso:
   kg demo
+  kg redact
 `;
 
 export interface CliDeps {
@@ -137,6 +140,83 @@ export function runDemo(log: (message: string) => void = console.log): number {
   return ok ? 0 : 1;
 }
 
+export function runRedactDemo(log: (message: string) => void = console.log): number {
+  log('== PASSO 27: grafo sanitizado (redaction) ==');
+  const secret = 'c1@internal.example';
+  const nodes = [
+    {
+      id: 'obj-c1',
+      objectTypeId: 'ot.customer',
+      primaryKey: 'C1',
+      sourceSystem: 'crm',
+      classification: 'Unclassified' as const,
+      properties: { name: 'Acme', email: secret },
+      propertyClassifications: { email: 'Confidential' },
+    },
+    {
+      id: 'obj-so1',
+      objectTypeId: 'ot.sales_order',
+      primaryKey: 'SO-1',
+      sourceSystem: 'erp',
+      classification: 'Unclassified' as const,
+      properties: { amount: 1200 },
+    },
+    {
+      id: 'obj-note',
+      objectTypeId: 'ot.internal_note',
+      primaryKey: 'N1',
+      classification: 'Confidential' as const,
+      properties: { text: 'internal' },
+    },
+  ];
+  const links = [
+    {
+      id: 'link-placed',
+      linkTypeId: 'lt.placed',
+      sourceObjectId: 'obj-c1',
+      targetObjectId: 'obj-so1',
+      mappingVersionId: 'mv1',
+    },
+    {
+      id: 'link-note',
+      linkTypeId: 'lt.annotated',
+      sourceObjectId: 'obj-c1',
+      targetObjectId: 'obj-note',
+      mappingVersionId: 'mv1',
+    },
+  ];
+
+  const detected = detectRedactionCriteria(nodes);
+  log(`  critérios detectados: ${detected.map((c) => c.kind).join(',')}`);
+
+  const alice = redactGraph(nodes, links, { viewingLevel: 'Confidential' });
+  const bob = redactGraph(nodes, links, { viewingLevel: 'Unclassified' });
+  const bobIds = new Set(bob.nodes.map((n) => n.id));
+  const dangling = bob.links.some(
+    (l) => !bobIds.has(l.sourceObjectId) || !bobIds.has(l.targetObjectId),
+  );
+  const leak = sanitizedContainsValue(bob, secret);
+  log(
+    `  alice nodes=${alice.nodes.length} links=${alice.links.length} email=${Boolean(alice.nodes.find((n) => n.id === 'obj-c1')?.properties?.email)}`,
+  );
+  log(
+    `  bob nodes=${bob.nodes.length} links=${bob.links.length} redactedNodes=${bob.redactedNodeIds.join(',')} dangling=${dangling} leak=${leak}`,
+  );
+
+  const ok =
+    alice.nodes.length === 3 &&
+    alice.links.length === 2 &&
+    Boolean(alice.nodes.find((n) => n.id === 'obj-c1')?.properties?.email) &&
+    !bob.nodes.some((n) => n.id === 'obj-note') &&
+    !bob.nodes.some((n) => n.properties && 'email' in n.properties) &&
+    bob.links.length === 1 &&
+    bob.links[0]?.id === 'link-placed' &&
+    !dangling &&
+    !leak;
+  log(ok ? 'redact ok' : 'redact FAIL');
+  return ok ? 0 : 1;
+}
+
 export function runCommandLine(argv: readonly string[], deps: CliDeps = {}): number {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
@@ -148,6 +228,7 @@ export function runCommandLine(argv: readonly string[], deps: CliDeps = {}): num
     return 0;
   }
   if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'redact') return runRedactDemo(log);
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);
   return 1;

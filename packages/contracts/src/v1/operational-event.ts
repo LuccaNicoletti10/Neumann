@@ -16,6 +16,10 @@ export type OperationalEventKind =
   | 'LinkCreated'
   | 'LinkDeleted'
   | 'ActionApplied'
+  | 'ActionDenied'
+  | 'ActionFailed'
+  | 'ApprovalRequested'
+  | 'ApprovalDecided'
   | 'ExternalWritebackRequested'
   | 'ExternalWritebackSucceeded'
   | 'ExternalWritebackFailed';

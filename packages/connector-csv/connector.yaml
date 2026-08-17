@@ -1,0 +1,5 @@
+name: csv
+version: 1.0.0
+quality: community
+allowedHosts:
+  - file

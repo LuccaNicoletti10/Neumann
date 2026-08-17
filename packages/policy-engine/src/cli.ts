@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * policy-engine — src/cli.ts
- * demo: EPID + authorize + secured read (sem count) + audit tamper detection.
+ * demo: EPID + authorize + secured read (count = autorizados) + audit tamper detection.
  */
 
 import { realpathSync } from 'node:fs';
@@ -13,13 +13,23 @@ import {
   createIdGenerator,
 } from './core/determinism.js';
 import { createAuditLog } from './core/audit.js';
+import { runClassificationPipeline } from './core/classification-pipeline.js';
 import { createPolicyEngine } from './core/engine.js';
+import { runRedactionPipeline } from './core/redaction-pipeline.js';
+import { runAuthzFuzz } from './core/authz-fuzzer.js';
+import { runNoninterferenceSuite } from './core/noninterference.js';
 
-const USAGE = `policy-engine (policy / authz) — PASSO 16: authorize + audit hash-chained
+const USAGE = `policy-engine (policy / authz) — PASSO 16 + PASSO 26 + PASSO 27 + PASSO 28
   US 10,432,469 / US 10,397,229 / US20150188715
+  US 10,146,960 / US 11,720,713 / US 10,915,542 (classification)
+  US 9,501,761 / US 9,857,960 (redacted graph)
+  WO2022245989 / US 10,044,745 (noninterference + fuzz)
 
 Uso:
   policy demo
+  policy classify
+  policy redact
+  policy ni
 `;
 
 export interface CliDeps {
@@ -103,7 +113,7 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
   const bobOnlySecret = engine.securedRead('bob', [
     { resourceId: 'ds-sales', name: 'sales' },
   ]);
-  log(`  bob on sales-only → count=${bobOnlySecret.count} (null=hidden)`);
+  log(`  bob on sales-only → count=${bobOnlySecret.count} (autorizados apenas)`);
 
   log('== 5. create resource admissions ==');
   const created = engine.createResource('alice', {
@@ -142,7 +152,7 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
     aliceRead.decision === 'allow' &&
     bobReadSales.decision === 'deny' &&
     bobView.items.every((i) => i.resourceId === 'ds-secret') &&
-    bobOnlySecret.count === null &&
+    bobOnlySecret.count === 0 &&
     bobOnlySecret.items.length === 0 &&
     aliceView.count === 1 &&
     created.ok &&
@@ -152,6 +162,60 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
     afterRedact.ok;
 
   log(ok ? '== demo ok ==' : '== demo FAIL ==');
+  return ok ? 0 : 1;
+}
+
+export async function runClassifyDemo(
+  log: (message: string) => void = console.log,
+): Promise<number> {
+  log('== PASSO 26: 2ª fonte + links cruzados + classificação via lineage ==');
+  const result = await runClassificationPipeline();
+  log(`  derived classification=${result.derivedClassification}`);
+  log(`  object inherits=${result.objectClassification}`);
+  log(`  link sharing constraint=${result.linkConstraint}`);
+  log(`  alice (Confidential) sees ${result.aliceVisible.length}: ${result.aliceVisible.join(',')}`);
+  log(`  bob (Unclassified) sees ${result.bobVisible.length}: ${result.bobVisible.join(',') || '(none)'}`);
+  log(`  bob sees derived=${result.bobSeesDerived} alice link=${result.aliceSeesLink} bob link=${result.bobSeesLink}`);
+  log(result.ok ? '== classify ok ==' : '== classify FAIL ==');
+  return result.ok ? 0 : 1;
+}
+
+export function runRedactDemo(log: (message: string) => void = console.log): number {
+  log('== PASSO 27: lineage colunar + grafo sanitizado ==');
+  const result = runRedactionPipeline();
+  log(`  column inherit email=${result.emailColumnClass} → customer_email=${result.customerEmailColumnClass}`);
+  log(`  column amount stays=${result.amountColumnClass}`);
+  log(`  critérios=${result.detectedCriteria.join(',')}`);
+  log(
+    `  alice nodes=${result.alice.nodes.length} links=${result.alice.links.length} email=${result.aliceHasEmail} note=${result.aliceHasNote}`,
+  );
+  log(
+    `  bob nodes=${result.bob.nodes.length} links=${result.bob.links.length} email=${result.bobHasEmail} note=${result.bobHasNote} dangling=${result.bobDangling} leak=${result.bobLeaksEmail}`,
+  );
+  log(result.ok ? '== redact ok ==' : '== redact FAIL ==');
+  return result.ok ? 0 : 1;
+}
+
+export function runNoninterferenceDemo(log: (message: string) => void = console.log): number {
+  log('== PASSO 28: noninterference (8 canais) + fuzzing de authorize ==');
+  const ni = runNoninterferenceSuite();
+  log(`  leaked=[${ni.leaked.join(',') || '(none)'}]`);
+  for (const obs of ni.present.observations) {
+    log(`  ${obs.channel} fingerprint=${obs.fingerprint.slice(0, 80)}`);
+  }
+
+  const fuzz = runAuthzFuzz({
+    engine: createPolicyEngine({
+      clock: createDeterministicClock('2024-06-01T12:00:00.000Z'),
+      nextId: createIdGenerator(),
+    }),
+    seed: 28,
+    rounds: 200,
+  });
+  log(`  fuzz rounds=${fuzz.rounds} violations=${fuzz.violations.length}`);
+
+  const ok = ni.ok && fuzz.violations.length === 0;
+  log(ok ? '== ni ok ==' : '== ni FAIL ==');
   return ok ? 0 : 1;
 }
 
@@ -169,6 +233,9 @@ export async function runCommandLine(
     return 0;
   }
   if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'classify') return runClassifyDemo(log);
+  if (cmd === 'redact') return runRedactDemo(log);
+  if (cmd === 'ni' || cmd === 'noninterference') return runNoninterferenceDemo(log);
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);
   return 1;

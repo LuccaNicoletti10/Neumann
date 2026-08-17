@@ -20,14 +20,33 @@ import type {
 import { assertAuthorizeResult } from 'contracts';
 
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
-import type { CreatePolicyEngineOptions } from './types.js';
+import type { PolicyStore } from './policy-store.js';
+import type { CreatePolicyEngineOptions, DecisionRecord } from './types.js';
 
 const ALL_OPS: PolicyOperation[] = ['read', 'create', 'modify', 'delete', 'list', 'count'];
 
-export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): PolicyEngine {
+export interface HydratablePolicyEngine extends PolicyEngine {
+  hydrate(): Promise<void>;
+  flush(): Promise<void>;
+}
+
+function hash32(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): HydratablePolicyEngine {
   const clock = opts.clock ?? createDeterministicClock();
   const nextId = opts.nextId ?? createIdGenerator();
-  void clock;
+  const store: PolicyStore | undefined = opts.store;
+  const allowSampleRate = opts.allowSampleRate ?? 0.1;
+  const sampleSeed = opts.sampleSeed ?? 'policy-decision';
+  const pending: Promise<void>[] = [];
+  let persistChain: Promise<void> = Promise.resolve();
 
   /** principal → set de policy ids (grupos). */
   const grants = new Map<PrincipalId, Set<string>>();
@@ -38,9 +57,28 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
   const epidTuples = new Map<Epid, { policy: string; parentId: PolicyNodeId | null }>();
   /** key(policy|parent) → epid */
   const tupleToEpid = new Map<string, Epid>();
+  /** policy → EPIDs (index for epidsForPrincipal; avoids scanning all tuples). */
+  const policyToEpids = new Map<string, Set<Epid>>();
+
+  function enqueue(op: () => Promise<void>): void {
+    if (!store) return;
+    persistChain = persistChain.then(op).catch((err) => {
+      console.error('[policy-engine] persist failed:', err);
+    });
+    pending.push(persistChain);
+  }
 
   function tupleKey(policy: string, parentId: PolicyNodeId | null): string {
     return `${policy}::${parentId ?? 'ROOT'}`;
+  }
+
+  function indexEpid(policy: string, epid: Epid): void {
+    let set = policyToEpids.get(policy);
+    if (!set) {
+      set = new Set();
+      policyToEpids.set(policy, set);
+    }
+    set.add(epid);
   }
 
   function getOrCreateEpid(policy: string, parentId: PolicyNodeId | null): Epid {
@@ -50,6 +88,8 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
     const epid = nextId('epid');
     tupleToEpid.set(key, epid);
     epidTuples.set(epid, { policy, parentId });
+    indexEpid(policy, epid);
+    enqueue(() => store!.putEpid(policy, parentId, epid));
     return epid;
   }
 
@@ -83,12 +123,33 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
     const policies = grants.get(principal);
     if (!policies || policies.size === 0) return [];
     const out = new Set<Epid>();
-    for (const epid of epidTuples.keys()) {
-      const t = epidTuples.get(epid)!;
-      if (policies.has(t.policy)) out.add(epid);
+    for (const policy of policies) {
+      const set = policyToEpids.get(policy);
+      if (set) for (const epid of set) out.add(epid);
     }
-    // Também: se policy grant ainda não gerou EPID, ok — só EPIDs existentes.
     return [...out];
+  }
+
+  function shouldLog(decision: AuthorizeResult['decision'], req: AuthorizeRequest): boolean {
+    if (decision === 'deny' || decision === 'partial') return true;
+    const unit = hash32(`${sampleSeed}:${req.principal}:${req.resource}:${req.operation}`) / 0x1_0000_0000;
+    return unit < allowSampleRate;
+  }
+
+  function emitDecision(req: AuthorizeRequest, result: AuthorizeResult): void {
+    if (!opts.onDecision) return;
+    if (!shouldLog(result.decision, req)) return;
+    const record: DecisionRecord = {
+      principal: req.principal,
+      resource: req.resource,
+      operation: req.operation,
+      decision: result.decision,
+      principalEpids: result.principalEpids,
+      resourceEpid: result.resourceEpid,
+      reason: result.reason,
+      at: clock(),
+    };
+    opts.onDecision(record);
   }
 
   function decide(
@@ -103,7 +164,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
         decision: 'deny',
         principalEpids,
         resourceEpid: null,
-        reason: 'resource not found',
+        reason: 'not found',
       };
       assertAuthorizeResult(r);
       return r;
@@ -116,7 +177,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
         decision: 'deny',
         principalEpids,
         resourceEpid: null,
-        reason: 'resource has no effective policy',
+        reason: 'not found',
       };
       assertAuthorizeResult(r);
       return r;
@@ -127,8 +188,8 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
       const r: AuthorizeResult = {
         decision: 'deny',
         principalEpids,
-        resourceEpid,
-        reason: `no EPID match for ${operation}`,
+        resourceEpid: null,
+        reason: 'not found',
       };
       assertAuthorizeResult(r);
       return r;
@@ -175,10 +236,44 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
     for (const id of descendants) {
       const n = nodes.get(id)!;
       n.epid = resolveEpid(n);
+      enqueue(() => store!.updateNode(n));
     }
   }
 
-  const engine: PolicyEngine = {
+  const engine: HydratablePolicyEngine = {
+    async hydrate() {
+      if (!store) return;
+      const snap = await store.snapshot();
+      grants.clear();
+      nodes.clear();
+      byResource.clear();
+      epidTuples.clear();
+      tupleToEpid.clear();
+      policyToEpids.clear();
+      for (const g of snap.grants) {
+        let set = grants.get(g.principal);
+        if (!set) {
+          set = new Set();
+          grants.set(g.principal, set);
+        }
+        set.add(g.policy);
+      }
+      for (const t of snap.epids) {
+        tupleToEpid.set(tupleKey(t.policy, t.parentId), t.epid);
+        epidTuples.set(t.epid, { policy: t.policy, parentId: t.parentId });
+        indexEpid(t.policy, t.epid);
+      }
+      for (const n of snap.nodes) {
+        nodes.set(n.id, { ...n });
+        byResource.set(n.resourceId, n.id);
+      }
+    },
+
+    async flush() {
+      await persistChain;
+      pending.length = 0;
+    },
+
     grantPolicy(principal, policyId) {
       let set = grants.get(principal);
       if (!set) {
@@ -186,10 +281,12 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
         grants.set(principal, set);
       }
       set.add(policyId);
+      enqueue(() => store!.grant(principal, policyId));
     },
 
     revokePolicy(principal, policyId) {
       grants.get(principal)?.delete(policyId);
+      enqueue(() => store!.revoke(principal, policyId));
     },
 
     addNode(input) {
@@ -204,6 +301,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
       const node: PolicyNode = { ...input, epid };
       nodes.set(node.id, node);
       byResource.set(node.resourceId, node.id);
+      enqueue(() => store!.createNode(node));
       return node;
     },
 
@@ -213,6 +311,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
       node.policy = policy;
       node.epid = resolveEpid(node);
       invalidateDescendantUserEpids(nodeId);
+      enqueue(() => store!.updateNode(node));
       return node;
     },
 
@@ -228,7 +327,9 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
     epidsForPrincipal,
 
     authorize(req: AuthorizeRequest) {
-      return decide(req.principal, req.resource, req.operation);
+      const result = decide(req.principal, req.resource, req.operation);
+      emitDecision(req, result);
+      return result;
     },
 
     securityMatrix(principal, resource): SecurityMatrix {
@@ -256,10 +357,10 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
       }
       if (spec.parentId) {
         const parent = nodes.get(spec.parentId);
-        if (!parent) return { ok: false, denyReason: 'parent not found' };
+        if (!parent) return { ok: false, denyReason: 'not found' };
         const parentAuth = decide(principal, parent.resourceId, 'create');
         if (parentAuth.decision === 'deny') {
-          return { ok: false, denyReason: 'denied create under parent' };
+          return { ok: false, denyReason: 'not found' };
         }
       }
 
@@ -281,24 +382,19 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Policy
     securedRead<T extends { resourceId: ResourceId }>(
       principal: PrincipalId,
       items: readonly T[],
-    ): { items: T[]; count: number | null; matrix: SecurityMatrix[] } {
+    ): { items: T[]; count: number; matrix: SecurityMatrix[] } {
       const out: T[] = [];
       const matrices: SecurityMatrix[] = [];
 
       for (const item of items) {
         const auth = decide(principal, item.resourceId, 'read');
-        matrices.push(engine.securityMatrix(principal, item.resourceId));
         if (auth.decision === 'allow' || auth.decision === 'partial') {
           out.push(item);
+          matrices.push(engine.securityMatrix(principal, item.resourceId));
         }
-        // deny: não inclui — não revela existência.
       }
 
-      // Gate: sem permissão não vê objeto NEM o count do universo negado.
-      const deniedAll = items.length > 0 && out.length === 0;
-      const count: number | null = deniedAll ? null : out.length;
-
-      return { items: out, count, matrix: matrices };
+      return { items: out, count: out.length, matrix: matrices };
     },
   };
 

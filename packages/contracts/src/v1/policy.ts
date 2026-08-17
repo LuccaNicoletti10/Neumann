@@ -129,12 +129,13 @@ export interface PolicyEngine {
   /** Create com admissions (US 10,397,229). */
   createResource(principal: PrincipalId, spec: ResourceCreateSpec): ResourceCreateResult;
   /**
-   * Leitura enforcement: sem permissão → items=[], count oculto (não revela existência).
+   * Leitura enforcement: sem permissão → items=[], count = |autorizados|
+   * (nunca o tamanho do universo negado; 0 ≡ conjunto vazio).
    */
   securedRead<T extends { resourceId: ResourceId }>(
     principal: PrincipalId,
     items: readonly T[],
-  ): { items: T[]; count: number | null; matrix: SecurityMatrix[] };
+  ): { items: T[]; count: number; matrix: SecurityMatrix[] };
 }
 
 export function buildGoldenAuthorizeRequest(): AuthorizeRequest {

@@ -29,6 +29,7 @@ function rowToExecution(row: Record<string, unknown>): ActionExecution {
     result: (row.result as Record<string, unknown>) ?? undefined,
     error: row.error == null ? undefined : String(row.error),
     auditEntryId: row.audit_entry_id == null ? undefined : String(row.audit_entry_id),
+    approval: (row.approval as ActionExecution['approval']) ?? undefined,
   };
 }
 
@@ -43,14 +44,15 @@ export function createPgActionExecutionStore(
         `INSERT INTO platform_action_executions (
            id, ontology_id, action_type_id, action_api_name, parameters,
            principal, status, idempotency_key, result, error, audit_entry_id,
-           started_at, finished_at
-         ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
+           started_at, finished_at, approval
+         ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14::jsonb)
          ON CONFLICT (id) DO UPDATE SET
            status = EXCLUDED.status,
            result = EXCLUDED.result,
            error = EXCLUDED.error,
            audit_entry_id = EXCLUDED.audit_entry_id,
-           finished_at = EXCLUDED.finished_at`,
+           finished_at = EXCLUDED.finished_at,
+           approval = EXCLUDED.approval`,
         [
           execution.id,
           execution.ontologyId,
@@ -65,6 +67,7 @@ export function createPgActionExecutionStore(
           execution.auditEntryId ?? null,
           execution.startedAt,
           execution.finishedAt ?? null,
+          execution.approval ? JSON.stringify(execution.approval) : null,
         ],
       );
     },
@@ -129,6 +132,32 @@ export function createPgActionExecutionStore(
         throw new Error('idempotency conflict without existing execution');
       }
       return { claimed: false, execution: existing };
+    },
+
+    async casStatus(id, from, to, patch) {
+      const result = await sql.query(
+        `UPDATE platform_action_executions
+         SET status = $2,
+             error = COALESCE($3, error),
+             finished_at = COALESCE($4, finished_at),
+             result = COALESCE($5::jsonb, result),
+             audit_entry_id = COALESCE($6, audit_entry_id),
+             approval = COALESCE($8::jsonb, approval)
+         WHERE id = $1 AND status = $7
+         RETURNING *`,
+        [
+          id,
+          to,
+          patch?.error ?? null,
+          patch?.finishedAt ?? null,
+          patch?.result ? JSON.stringify(patch.result) : null,
+          patch?.auditEntryId ?? null,
+          from,
+          patch?.approval ? JSON.stringify(patch.approval) : null,
+        ],
+      );
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      return row ? rowToExecution(row) : undefined;
     },
   };
 }

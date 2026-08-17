@@ -1,0 +1,39 @@
+{
+  "name": "function-registry",
+  "version": "1.0.0",
+  "description": "Function registry — f(objects) → result, pura, versionada (Passo 23 / camada cinética).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "function-registry": "./dist/cli.js",
+    "fn": "./dist/cli.js"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "tsx": "^4.16.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9"
+  }
+}
