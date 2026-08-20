@@ -5,6 +5,7 @@ import { OutboxPublisher } from './publisher.js';
 import { IdempotentConsumer } from './consumer.js';
 import { withOutbox } from './with-outbox.js';
 import { startDemoServer } from './api/demo-server.js';
+import { isEventBusCommand, parseEventBusArgs } from './cli-args.js';
 import { runGateScenario } from './gate.js';
 
 async function runDemo(): Promise<number> {
@@ -56,7 +57,12 @@ async function runServe(argv: string[]): Promise<number> {
 }
 
 async function main(): Promise<number> {
-  const [command, ...rest] = process.argv.slice(2);
+  const { command, rest } = parseEventBusArgs(process.argv.slice(2));
+
+  if (!isEventBusCommand(command)) {
+    console.error('usage: event-bus <demo|serve|gate> [--port N]');
+    return 1;
+  }
 
   switch (command) {
     case 'demo':
@@ -65,9 +71,6 @@ async function main(): Promise<number> {
       return runServe(rest);
     case 'gate':
       return runGateScenario();
-    default:
-      console.error('usage: event-bus <demo|serve|gate> [--port N]');
-      return 1;
   }
 }
 

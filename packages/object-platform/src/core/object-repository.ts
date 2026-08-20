@@ -20,6 +20,8 @@ import type {
 
 import { createSystemClock, createUuidIdGenerator } from './determinism.js';
 import { DuplicateObjectError, ObjectNotFoundError, VersionConflictError } from './errors.js';
+import type { MemoryCheckpoint } from './memory-checkpoint.js';
+import { restoreMap } from './memory-checkpoint.js';
 import type { Clock, IdGenerator } from './types.js';
 
 export interface CreateMemoryObjectRepositoryOptions {
@@ -55,7 +57,7 @@ function sortRecords(out: ObjectRecord[], opts?: ListObjectsOptions): ObjectReco
 
 export function createMemoryObjectRepository(
   opts: CreateMemoryObjectRepositoryOptions = {},
-): ObjectRepository {
+): ObjectRepository & MemoryCheckpoint {
   // Production-safe defaults; tests inject deterministic providers.
   const clock = opts.clock ?? createSystemClock();
   const nextId = opts.nextId ?? createUuidIdGenerator();
@@ -77,7 +79,7 @@ export function createMemoryObjectRepository(
   }
 
   return {
-    create(input: CreateObjectInput): ObjectRecord {
+    async create(input: CreateObjectInput): Promise<ObjectRecord> {
       const key = pkKey(input.ontologyId, input.objectTypeId, input.primaryKey);
       const existingId = byPk.get(key);
       const existing = existingId ? byId.get(existingId) : undefined;
@@ -106,7 +108,7 @@ export function createMemoryObjectRepository(
       }
 
       const record = freezeRecord({
-        id: nextId('obj'),
+        id: input.id ?? nextId('obj'),
         ontologyId: input.ontologyId,
         ontologyVersionId: input.ontologyVersionId,
         objectTypeId: input.objectTypeId,
@@ -124,7 +126,7 @@ export function createMemoryObjectRepository(
       return record;
     },
 
-    get(ontologyId, objectTypeId, primaryKey) {
+    async get(ontologyId, objectTypeId, primaryKey) {
       const id = byPk.get(pkKey(ontologyId, objectTypeId, primaryKey));
       if (!id) return undefined;
       const obj = byId.get(id);
@@ -132,13 +134,13 @@ export function createMemoryObjectRepository(
       return obj;
     },
 
-    getById(id) {
+    async getById(id) {
       const obj = byId.get(id);
       if (!obj || obj.deleted) return undefined;
       return obj;
     },
 
-    list(ontologyId, objectTypeId, opts?: ListObjectsOptions) {
+    async list(ontologyId, objectTypeId, opts?: ListObjectsOptions) {
       let out: ObjectRecord[] = [];
       for (const obj of byId.values()) {
         if (obj.ontologyId !== ontologyId) continue;
@@ -153,7 +155,21 @@ export function createMemoryObjectRepository(
       return offset ? out.slice(offset) : out;
     },
 
-    update(ontologyId, objectTypeId, primaryKey, input: UpdateObjectInput) {
+    async listAll(ontologyId, opts?: ListObjectsOptions) {
+      let out: ObjectRecord[] = [];
+      for (const obj of byId.values()) {
+        if (obj.ontologyId !== ontologyId) continue;
+        if (!opts?.includeDeleted && obj.deleted) continue;
+        out.push(obj);
+      }
+      out = sortRecords(out, opts);
+      const offset = opts?.offset ?? 0;
+      const limit = opts?.limit;
+      if (limit != null) return out.slice(offset, offset + limit);
+      return offset ? out.slice(offset) : out;
+    },
+
+    async update(ontologyId, objectTypeId, primaryKey, input: UpdateObjectInput) {
       const prev = requireLive(ontologyId, objectTypeId, primaryKey);
       if (input.expectedVersion != null && prev.version !== input.expectedVersion) {
         throw new VersionConflictError(
@@ -173,14 +189,18 @@ export function createMemoryObjectRepository(
       const next = freezeRecord({
         ...prev,
         properties,
+        ontologyVersionId: input.migrateToOntologyVersionId ?? prev.ontologyVersionId,
         version: prev.version + 1,
         updatedAt: clock(),
+        provenance: input.provenance
+          ? { ...prev.provenance, ...input.provenance }
+          : prev.provenance,
       });
       byId.set(next.id, next);
       return next;
     },
 
-    delete(ontologyId, objectTypeId, primaryKey, input?: DeleteObjectInput) {
+    async delete(ontologyId, objectTypeId, primaryKey, input?: DeleteObjectInput) {
       const key = pkKey(ontologyId, objectTypeId, primaryKey);
       const id = byPk.get(key);
       if (!id) {
@@ -215,6 +235,16 @@ export function createMemoryObjectRepository(
       });
       byId.set(id, post);
       return post;
+    },
+
+    capture() {
+      return { byId: new Map(byId), byPk: new Map(byPk) };
+    },
+
+    restore(snapshot: unknown) {
+      const snap = snapshot as { byId: Map<ObjectRecordId, ObjectRecord>; byPk: Map<string, ObjectRecordId> };
+      restoreMap(byId, snap.byId);
+      restoreMap(byPk, snap.byPk);
     },
   };
 }

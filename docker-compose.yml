@@ -1,5 +1,9 @@
-# BLOCO 1 / M0 — stack de fundação (Postgres outbox, Jaeger, Prometheus, Grafana)
+# BLOCO 1 / M0 — stack de fundação (Postgres, Jaeger, Prometheus, Grafana)
 # Uso: pnpm dev:up   |   pnpm dev:down
+#
+# Migrations are applied by `pnpm db:migrate` (applyPlatformMigrations).
+# docker-entrypoint-initdb.d is not a second source of truth and is not
+# re-run on existing volumes.
 
 services:
   postgres:
@@ -9,22 +13,9 @@ services:
       POSTGRES_PASSWORD: neumann
       POSTGRES_DB: neumann
     ports:
-      - "5432:5432"
+      - "${NEUMANN_POSTGRES_PORT:-55432}:5432"
     volumes:
       - neumann_pg:/var/lib/postgresql/data
-      - ./infra/sql/0001_outbox.sql:/docker-entrypoint-initdb.d/0001_outbox.sql:ro
-      - ./infra/sql/0002_objects_platform.sql:/docker-entrypoint-initdb.d/0002_objects_platform.sql:ro
-      - ./infra/sql/0003_history_ontology.sql:/docker-entrypoint-initdb.d/0003_history_ontology.sql:ro
-      - ./infra/sql/0004_audit.sql:/docker-entrypoint-initdb.d/0004_audit.sql:ro
-      - ./infra/sql/0005_writeback.sql:/docker-entrypoint-initdb.d/0005_writeback.sql:ro
-      - ./infra/sql/0006_entity_resolution.sql:/docker-entrypoint-initdb.d/0006_entity_resolution.sql:ro
-      - ./infra/sql/0007_link_versioning.sql:/docker-entrypoint-initdb.d/0007_link_versioning.sql:ro
-      - ./infra/sql/0008_outbox_reliability.sql:/docker-entrypoint-initdb.d/0008_outbox_reliability.sql:ro
-      - ./infra/sql/0009_objectset_indexes.sql:/docker-entrypoint-initdb.d/0009_objectset_indexes.sql:ro
-      - ./infra/sql/0010_policy.sql:/docker-entrypoint-initdb.d/0010_policy.sql:ro
-      - ./infra/sql/0011_action_approvals.sql:/docker-entrypoint-initdb.d/0011_action_approvals.sql:ro
-      - ./infra/sql/0012_pipeline_assets.sql:/docker-entrypoint-initdb.d/0012_pipeline_assets.sql:ro
-      - ./infra/sql/0013_catalog_search.sql:/docker-entrypoint-initdb.d/0013_catalog_search.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neumann -d neumann"]
       interval: 5s

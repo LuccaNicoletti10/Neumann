@@ -22,7 +22,6 @@ export interface Notifier {
 
 export class ConsoleNotifier implements Notifier {
   send(notification: OutgoingNotification): void {
-    // eslint-disable-next-line no-console
     console.log(
       `[notifier:${notification.channel}] para=${notification.to} assunto="${notification.subject}"\n${notification.body}`,
     );

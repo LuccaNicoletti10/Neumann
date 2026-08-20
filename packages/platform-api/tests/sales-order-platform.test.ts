@@ -123,13 +123,12 @@ async function seedSalesOntology(ctx: ReturnType<typeof createPlatformContext>) 
 
   await ctx.ontology.addActionType(o.id, approve);
   const version = await ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
-  ctx.actions.registerActionType(o.id, approve);
   return { ontologyId: o.id, version, approve };
 }
 
 describe('milestone — Customer / SalesOrder / Product platform', () => {
   it('create → links → ObjectSet → action → audit', async () => {
-    const ctx = createPlatformContext();
+    const ctx = createPlatformContext({ policyFixture: 'allow-all' });
     const { ontologyId } = await seedSalesOntology(ctx);
 
     // create objects
@@ -152,7 +151,7 @@ describe('milestone — Customer / SalesOrder / Product platform', () => {
       primaryKey: 'SO-1',
       properties: { 'pt.amount': 150, 'pt.status': 'pending' },
     });
-    const order2 = await ctx.objects.create({
+    const _order2 = await ctx.objects.create({
       ontologyId,
       objectTypeId: 'ot.sales-order',
       primaryKey: 'SO-2',
@@ -291,6 +290,7 @@ describe('milestone — Customer / SalesOrder / Product platform', () => {
       parameters: { orderId: 'SO-1', status: 'approved' },
       principal: 'user-alice',
       idempotencyKey: 'approve-SO-1',
+      expectedObjectVersions: { 'ot.sales-order::SO-1': 1 },
     });
     expect(applied.status).toBe('SUCCEEDED');
     expect(applied.auditEntryId).toBeTruthy();
@@ -319,6 +319,7 @@ describe('milestone — Customer / SalesOrder / Product platform', () => {
       parameters: { orderId: 'SO-1', status: 'approved' },
       principal: 'user-alice',
       idempotencyKey: 'approve-SO-1',
+      expectedObjectVersions: { 'ot.sales-order::SO-1': 1 },
     });
     expect(again.executionId).toBe(applied.executionId);
 

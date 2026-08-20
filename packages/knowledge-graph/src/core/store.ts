@@ -1,8 +1,9 @@
 /**
  * knowledge-graph — src/core/store.ts
- * Grafo vivo Object→Link→Object + multi-hop + remote refs + link migration.
+ * Graph facade over canonical ObjectRepository / LinkRepository.
  *
- * US20250077899A1 / US 9,378,526 / US 9,621,676 / US 9,906,623
+ * Ownership: tickets (remote refs) are process-local. Objects and links are not.
+ * Identity: ontologyId + objectTypeId + primaryKey. GraphObject.id is a handle.
  */
 
 import {
@@ -12,9 +13,10 @@ import {
   type GraphObjectId,
   type IntegrityReport,
   type KnowledgeGraphStore,
-  type LinkInstanceId,
   type LinkMigrationInput,
   type LinkMigrationResult,
+  type LinkRecord,
+  type ObjectRecord,
   type ObjectTypeId,
   type RemoteObjectRef,
   type TicketId,
@@ -23,107 +25,261 @@ import {
   type TraverseResult,
   type TypedLink,
 } from 'contracts';
+import {
+  createDeterministicClock,
+  createIdGenerator,
+  createMemoryLinkRepository,
+  createMemoryObjectRepository,
+} from 'object-platform';
 
-import { createDeterministicClock, createIdGenerator } from './determinism.js';
 import type { CreateKnowledgeGraphOptions } from './types.js';
 
-function linkKey(l: Pick<TypedLink, 'linkTypeId' | 'sourceObjectId' | 'targetObjectId'>): string {
-  return `${l.linkTypeId}|${l.sourceObjectId}|${l.targetObjectId}`;
-}
+/** Default ontology namespace when the facade owns its memory adapters. */
+export const KNOWLEDGE_GRAPH_ONTOLOGY_ID = 'graph';
 
 function sqlQuote(id: string): string {
   return `'${id.replace(/'/g, "''")}'`;
 }
 
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((v): v is string => typeof v === 'string');
+  return out.length > 0 ? out : undefined;
+}
+
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function toGraphObject(rec: ObjectRecord): GraphObject {
+  const p = rec.provenance ?? {};
+  return Object.freeze({
+    id: rec.id,
+    objectTypeId: rec.objectTypeId,
+    primaryKey: rec.primaryKey,
+    properties: rec.properties ? Object.freeze({ ...rec.properties }) : undefined,
+    deleted: rec.deleted,
+    sourceSystem: asString(p.sourceSystem) ?? rec.source,
+    classification: asString(p.classification),
+    provenance: asStringArray(p.lineage),
+    propertyClassifications: asStringRecord(p.propertyClassifications),
+  });
+}
+
+function toTypedLink(link: LinkRecord, source: ObjectRecord, target: ObjectRecord): TypedLink {
+  const p = link.provenance ?? {};
+  const typed = Object.freeze({
+    id: link.id,
+    linkTypeId: link.linkTypeId,
+    sourceObjectId: source.id,
+    targetObjectId: target.id,
+    mappingVersionId: asString(p.mappingVersionId) ?? '',
+    datasetVersionId: asString(p.datasetVersionId),
+    sourceDatasetId: asString(p.sourceDatasetId),
+    targetDatasetId: asString(p.targetDatasetId),
+  }) as TypedLink;
+  assertTypedLink(typed);
+  return typed;
+}
+
+/**
+ * Knowledge graph as a read/write facade over the storage kernel.
+ * Does not own object/link Maps.
+ */
 export function createKnowledgeGraph(
   opts: CreateKnowledgeGraphOptions = {},
 ): KnowledgeGraphStore {
   const clock = opts.clock ?? createDeterministicClock();
   const nextId = opts.nextId ?? createIdGenerator();
   const forbidSelfLoops = opts.forbidSelfLoops ?? true;
+  const ontologyId = opts.ontologyId ?? KNOWLEDGE_GRAPH_ONTOLOGY_ID;
+  const objects =
+    opts.objects ?? createMemoryObjectRepository({ clock, nextId });
+  const links =
+    opts.links ??
+    createMemoryLinkRepository({
+      clock,
+      nextId,
+      objectExists: async (oid, typeId, pk) => Boolean(await objects.get(oid, typeId, pk)),
+    });
 
-  const objects = new Map<GraphObjectId, GraphObject>();
-  const links = new Map<LinkInstanceId, TypedLink>();
-  const byKey = new Map<string, LinkInstanceId>();
   const tickets = new Map<TicketId, RemoteObjectRef>();
+  const knownObjectTypeIds = new Set<string>(opts.objectTypeIds ?? []);
 
-  function requireObject(id: GraphObjectId): GraphObject {
-    const o = objects.get(id);
-    if (!o || o.deleted) throw new Error(`objeto inexistente ou deletado: ${id}`);
-    return o;
+  function rememberType(typeId: string): void {
+    knownObjectTypeIds.add(typeId);
+  }
+
+  async function requireObject(id: GraphObjectId): Promise<GraphObject> {
+    const rec = await objects.getById(id);
+    if (!rec || rec.deleted) throw new Error(`objeto inexistente ou deletado: ${id}`);
+    rememberType(rec.objectTypeId);
+    return toGraphObject(rec);
+  }
+
+  async function listKnownRecords(includeDeleted = false): Promise<ObjectRecord[]> {
+    const out: ObjectRecord[] = [];
+    for (const typeId of knownObjectTypeIds) {
+      out.push(...(await objects.list(ontologyId, typeId, { includeDeleted })));
+    }
+    return out;
+  }
+
+  async function eachRawLink(
+    visit: (link: LinkRecord, source?: ObjectRecord, target?: ObjectRecord) => void,
+  ): Promise<void> {
+    const seen = new Set<string>();
+    for (const rec of await listKnownRecords(true)) {
+      const from = await links.listFrom(
+        rec.ontologyId,
+        rec.objectTypeId,
+        rec.primaryKey,
+        undefined,
+        { includeDeletedEndpoints: true },
+      );
+      for (const link of from) {
+        if (seen.has(link.id) || link.deleted) continue;
+        seen.add(link.id);
+        const source = await objects.get(
+          link.ontologyId,
+          link.sourceObjectTypeId,
+          link.sourcePrimaryKey,
+        );
+        const target = await objects.get(
+          link.ontologyId,
+          link.targetObjectTypeId,
+          link.targetPrimaryKey,
+        );
+        visit(link, source, target);
+      }
+    }
+  }
+
+  async function listAllTypedLinks(): Promise<TypedLink[]> {
+    const out: TypedLink[] = [];
+    await eachRawLink((link, source, target) => {
+      if (!source || !target) return;
+      out.push(toTypedLink(link, source, target));
+    });
+    return out;
   }
 
   return {
-    upsertObject(obj: GraphObject): void {
+    async upsertObject(obj: GraphObject): Promise<void> {
       if (!obj.id) throw new Error('GraphObject: id obrigatório');
       if (!obj.objectTypeId) throw new Error('GraphObject: objectTypeId obrigatório');
-      objects.set(
-        obj.id,
-        Object.freeze({
-          id: obj.id,
-          objectTypeId: obj.objectTypeId,
-          primaryKey: obj.primaryKey,
-          properties: obj.properties ? Object.freeze({ ...obj.properties }) : undefined,
-          deleted: obj.deleted ?? false,
-          sourceSystem: obj.sourceSystem,
-          classification: obj.classification,
-          provenance: obj.provenance ? [...obj.provenance] : undefined,
-          propertyClassifications: obj.propertyClassifications
-            ? { ...obj.propertyClassifications }
-            : undefined,
-        }),
-      );
-    },
+      rememberType(obj.objectTypeId);
+      const provenance = {
+        sourceSystem: obj.sourceSystem,
+        classification: obj.classification,
+        lineage: obj.provenance,
+        propertyClassifications: obj.propertyClassifications,
+      };
+      const existing =
+        (await objects.get(ontologyId, obj.objectTypeId, obj.primaryKey)) ??
+        (await objects.getById(obj.id));
 
-    getObject(id) {
-      return objects.get(id);
-    },
-
-    listObjects(objectTypeId?: ObjectTypeId) {
-      const out: GraphObject[] = [];
-      for (const o of objects.values()) {
-        if (o.deleted) continue;
-        if (objectTypeId && o.objectTypeId !== objectTypeId) continue;
-        out.push(o);
+      if (obj.deleted && existing) {
+        await objects.delete(existing.ontologyId, existing.objectTypeId, existing.primaryKey);
+        return;
       }
-      return out;
+
+      if (existing) {
+        await objects.update(existing.ontologyId, existing.objectTypeId, existing.primaryKey, {
+          properties: obj.properties ?? {},
+          mode: 'replace',
+          provenance,
+        });
+        return;
+      }
+
+      await objects.create({
+        id: obj.id,
+        ontologyId,
+        objectTypeId: obj.objectTypeId,
+        primaryKey: obj.primaryKey,
+        properties: obj.properties ?? {},
+        source: obj.sourceSystem,
+        provenance,
+      });
     },
 
-    upsertLink(input): TypedLink {
-      const source = requireObject(input.sourceObjectId);
-      const target = requireObject(input.targetObjectId);
+    async getObject(id) {
+      const rec = await objects.getById(id);
+      return rec ? toGraphObject(rec) : undefined;
+    },
+
+    async listObjects(objectTypeId?: ObjectTypeId) {
+      if (objectTypeId) rememberType(objectTypeId);
+      const records = objectTypeId
+        ? await objects.list(ontologyId, objectTypeId)
+        : await listKnownRecords();
+      return records.filter((o) => !o.deleted).map(toGraphObject);
+    },
+
+    async upsertLink(input): Promise<TypedLink> {
+      const source = await requireObject(input.sourceObjectId);
+      const target = await requireObject(input.targetObjectId);
       if (forbidSelfLoops && input.sourceObjectId === input.targetObjectId) {
         throw new Error(`self-loop proibido: ${input.sourceObjectId}`);
       }
-      const key = linkKey(input);
-      const existingId = byKey.get(key);
-      const id = input.id ?? existingId ?? nextId('link');
-      if (existingId && existingId !== id && links.has(existingId)) {
-        links.delete(existingId);
+      const srcRec = await objects.getById(source.id);
+      const tgtRec = await objects.getById(target.id);
+      if (!srcRec || !tgtRec) {
+        throw new Error(`objeto inexistente ou deletado: ${input.sourceObjectId}`);
       }
-      const link = Object.freeze({
-        id,
-        linkTypeId: input.linkTypeId,
-        sourceObjectId: source.id,
-        targetObjectId: target.id,
-        mappingVersionId: input.mappingVersionId,
-        datasetVersionId: input.datasetVersionId,
-        sourceDatasetId: input.sourceDatasetId,
-        targetDatasetId: input.targetDatasetId,
-      }) as TypedLink;
-      assertTypedLink(link);
-      links.set(id, link);
-      byKey.set(key, id);
-      return link;
+      const existing = (
+        await links.listFrom(
+          srcRec.ontologyId,
+          srcRec.objectTypeId,
+          srcRec.primaryKey,
+          input.linkTypeId,
+        )
+      ).find((l) => l.targetPrimaryKey === tgtRec.primaryKey && !l.deleted);
+      if (existing) {
+        await links.delete(
+          existing.ontologyId,
+          existing.linkTypeId,
+          existing.sourceObjectTypeId,
+          existing.sourcePrimaryKey,
+          existing.targetObjectTypeId,
+          existing.targetPrimaryKey,
+        );
+      }
+      const created = await links.create({
+          id: input.id ?? existing?.id,
+          ontologyId: srcRec.ontologyId,
+          linkTypeId: input.linkTypeId,
+          sourceObjectTypeId: srcRec.objectTypeId,
+          sourcePrimaryKey: srcRec.primaryKey,
+          targetObjectTypeId: tgtRec.objectTypeId,
+          targetPrimaryKey: tgtRec.primaryKey,
+        provenance: {
+          mappingVersionId: input.mappingVersionId,
+          datasetVersionId: input.datasetVersionId,
+          sourceDatasetId: input.sourceDatasetId,
+          targetDatasetId: input.targetDatasetId,
+        },
+      });
+      return toTypedLink(created, srcRec, tgtRec);
     },
 
-    getLink(id) {
-      return links.get(id);
+    async getLink(id) {
+      return (await listAllTypedLinks()).find((l) => l.id === id);
     },
 
-    listLinks(filter) {
+    async listLinks(filter) {
       const out: TypedLink[] = [];
-      for (const l of links.values()) {
+      for (const l of await listAllTypedLinks()) {
         if (filter?.linkTypeId && l.linkTypeId !== filter.linkTypeId) continue;
         if (filter?.mappingVersionId && l.mappingVersionId !== filter.mappingVersionId) {
           continue;
@@ -133,52 +289,65 @@ export function createKnowledgeGraph(
       return out;
     },
 
-    checkIntegrity(): IntegrityReport {
+    async checkIntegrity(): Promise<IntegrityReport> {
       const issues: IntegrityReport['issues'] = [];
+      const objectById: Map<string, GraphObject> = new Map();
+      for (const o of await listKnownRecords()) {
+        if (!o.deleted) objectById.set(o.id, toGraphObject(o));
+      }
+      let linkCount = 0;
       const seen = new Set<string>();
-      for (const l of links.values()) {
-        if (!objects.has(l.sourceObjectId) || objects.get(l.sourceObjectId)?.deleted) {
+      await eachRawLink((link, source, target) => {
+        linkCount += 1;
+        const sourceId = source?.id ?? `${link.sourceObjectTypeId}:${link.sourcePrimaryKey}`;
+        const targetId = target?.id ?? `${link.targetObjectTypeId}:${link.targetPrimaryKey}`;
+        if (!source) {
           issues.push({
             kind: 'dangling_source',
-            linkId: l.id,
-            detail: `source ${l.sourceObjectId} ausente`,
+            linkId: link.id,
+            detail: `source ${sourceId} ausente`,
           });
         }
-        if (!objects.has(l.targetObjectId) || objects.get(l.targetObjectId)?.deleted) {
+        if (!target) {
           issues.push({
             kind: 'dangling_target',
-            linkId: l.id,
-            detail: `target ${l.targetObjectId} ausente`,
+            linkId: link.id,
+            detail: `target ${targetId} ausente`,
           });
         }
-        if (forbidSelfLoops && l.sourceObjectId === l.targetObjectId) {
+        if (forbidSelfLoops && source && target && source.id === target.id) {
           issues.push({
             kind: 'self_loop_forbidden',
-            linkId: l.id,
+            linkId: link.id,
             detail: 'self-loop',
           });
         }
-        const k = linkKey(l);
+        const k = `${link.linkTypeId}|${sourceId}|${targetId}`;
         if (seen.has(k)) {
-          issues.push({ kind: 'duplicate', linkId: l.id, detail: k });
+          issues.push({ kind: 'duplicate', linkId: link.id, detail: k });
         }
         seen.add(k);
-      }
+      });
       return {
         ok: issues.length === 0,
-        linkCount: links.size,
-        objectCount: [...objects.values()].filter((o) => !o.deleted).length,
+        linkCount,
+        objectCount: objectById.size,
         issues,
       };
     },
 
-    traverseLinks(query: TraverseQuery): TraverseResult {
+    async traverseLinks(query: TraverseQuery): Promise<TraverseResult> {
       const maxHops = Math.max(0, query.maxHops);
       const direction = query.direction ?? 'outgoing';
       const unique = query.uniqueNodes ?? true;
       const typeFilter = query.linkTypeIds ? new Set(query.linkTypeIds) : null;
+      const allLinks = await listAllTypedLinks();
+      const objectById: Map<string, GraphObject> = new Map();
+      for (const o of await listKnownRecords()) {
+        if (!o.deleted) objectById.set(o.id, toGraphObject(o));
+      }
 
-      const start = objects.get(query.startObjectId);
+      const start = objectById.get(query.startObjectId);
       if (!start || start.deleted) {
         return {
           startObjectId: query.startObjectId,
@@ -197,7 +366,7 @@ export function createKnowledgeGraph(
       }
 
       const hops: TraverseHop[] = [];
-      const nodeMap = new Map<GraphObjectId, GraphObject>();
+      const nodeMap: Map<string, GraphObject> = new Map();
       nodeMap.set(start.id, start);
 
       const visited = new Set<GraphObjectId>([start.id]);
@@ -209,7 +378,7 @@ export function createKnowledgeGraph(
         depth += 1;
         const next: GraphObjectId[] = [];
         for (const fromId of frontier) {
-          for (const link of links.values()) {
+          for (const link of allLinks) {
             if (typeFilter && !typeFilter.has(link.linkTypeId)) continue;
 
             let toId: GraphObjectId | null = null;
@@ -227,7 +396,7 @@ export function createKnowledgeGraph(
             if (!toId) continue;
             if (unique && visited.has(toId)) continue;
 
-            const to = objects.get(toId);
+            const to = objectById.get(toId);
             if (!to || to.deleted) continue;
             if (query.viewingLevel && !canViewAtLevel(to.classification, query.viewingLevel)) {
               continue;
@@ -268,7 +437,6 @@ export function createKnowledgeGraph(
       let edgeJoin: string;
       if (direction === 'outgoing') {
         edgeJoin = 'l.source_object_id = t.object_id';
-        // expand to target
       } else if (direction === 'incoming') {
         edgeJoin = 'l.target_object_id = t.object_id';
       } else {
@@ -283,7 +451,7 @@ export function createKnowledgeGraph(
             ? 'l.source_object_id'
             : `CASE WHEN l.source_object_id = t.object_id THEN l.target_object_id ELSE l.source_object_id END`;
 
-      return `-- kernel-equivalent Postgres recursive CTE (Passo 19)
+      return `-- kernel-equivalent Postgres recursive CTE
 WITH RECURSIVE traverse(object_id, depth, via_link_id, via_link_type_id, from_object_id) AS (
   SELECT ${sqlQuote(query.startObjectId)}::text, 0, NULL::text, NULL::text, NULL::text
   UNION ALL
@@ -301,50 +469,65 @@ WITH RECURSIVE traverse(object_id, depth, via_link_id, via_link_type_id, from_ob
 SELECT * FROM traverse WHERE depth > 0 ORDER BY depth, object_id;`;
     },
 
-    migrateLinks(input: LinkMigrationInput): LinkMigrationResult {
+    async migrateLinks(input: LinkMigrationInput): Promise<LinkMigrationResult> {
       const migrationId = nextId('lmig');
       const typeMap = input.linkTypeMap ?? {};
       let migrated = 0;
       let dropped = 0;
       let skipped = 0;
 
-      const oldLinks = [...links.values()].filter(
+      const oldLinks = (await listAllTypedLinks()).filter(
         (l) => l.mappingVersionId === input.fromMappingVersionId,
       );
 
       for (const old of oldLinks) {
         const newType = typeMap[old.linkTypeId] ?? old.linkTypeId;
+        let source: GraphObject;
+        let target: GraphObject;
         try {
-          requireObject(old.sourceObjectId);
-          requireObject(old.targetObjectId);
+          source = await requireObject(old.sourceObjectId);
+          target = await requireObject(old.targetObjectId);
         } catch {
           skipped += 1;
           continue;
         }
-
-        // Remove old key before upsert with new mapping version.
-        byKey.delete(linkKey(old));
-        links.delete(old.id);
-
-        const next: TypedLink = Object.freeze({
-          ...old,
-          id: nextId('link'),
+        const srcRec = await objects.getById(source.id);
+        const tgtRec = await objects.getById(target.id);
+        if (!srcRec || !tgtRec) {
+          skipped += 1;
+          continue;
+        }
+        await links.delete(
+          srcRec.ontologyId,
+          old.linkTypeId,
+          srcRec.objectTypeId,
+          srcRec.primaryKey,
+          tgtRec.objectTypeId,
+          tgtRec.primaryKey,
+        );
+        await links.create({
+          ontologyId: srcRec.ontologyId,
           linkTypeId: newType,
-          mappingVersionId: input.toMappingVersionId,
+          sourceObjectTypeId: srcRec.objectTypeId,
+          sourcePrimaryKey: srcRec.primaryKey,
+          targetObjectTypeId: tgtRec.objectTypeId,
+          targetPrimaryKey: tgtRec.primaryKey,
+          provenance: {
+            mappingVersionId: input.toMappingVersionId,
+            datasetVersionId: old.datasetVersionId,
+            sourceDatasetId: old.sourceDatasetId,
+            targetDatasetId: old.targetDatasetId,
+          },
         });
-        assertTypedLink(next);
-        links.set(next.id, next);
-        byKey.set(linkKey(next), next.id);
         migrated += 1;
-        if (input.dropOld) dropped += 1;
-        else dropped += 1; // old already removed as part of migration rewrite
+        dropped += 1;
       }
 
       return { migrationId, migrated, dropped, skipped };
     },
 
-    createRemoteReference(objectId: GraphObjectId): RemoteObjectRef {
-      const obj = requireObject(objectId);
+    async createRemoteReference(objectId: GraphObjectId): Promise<RemoteObjectRef> {
+      const obj = await requireObject(objectId);
       const ticketId = nextId('tkt');
       const ref: RemoteObjectRef = Object.freeze({
         ticketId,
@@ -356,16 +539,16 @@ SELECT * FROM traverse WHERE depth > 0 ORDER BY depth, object_id;`;
       return ref;
     },
 
-    resolveRemoteReference(ticketId: TicketId) {
+    async resolveRemoteReference(ticketId: TicketId) {
       const ref = tickets.get(ticketId);
       if (!ref) return null;
-      const obj = objects.get(ref.objectId);
-      if (!obj || obj.deleted) return null;
-      return obj;
+      const rec = await objects.getById(ref.objectId);
+      if (!rec || rec.deleted) return null;
+      return toGraphObject(rec);
     },
 
-    accessRemote(ticketId: TicketId, property: string): unknown {
-      const obj = this.resolveRemoteReference(ticketId);
+    async accessRemote(ticketId: TicketId, property: string): Promise<unknown> {
+      const obj = await this.resolveRemoteReference(ticketId);
       if (!obj) return null;
       if (property === 'id') return obj.id;
       if (property === 'objectTypeId') return obj.objectTypeId;

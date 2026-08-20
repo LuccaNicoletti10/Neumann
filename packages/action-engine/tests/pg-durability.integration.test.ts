@@ -1,10 +1,10 @@
 /**
  * action-engine — tests/pg-durability.integration.test.ts
- * Restart + concurrent idempotency + atomic rollback.
+ * Restart + concurrent idempotency + atomic rollback + pinned envelope.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 
-import type { ActionTypeDef, AuthorizeFn, SqlClient } from 'contracts';
+import type { ActionTypeDef, OntologyRegistry, SqlClient } from 'contracts';
 import {
   createPgLinkRepository,
   createPgObjectRepository,
@@ -14,18 +14,20 @@ import {
   type TransactionalSqlClient,
 } from 'object-platform';
 import { createAuditLog, createPgAuditRepository } from 'policy-engine';
+import { createPgOntologyRegistry } from 'ontology-registry';
 
 import { createActionExecutor } from '../src/core/executor.js';
 import { createFailureSurvivingExecutor } from '../src/core/failure-surviving-executor.js';
 import { createPgActionExecutionStore } from '../src/core/pg-execution-store.js';
 import { createPgOperationalEventStore } from '../src/core/pg-events.js';
 import type { ActionTransactionStores as Stores } from '../src/core/types.js';
+import { seedActionOntology } from './seed-ontology.js';
 
-const allowAll: AuthorizeFn = (req) => ({
-  decision: 'allow',
-  principalEpids: [],
+const allow = () => ({
+  decision: 'allow' as const,
+  principalEpids: [] as string[],
   resourceEpid: null,
-  reason: `allow ${req.operation}`,
+  reason: 'ok',
 });
 
 const approve: ActionTypeDef = {
@@ -61,18 +63,34 @@ function storesFor(sql: SqlClient, clock: () => string, nextId: (p: string) => s
   };
 }
 
-function executorFor(sql: TransactionalSqlClient, clock: () => string, nextId: (p: string) => string) {
+async function seedPg(
+  sql: SqlClient,
+  clock: () => string,
+  nextId: (p: string) => string,
+  actions: ActionTypeDef[],
+): Promise<{ ontology: OntologyRegistry; ontologyId: string }> {
+  const ontology = createPgOntologyRegistry({ sql, clock, nextId });
+  const seeded = await seedActionOntology({ ontology, actions, clock, nextId });
+  return { ontology, ontologyId: seeded.ontologyId };
+}
+
+function executorFor(
+  sql: TransactionalSqlClient,
+  clock: () => string,
+  nextId: (p: string) => string,
+  ontology: OntologyRegistry,
+) {
   const root = storesFor(sql, clock, nextId);
   return createActionExecutor({
     ...root,
-    authorize: allowAll,
+    ontology,
+    authorize: allow,
     mode: 'production',
     unitOfWork: {
       run: (fn) => sql.transaction((tx) => fn(storesFor(tx, clock, nextId))),
     },
     clock,
     nextId,
-    actionTypes: { o1: [approve] },
   });
 }
 
@@ -83,32 +101,41 @@ describe.skipIf(!db)('Action PG durability', () => {
     await db?.close();
   });
 
-  it('execution + events survive restart; idempotency does not re-run', async () => {
+  it('execution + events + envelope survive restart; idempotency does not re-run', async () => {
     if (!db) return;
     const clock = createSystemClock();
     const nextId = createUuidIdGenerator();
-    const actions = executorFor(db.sql, clock, nextId);
+    const { ontology, ontologyId } = await seedPg(db.sql, clock, nextId, [approve]);
+    const actions = executorFor(db.sql, clock, nextId, ontology);
     const objects = createPgObjectRepository({ sql: db.sql, clock, nextId });
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { status: 'pending' },
     });
     const applied = await actions.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'u1',
       idempotencyKey: 'k1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(applied.status).toBe('SUCCEEDED');
+    const before = await actions.getExecution(applied.executionId);
+    expect(before?.ontologyVersionId).toBeTruthy();
+    expect(before?.actionTypeHash).toBeTruthy();
+    expect(before?.expectedObjectVersions?.['ot.order::1']).toBe(1);
 
     await db.sql.close();
     const sql2 = db.reconnect();
-    const actions2 = executorFor(sql2, clock, nextId);
+    const ontology2 = createPgOntologyRegistry({ sql: sql2, clock, nextId });
+    const actions2 = executorFor(sql2, clock, nextId, ontology2);
     const loaded = await actions2.getExecution(applied.executionId);
     expect(loaded?.status).toBe('SUCCEEDED');
+    expect(loaded?.actionTypeHash).toBe(before?.actionTypeHash);
+    expect(loaded?.ontologyVersionId).toBe(before?.ontologyVersionId);
     const events = await createPgOperationalEventStore({
       sql: sql2,
       clock,
@@ -117,11 +144,12 @@ describe.skipIf(!db)('Action PG durability', () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
 
     const again = await actions2.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'u1',
       idempotencyKey: 'k1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(again.executionId).toBe(applied.executionId);
     await sql2.close();
@@ -132,21 +160,23 @@ describe.skipIf(!db)('Action PG durability', () => {
     const sql = db.reconnect();
     const clock = createSystemClock();
     const nextId = createUuidIdGenerator();
+    const { ontology, ontologyId } = await seedPg(sql, clock, nextId, [approve]);
     const objects = createPgObjectRepository({ sql, clock, nextId });
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '2',
       properties: { status: 'pending' },
     });
-    const execA = executorFor(sql, clock, nextId);
-    const execB = executorFor(sql, clock, nextId);
+    const execA = executorFor(sql, clock, nextId, ontology);
+    const execB = executorFor(sql, clock, nextId, ontology);
     const req = {
-      ontologyId: 'o1' as const,
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '2', status: 'ok' },
       principal: 'u1',
       idempotencyKey: 'same-key',
+      expectedObjectVersions: { 'ot.order::2': 1 },
     };
     const [r1, r2] = await Promise.all([execA.apply(req), execB.apply(req)]);
     expect(r1.status).toBe('SUCCEEDED');
@@ -155,7 +185,7 @@ describe.skipIf(!db)('Action PG durability', () => {
     await sql.close();
   });
 
-  it('failed action rolls back object mutations', async () => {
+  it('failed action rolls back object mutations; FAILED record survives', async () => {
     if (!db) return;
     const sql = db.reconnect();
     const clock = createSystemClock();
@@ -184,17 +214,18 @@ describe.skipIf(!db)('Action PG durability', () => {
         },
       ],
     };
+    const { ontology, ontologyId } = await seedPg(sql, clock, nextId, [exploding]);
     const root = storesFor(sql, clock, nextId);
     const inner = createActionExecutor({
       ...root,
-      authorize: allowAll,
+      ontology,
+      authorize: allow,
       mode: 'production',
       unitOfWork: {
         run: (fn) => sql.transaction((tx) => fn(storesFor(tx, clock, nextId))),
       },
       clock,
       nextId,
-      actionTypes: { o1: [exploding] },
     });
     const actions = createFailureSurvivingExecutor({
       inner,
@@ -203,13 +234,15 @@ describe.skipIf(!db)('Action PG durability', () => {
     });
 
     const result = await actions.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'boom',
       parameters: { orderId: 'boom-1', missingId: 'does-not-exist' },
       principal: 'u1',
+      idempotencyKey: 'boom-1',
+      expectedObjectVersions: { 'ot.order::does-not-exist': 1 },
     });
     expect(result.status).toBe('FAILED');
-    expect(await root.objects.get('o1', 'ot.order', 'boom-1')).toBeUndefined();
+    expect(await root.objects.get(ontologyId, 'ot.order', 'boom-1')).toBeUndefined();
     const failed = await actions.getExecution(result.executionId);
     expect(failed?.status).toBe('FAILED');
     expect(failed?.error).toBeTruthy();
@@ -245,27 +278,30 @@ describe.skipIf(!db)('Action PG durability', () => {
         },
       ],
     };
+    const { ontology, ontologyId } = await seedPg(sql, clock, nextId, [exploding]);
     const root = storesFor(sql, clock, nextId);
     const actions = createActionExecutor({
       ...root,
-      authorize: allowAll,
+      ontology,
+      authorize: allow,
       mode: 'production',
       unitOfWork: {
         run: (fn) => sql.transaction((tx) => fn(storesFor(tx, clock, nextId))),
       },
       clock,
       nextId,
-      actionTypes: { o1: [exploding] },
     });
 
     const result = await actions.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'boom2',
       parameters: { orderId: 'boom-2', missingId: 'does-not-exist' },
       principal: 'u1',
+      idempotencyKey: 'boom-2',
+      expectedObjectVersions: { 'ot.order::does-not-exist': 1 },
     });
     expect(result.status).toBe('FAILED');
-    expect(await root.objects.get('o1', 'ot.order', 'boom-2')).toBeUndefined();
+    expect(await root.objects.get(ontologyId, 'ot.order', 'boom-2')).toBeUndefined();
     const failed = await root.executions.get(result.executionId);
     expect(failed?.status).toBe('FAILED');
     expect(failed?.error).toBeTruthy();
@@ -295,35 +331,37 @@ describe.skipIf(!db)('Action PG durability', () => {
         },
       ],
     };
+    const { ontology, ontologyId } = await seedPg(sql, clock, nextId, [createOpt]);
     const root = storesFor(sql, clock, nextId);
     const actions = createActionExecutor({
       ...root,
-      authorize: allowAll,
+      ontology,
+      authorize: allow,
       mode: 'production',
       unitOfWork: {
         run: (fn) => sql.transaction((tx) => fn(storesFor(tx, clock, nextId))),
       },
       clock,
       nextId,
-      actionTypes: { o1: [createOpt] },
     });
     const result = await actions.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'createOpt',
       parameters: { orderId: 'opt-1' },
       principal: 'u1',
+      idempotencyKey: 'opt-1',
     });
     expect(result.status).toBe('SUCCEEDED');
     const hasKey = await sql.query(
       `SELECT properties ? 'note' AS has_note FROM platform_objects
        WHERE ontology_id = $1 AND object_type_id = $2 AND primary_key = $3 AND deleted = false`,
-      ['o1', 'ot.order', 'opt-1'],
+      [ontologyId, 'ot.order', 'opt-1'],
     );
     expect(hasKey.rows[0]?.has_note).toBe(false);
     await sql.close();
   });
 
-  it('P1-4: AWAITING_APPROVAL survives restart then approve resumes', async () => {
+  it('P1-4: AWAITING_APPROVAL envelope survives restart then approve resumes', async () => {
     if (!db) return;
     const clock = createSystemClock();
     const nextId = createUuidIdGenerator();
@@ -332,49 +370,104 @@ describe.skipIf(!db)('Action PG durability', () => {
       id: 'act.discount',
       apiName: 'discount',
       requiresApproval: true,
+      approvals: { required: true, approverPolicy: 'manager' },
     };
-    const make = (sql: TransactionalSqlClient) => {
-      const root = storesFor(sql, clock, nextId);
+    const sql = db.reconnect();
+    const { ontology, ontologyId } = await seedPg(sql, clock, nextId, [gated]);
+    const make = (client: TransactionalSqlClient, onto: OntologyRegistry) => {
+      const root = storesFor(client, clock, nextId);
       return createActionExecutor({
         ...root,
-        authorize: allowAll,
+        ontology: onto,
+        authorize: allow,
         mode: 'production',
         unitOfWork: {
-          run: (fn) => sql.transaction((tx) => fn(storesFor(tx, clock, nextId))),
+          run: (fn) => client.transaction((tx) => fn(storesFor(tx, clock, nextId))),
         },
         clock,
         nextId,
-        actionTypes: { o1: [gated] },
       });
     };
-    const sql = db.reconnect();
     const objects = createPgObjectRepository({ sql, clock, nextId });
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: 'disc-1',
       properties: { status: 'pending' },
     });
-    const paused = await make(sql).apply({
-      ontologyId: 'o1',
+    const paused = await make(sql, ontology).apply({
+      ontologyId,
       actionApiName: 'discount',
       parameters: { orderId: 'disc-1', status: 'ok' },
       principal: 'requester',
+      idempotencyKey: 'disc-1',
+      expectedObjectVersions: { 'ot.order::disc-1': 1 },
     });
     expect(paused.status).toBe('AWAITING_APPROVAL');
+    const pausedRow = await make(sql, ontology).getExecution(paused.executionId);
+    expect(pausedRow?.actionTypeHash).toBeTruthy();
+    expect(pausedRow?.expectedObjectVersions?.['ot.order::disc-1']).toBe(1);
     await sql.close();
     const sql2 = db.reconnect();
-    const resumed = make(sql2);
+    const ontology2 = createPgOntologyRegistry({ sql: sql2, clock, nextId });
+    const resumed = make(sql2, ontology2);
     const loaded = await resumed.getExecution(paused.executionId);
     expect(loaded?.status).toBe('AWAITING_APPROVAL');
+    expect(loaded?.actionTypeHash).toBe(pausedRow?.actionTypeHash);
     const done = await resumed.approve!(paused.executionId, 'approver');
     expect(done.status).toBe('SUCCEEDED');
     const obj = await createPgObjectRepository({ sql: sql2, clock, nextId }).get(
-      'o1',
+      ontologyId,
       'ot.order',
       'disc-1',
     );
     expect(obj?.properties.status).toBe('ok');
+    await sql2.close();
+  });
+
+  it('object changed during approval wait is conflict after restart', async () => {
+    if (!db) return;
+    const clock = createSystemClock();
+    const nextId = createUuidIdGenerator();
+    const gated: ActionTypeDef = {
+      ...approve,
+      id: 'act.hold',
+      apiName: 'hold',
+      requiresApproval: true,
+      approvals: { required: true, approverPolicy: 'manager' },
+    };
+    const sql = db.reconnect();
+    const { ontology, ontologyId } = await seedPg(sql, clock, nextId, [gated]);
+    const objects = createPgObjectRepository({ sql, clock, nextId });
+    await objects.create({
+      ontologyId,
+      objectTypeId: 'ot.order',
+      primaryKey: 'hold-1',
+      properties: { status: 'pending' },
+    });
+    const exec = executorFor(sql, clock, nextId, ontology);
+    const paused = await exec.apply({
+      ontologyId,
+      actionApiName: 'hold',
+      parameters: { orderId: 'hold-1', status: 'ok' },
+      principal: 'requester',
+      idempotencyKey: 'hold-1',
+      expectedObjectVersions: { 'ot.order::hold-1': 1 },
+    });
+    await objects.update(ontologyId, 'ot.order', 'hold-1', { properties: { status: 'moved' } });
+    await sql.close();
+    const sql2 = db.reconnect();
+    const ontology2 = createPgOntologyRegistry({ sql: sql2, clock, nextId });
+    const resumed = executorFor(sql2, clock, nextId, ontology2);
+    const r = await resumed.approve!(paused.executionId, 'approver');
+    expect(r.status).toBe('FAILED');
+    expect(r.error).toMatch(/version conflict/);
+    const obj = await createPgObjectRepository({ sql: sql2, clock, nextId }).get(
+      ontologyId,
+      'ot.order',
+      'hold-1',
+    );
+    expect(obj?.properties.status).toBe('moved');
     await sql2.close();
   });
 });

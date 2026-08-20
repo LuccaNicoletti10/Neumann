@@ -158,3 +158,32 @@ export function assertAuthorizeResult(r: AuthorizeResult): void {
     throw new Error('AuthorizeResult: reason obrigatório');
   }
 }
+
+/** Read operations may proceed on `allow` or `partial`. */
+export function isReadOperation(operation: PolicyOperation): boolean {
+  return operation === 'read' || operation === 'list' || operation === 'count';
+}
+
+/**
+ * Mutations and admin writes. WHY: EPID `partial` means inherited read;
+ * write requires an explicit node policy (`allow`).
+ */
+export function allowsMutation(result: AuthorizeResult): boolean {
+  return result.decision === 'allow';
+}
+
+/**
+ * Read may proceed on `allow` or `partial`. `deny` is hidden-miss.
+ * Field masks still apply after a `partial` read.
+ */
+export function allowsRead(result: AuthorizeResult): boolean {
+  return result.decision === 'allow' || result.decision === 'partial';
+}
+
+/** Single interpreter for HTTP/Actions/Functions. Never `decision !== 'deny'` on writes. */
+export function authorizeProceeds(
+  operation: PolicyOperation,
+  result: AuthorizeResult,
+): boolean {
+  return isReadOperation(operation) ? allowsRead(result) : allowsMutation(result);
+}

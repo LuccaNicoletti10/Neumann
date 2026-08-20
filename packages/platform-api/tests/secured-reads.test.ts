@@ -20,6 +20,7 @@ describe('SecuredReads — no bypass via ObjectSet/history/links', () => {
       grants: [
         {
           role: 'financeiro',
+          ontologyIds: ['*'],
           objectTypes: ['ot.order'],
           operations: ['read', 'modify'],
           hiddenProperties: ['secret'],
@@ -27,6 +28,7 @@ describe('SecuredReads — no bypass via ObjectSet/history/links', () => {
         },
         {
           role: 'servico',
+          ontologyIds: ['*'],
           objectTypes: ['*'],
           operations: ['read', 'modify'],
           actions: ['*'],

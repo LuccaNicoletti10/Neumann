@@ -1,0 +1,39 @@
+{
+  "name": "ingestion-runtime",
+  "version": "1.0.0",
+  "description": "Connector → RawEnvelope → pinned MappingVersion → ProjectionWriter (ADR-0016).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "engines": { "node": "^24.0.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "connector-sdk": "workspace:*",
+    "contracts": "workspace:*",
+    "object-platform": "workspace:*",
+    "connector-csv": "workspace:*",
+    "connector-http": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "ontology-registry": "workspace:*",
+    "policy-engine": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "connector-webhook": "workspace:*"
+  }
+}

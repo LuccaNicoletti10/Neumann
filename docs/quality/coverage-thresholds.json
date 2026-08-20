@@ -1,0 +1,95 @@
+{
+  "version": "2026-08-18",
+  "global": {
+    "statements": 77,
+    "branches": 75,
+    "functions": 85,
+    "lines": 77
+  },
+  "packages": {
+    "packages/action-engine": {
+      "statements": 80,
+      "branches": 72,
+      "functions": 92,
+      "lines": 80
+    },
+    "packages/connector-sdk": {
+      "statements": 74,
+      "branches": 67,
+      "functions": 71,
+      "lines": 74
+    },
+    "packages/contracts": {
+      "statements": 88,
+      "branches": 62,
+      "functions": 95,
+      "lines": 88
+    },
+    "packages/event-bus": {
+      "statements": 33,
+      "branches": 70,
+      "functions": 75,
+      "lines": 33
+    },
+    "packages/execution-sandbox": {
+      "statements": 71,
+      "branches": 69,
+      "functions": 88,
+      "lines": 71
+    },
+    "packages/knowledge-graph": {
+      "statements": 71,
+      "branches": 68,
+      "functions": 89,
+      "lines": 71
+    },
+    "packages/object-platform": {
+      "statements": 60,
+      "branches": 74,
+      "functions": 78,
+      "lines": 60
+    },
+    "packages/object-set": {
+      "statements": 55,
+      "branches": 60,
+      "functions": 67,
+      "lines": 55
+    },
+    "packages/ontology-registry": {
+      "statements": 58,
+      "branches": 61,
+      "functions": 84,
+      "lines": 58
+    },
+    "packages/platform-api": {
+      "statements": 80,
+      "branches": 74,
+      "functions": 88,
+      "lines": 80
+    },
+    "packages/policy-engine": {
+      "statements": 88,
+      "branches": 85,
+      "functions": 93,
+      "lines": 88
+    }
+  },
+  "exclusions": [
+    {
+      "pattern": "**/dist/**",
+      "why": "WHY: generated tsc emit, not source"
+    },
+    {
+      "pattern": "**/node_modules/**",
+      "why": "WHY: vendor, not kernel"
+    },
+    {
+      "pattern": "**/*.d.ts",
+      "why": "WHY: generated declarations"
+    },
+    {
+      "pattern": "**/*.{test,spec}.*",
+      "why": "WHY: tests measure production src; they are not the production surface"
+    }
+  ]
+}

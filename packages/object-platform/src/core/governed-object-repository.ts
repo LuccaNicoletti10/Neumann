@@ -24,49 +24,42 @@
  *   });
  */
 
-import type {
-  CreateObjectInput,
-  DeleteObjectInput,
-  ObjectRecord,
-  ObjectRepository,
-  OntologyId,
-  OntologyVersion,
-  OntologyVersionId,
-  PropertyTypeDef,
-  UpdateObjectInput,
+import {
+  compilePattern,
+  type CreateObjectInput,
+  type DeleteObjectInput,
+  type ObjectRecord,
+  type ObjectRepository,
+  type OntologyVersion,
+  type OntologyVersionId,
+  type PropertyTypeDef,
+  type UpdateObjectInput,
 } from 'contracts';
 
+import { OntologyValidationError, OntologyVersionMismatchError } from './errors.js';
 import type { ObjectHistoryStore } from './object-history-store.js';
+import type {
+  OntologyVersionPolicy,
+  PinnedOntologyVersion,
+} from './ontology-version-policy.js';
+
 
 export type GovernanceMode = 'enforce' | 'warn';
 
 export interface GovernedRepositoryOptions {
   inner: ObjectRepository;
-  /** Resolve a versão da ontologia contra a qual validar. */
-  resolveVersion: (
-    ontologyId: OntologyId,
-    ontologyVersionId?: OntologyVersionId,
-  ) => Promise<OntologyVersion | undefined>;
+  /**
+   * Single authority for which OntologyVersion validates each operation.
+   * WHY not a resolveVersion callback: every caller answered it differently.
+   */
+  versionPolicy: OntologyVersionPolicy;
   /** Snapshot de histórico. Se omitido, só valida (não recomendado). */
   history?: ObjectHistoryStore;
   /** Principal atual para o snapshot (quem causou a mutação). */
   principal?: () => string | undefined;
   /** enforce = rejeita escrita inválida; warn = loga e deixa passar. */
   mode?: GovernanceMode;
-  /** Permitir escrita quando a ontologia não tem versão comitada. Default: false. */
-  allowUncommittedOntology?: boolean;
-  /** Cache TTL da versão resolvida, em ms. Default 5000. 0 = sem cache. */
-  versionCacheTtlMs?: number;
   warn?: (message: string) => void;
-}
-
-export class OntologyValidationError extends Error {
-  readonly violations: string[];
-  constructor(violations: string[]) {
-    super(`ontology validation failed: ${violations.join('; ')}`);
-    this.name = 'OntologyValidationError';
-    this.violations = violations;
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -106,8 +99,15 @@ function runValidators(def: PropertyTypeDef, value: unknown): string[] {
       }
     } else if (v.kind === 'regex') {
       if (value !== null && value !== undefined) {
-        if (typeof value !== 'string' || !new RegExp(v.pattern).test(value)) {
+        if (typeof value !== 'string') {
           errors.push(`does not match /${v.pattern}/`);
+        } else {
+          try {
+            const re = compilePattern(def.id, v.pattern);
+            if (!re.test(value)) errors.push(`does not match /${v.pattern}/`);
+          } catch {
+            errors.push(`does not match /${v.pattern}/`);
+          }
         }
       }
     } else if (v.kind === 'set') {
@@ -147,6 +147,15 @@ export function validateProperties(
       violations.push(`property type "${key}" missing from ontology version (registry inconsistency)`);
       continue;
     }
+    // WHY: null is a value. required (nullable=false) rejects it; absence of
+    // required (nullable=true) permits it and skips baseType.
+    if (value === null) {
+      const isRequired = def.validators?.some((v) => v.kind === 'required') === true;
+      if (isRequired) {
+        violations.push(`property "${key}": not nullable`);
+      }
+      continue;
+    }
     const typeError = checkBaseType(def, value);
     if (typeError) violations.push(`property "${key}": ${typeError}`);
     for (const e of runValidators(def, value)) {
@@ -173,62 +182,29 @@ export function validateProperties(
 export function createGovernedObjectRepository(
   opts: GovernedRepositoryOptions,
 ): ObjectRepository {
-  const {
-    inner,
-    resolveVersion,
-    history,
-    principal,
-    mode = 'enforce',
-    allowUncommittedOntology = false,
-    versionCacheTtlMs = 5000,
-  } = opts;
+  const { inner, versionPolicy, history, principal, mode = 'enforce' } = opts;
   const warn = opts.warn ?? ((m: string) => console.warn(`[ontology-guard] ${m}`));
 
-  const cache = new Map<string, { version: OntologyVersion | undefined; at: number }>();
-
-  async function versionFor(
-    ontologyId: OntologyId,
-    ontologyVersionId?: OntologyVersionId,
-  ): Promise<OntologyVersion | undefined> {
-    const key = `${ontologyId}::${ontologyVersionId ?? 'latest'}`;
-    if (versionCacheTtlMs > 0) {
-      const hit = cache.get(key);
-      if (hit && Date.now() - hit.at < versionCacheTtlMs) return hit.version;
-    }
-    const version = await resolveVersion(ontologyId, ontologyVersionId);
-    cache.set(key, { version, at: Date.now() });
-    return version;
-  }
-
-  function handle(violations: string[]): void {
+  function handle(pinned: PinnedOntologyVersion, violations: string[]): void {
     if (violations.length === 0) return;
-    if (mode === 'enforce') throw new OntologyValidationError(violations);
-    for (const v of violations) warn(v);
-  }
-
-  async function guard(
-    ontologyId: OntologyId,
-    ontologyVersionId: OntologyVersionId | undefined,
-    objectTypeId: string,
-    properties: Record<string, unknown>,
-    full: boolean,
-  ): Promise<OntologyVersionId | undefined> {
-    const version = await versionFor(ontologyId, ontologyVersionId);
-    if (!version) {
-      if (allowUncommittedOntology) {
-        warn(`ontology "${ontologyId}" has no committed version — write allowed by config`);
-        return undefined;
-      }
-      handle([`ontology "${ontologyId}" has no committed version; commit before writing objects`]);
-      return undefined;
+    if (mode === 'warn') {
+      for (const v of violations) warn(v);
+      return;
     }
-    handle(validateProperties(version, objectTypeId, properties, full));
-    return version.id;
+    if (pinned.divergentRequest) {
+      throw new OntologyVersionMismatchError({
+        objectVersionId: pinned.version.id,
+        requestedVersionId: pinned.divergentRequest,
+        incompatibility: violations,
+      });
+    }
+    throw new OntologyValidationError(violations);
   }
 
   async function snapshot(
     record: ObjectRecord,
     operation: 'create' | 'update' | 'delete',
+    migration?: { from?: OntologyVersionId; to?: OntologyVersionId },
   ): Promise<void> {
     if (!history) return;
     await history.append({
@@ -244,22 +220,23 @@ export function createGovernedObjectRepository(
       principal: principal?.(),
       operation,
       provenance: record.provenance,
+      fromOntologyVersionId: migration?.from,
+      toOntologyVersionId: migration?.to,
     });
   }
 
   return {
     async create(input: CreateObjectInput) {
-      const versionId = await guard(
-        input.ontologyId,
-        input.ontologyVersionId,
-        input.objectTypeId,
-        input.properties ?? {},
-        true,
-      );
-      const record = await inner.create({
-        ...input,
-        ontologyVersionId: input.ontologyVersionId ?? versionId,
+      const pinned = await versionPolicy.pin({
+        kind: 'create',
+        ontologyId: input.ontologyId,
+        requested: input.ontologyVersionId,
       });
+      handle(
+        pinned,
+        validateProperties(pinned.version, input.objectTypeId, input.properties ?? {}, true),
+      );
+      const record = await inner.create({ ...input, ontologyVersionId: pinned.version.id });
       await snapshot(record, 'create');
       return record;
     },
@@ -267,17 +244,42 @@ export function createGovernedObjectRepository(
     get: (o, t, pk) => inner.get(o, t, pk),
     getById: (id) => inner.getById(id),
     list: (o, t, opts2) => inner.list(o, t, opts2),
+    listAll: (o, opts2) => inner.listAll(o, opts2),
 
     async update(ontologyId, objectTypeId, primaryKey, input: UpdateObjectInput) {
       const pre = await inner.get(ontologyId, objectTypeId, primaryKey);
+      const migrating = input.migrateToOntologyVersionId !== undefined;
+      const pinned = migrating
+        ? await versionPolicy.pin({
+            kind: 'migrate',
+            ontologyId,
+            from: input.ontologyVersionId ?? pre?.ontologyVersionId ?? '',
+            to: input.migrateToOntologyVersionId!,
+            stamped: pre?.ontologyVersionId,
+          })
+        : await versionPolicy.pin({
+            kind: 'mutate',
+            ontologyId,
+            stamped: pre?.ontologyVersionId,
+            requested: input.ontologyVersionId,
+          });
       // merge: valida o estado RESULTANTE (pre + patch); replace: valida o novo estado.
       const toValidate =
         input.mode === 'replace'
           ? input.properties
           : { ...(pre?.properties ?? {}), ...input.properties };
-      await guard(ontologyId, pre?.ontologyVersionId, objectTypeId, toValidate, true);
-      const post = await inner.update(ontologyId, objectTypeId, primaryKey, input);
-      await snapshot(post, 'update');
+      handle(pinned, validateProperties(pinned.version, objectTypeId, toValidate, true));
+      const post = await inner.update(ontologyId, objectTypeId, primaryKey, {
+        ...input,
+        migrateToOntologyVersionId: migrating ? pinned.version.id : undefined,
+      });
+      await snapshot(
+        post,
+        'update',
+        migrating
+          ? { from: pre?.ontologyVersionId, to: pinned.version.id }
+          : undefined,
+      );
       return post;
     },
 

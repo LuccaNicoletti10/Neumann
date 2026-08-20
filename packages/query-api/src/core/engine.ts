@@ -9,7 +9,6 @@ import {
   assertSearchDocument,
   assertSearchQuery,
   canViewAtLevel,
-  type KnowledgeGraphStore,
   type SearchBackend,
   type SearchDocument,
   type SearchLink,
@@ -18,7 +17,6 @@ import {
   type SearchResponse,
   type SearchTemplate,
 } from 'contracts';
-import { createKnowledgeGraph } from 'knowledge-graph';
 
 import { canViewDocument, canViewProperty } from './acl.js';
 import { createDeterministicClock, createIdGenerator, freshnessLagMs, type Clock, type IdGenerator } from './determinism.js';
@@ -50,7 +48,6 @@ export type FederateFn = (query: SearchQuery, principal: SearchPrincipal) => Sea
 export interface CreateQueryEngineOptions {
   clock?: Clock;
   nextId?: IdGenerator;
-  kg?: KnowledgeGraphStore;
   /** Pushdown federado (Passo 31). Sem adapter → hits vazios, backend federation. */
   federate?: FederateFn;
 }
@@ -70,12 +67,12 @@ function planBackend(query: SearchQuery): SearchBackend {
 export function createQueryEngine(opts: CreateQueryEngineOptions = {}): QueryEngine {
   const clock = opts.clock ?? createDeterministicClock();
   const nextId = opts.nextId ?? createIdGenerator();
-  const kg = opts.kg ?? createKnowledgeGraph({ clock, nextId });
   const { federate } = opts;
 
   const docs = new Map<string, SearchDocument>();
   const inverted = new Map<string, Posting[]>();
   const templates = new Map<string, SearchTemplate>();
+  const searchLinks = new Map<string, SearchLink>();
 
   function reindex(doc: SearchDocument): void {
     for (const [tok, postings] of inverted) {
@@ -97,17 +94,6 @@ export function createQueryEngine(opts: CreateQueryEngineOptions = {}): QueryEng
       list.push({ docId: doc.id, property: '_pk' });
       inverted.set(tok, list);
     }
-  }
-
-  function syncGraph(doc: SearchDocument): void {
-    kg.upsertObject({
-      id: doc.id,
-      objectTypeId: String(doc.objectTypeId),
-      primaryKey: doc.primaryKey,
-      properties: doc.properties,
-      classification: doc.classification,
-      propertyClassifications: doc.propertyClassifications,
-    });
   }
 
   function authorized(user: SearchPrincipal): SearchDocument[] {
@@ -195,20 +181,31 @@ export function createQueryEngine(opts: CreateQueryEngineOptions = {}): QueryEng
       if (!start || !canViewDocument(start, user)) {
         return { backend, docs: [] };
       }
-      const result = kg.traverseLinks({
-        startObjectId: around.objectId,
-        maxHops: around.maxHops ?? 1,
-        direction: 'outgoing',
-        linkTypeIds: around.linkTypeId ? [around.linkTypeId] : undefined,
-        viewingLevel: user.viewingLevel,
-      });
-      const neighborIds = result.nodes
-        .map((n) => n.id)
-        .filter((id) => id !== around.objectId);
+      const maxHops = around.maxHops ?? 1;
+      const typeFilter = around.linkTypeId;
+      const visited = new Set<string>([around.objectId]);
+      let frontier = [around.objectId];
       const neighbors: SearchDocument[] = [];
-      for (const id of neighborIds) {
-        const doc = docs.get(id);
-        if (doc && canViewDocument(doc, user)) neighbors.push(doc);
+      let depth = 0;
+      while (frontier.length > 0 && depth < maxHops) {
+        depth += 1;
+        const next: string[] = [];
+        for (const fromId of frontier) {
+          for (const link of searchLinks.values()) {
+            if (link.sourceObjectId !== fromId) continue;
+            if (typeFilter && link.linkTypeId !== typeFilter) continue;
+            if (visited.has(link.targetObjectId)) continue;
+            visited.add(link.targetObjectId);
+            const doc = docs.get(link.targetObjectId);
+            if (!doc || !canViewDocument(doc, user)) continue;
+            if (user.viewingLevel && doc.classification && !canViewAtLevel(doc.classification, user.viewingLevel)) {
+              continue;
+            }
+            neighbors.push(doc);
+            next.push(link.targetObjectId);
+          }
+        }
+        frontier = next;
       }
       return { backend, docs: applyTypeAndFilter(neighbors, q, user) };
     }
@@ -228,7 +225,6 @@ export function createQueryEngine(opts: CreateQueryEngineOptions = {}): QueryEng
       };
       docs.set(doc.id, doc);
       reindex(doc);
-      syncGraph(doc);
       return doc;
     },
 
@@ -250,13 +246,8 @@ export function createQueryEngine(opts: CreateQueryEngineOptions = {}): QueryEng
         sourceObjectId: input.sourceObjectId,
         targetObjectId: input.targetObjectId,
       };
-      kg.upsertLink({
-        id: link.id,
-        linkTypeId: link.linkTypeId,
-        sourceObjectId: link.sourceObjectId,
-        targetObjectId: link.targetObjectId,
-        mappingVersionId: 'map.search',
-      });
+      const key = `${link.linkTypeId}|${link.sourceObjectId}|${link.targetObjectId}`;
+      searchLinks.set(key, link);
       return link;
     },
 

@@ -1,15 +1,8 @@
 {
+  "extends": "../../tsconfig.node.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "verbatimModuleSyntax": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "types": ["node"]
+    // WHY: this tsconfig is typecheck-only; emit lives on tsconfig.build.json
+    "noEmit": true
   },
-  "include": ["src", "tests"]
+  "include": ["src","tests"]
 }

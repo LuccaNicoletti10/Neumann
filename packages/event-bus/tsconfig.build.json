@@ -1,12 +1,13 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": false,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "outDir": "dist",
+    // WHY: emit must not include tests
     "rootDir": "src",
-    "outDir": "dist"
+    // WHY: parent tsconfig is typecheck-only
+    "noEmit": false,
+    // WHY: parent typecheck sets noEmit; build must emit declarations
+    "declaration": true
   },
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts"]

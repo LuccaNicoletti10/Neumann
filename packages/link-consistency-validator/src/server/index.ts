@@ -64,7 +64,8 @@ export interface ValidateRequestBody {
 }
 
 export function createApp(): Server {
-  return createServer(async (req, res) => {
+  return createServer((req, res) => {
+    void (async () => {
     try {
       const { method, url } = req;
       if (method === 'GET' && url === '/health') {
@@ -118,6 +119,7 @@ export function createApp(): Server {
         sendJson(res, 500, { error: 'erro interno do servidor' });
       }
     }
+    })();
   });
 }
 

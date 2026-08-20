@@ -5,14 +5,14 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 import type { ActionTypeDef } from 'contracts';
-import { createOutboxWorker, createSqlMirrorWritebackHandler } from 'event-bus';
-import { tryOpenIsolatedPg } from 'object-platform';
-import { createAllowAllAuthorizer, createDenyAllAuthorizer } from 'policy-engine';
+import { createOutboxWorker, createPgOutboxRepository, createSqlMirrorWritebackHandler } from 'event-bus';
+import { createDeterministicClock, tryOpenIsolatedPg } from 'object-platform';
+import { createAllowAllTestPolicy, createDenyAllAuthorizer } from 'policy-engine';
 
 import { createPostgresPlatformContext } from '../src/core/context.js';
 import { principalAls } from '../src/core/principal.js';
 
-const allow = createAllowAllAuthorizer();
+const allow = createAllowAllTestPolicy();
 const deny = createDenyAllAuthorizer();
 
 const approve: ActionTypeDef = {
@@ -46,7 +46,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
 
   it('does not wire memory stores in postgres mode', async () => {
     if (!db) return;
-    const ctx = createPostgresPlatformContext({
+    const ctx = await createPostgresPlatformContext({
       sql: db.sql,
       transaction: db.sql,
       authorizer: allow,
@@ -57,10 +57,11 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
 
   it('ontology, events, executions, audit, outbox survive restart', async () => {
     if (!db) return;
-    const ctx = createPostgresPlatformContext({
+    const ctx = await createPostgresPlatformContext({
       sql: db.sql,
       transaction: db.sql,
       authorizer: allow,
+      clock: createDeterministicClock(),
     });
     const o = await ctx.ontology.createOntology({ name: 'prod' });
     await ctx.ontology.addPropertyType(o.id, {
@@ -73,8 +74,8 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
       displayName: 'Order',
       propertyTypeIds: ['status'],
     });
+    await ctx.ontology.addActionType(o.id, approve);
     await ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
-    ctx.actions.registerActionType(o.id, approve);
 
     const created = await principalAls.run('alice', async () => {
       const rec = await ctx.objects.create({
@@ -89,6 +90,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
         parameters: { orderId: '1', status: 'ok' },
         principal: 'alice',
         idempotencyKey: 'idemp-1',
+        expectedObjectVersions: { 'ot.order::1': 1 },
       });
       return { rec, applied: appliedInner };
     });
@@ -128,7 +130,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
     expect(Number(outbox.rows[0]?.n)).toBeGreaterThanOrEqual(1);
 
     const worker = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: createPgOutboxRepository({ sql: db.sql }),
       handlers: {
         'action.side_effect.writeback': createSqlMirrorWritebackHandler({
           sql: db.sql,
@@ -144,12 +146,11 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
 
     await db.sql.close();
     const sql2 = db.reconnect();
-    const ctx2 = createPostgresPlatformContext({
+    const ctx2 = await createPostgresPlatformContext({
       sql: sql2,
       transaction: sql2,
       authorizer: allow,
     });
-    ctx2.actions.registerActionType(o.id, approve);
 
     const onto = await ctx2.ontology.getOntology(o.id);
     expect(onto?.name).toBe('prod');
@@ -171,6 +172,7 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
       parameters: { orderId: '1', status: 'ok' },
       principal: 'alice',
       idempotencyKey: 'idemp-1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(replay.executionId).toBe(applied.executionId);
     await sql2.close();
@@ -179,18 +181,26 @@ describe.skipIf(!db)('createPostgresPlatformContext durability', () => {
   it('production authorize deny is persisted without default allowAll', async () => {
     if (!db) return;
     const sql = db.reconnect();
-    const ctx = createPostgresPlatformContext({
+    const ctx = await createPostgresPlatformContext({
       sql,
       transaction: sql,
       authorizer: deny,
     });
     const o = await ctx.ontology.createOntology({ name: 'denied' });
-    ctx.actions.registerActionType(o.id, approve);
+    await ctx.ontology.addObjectType(o.id, {
+      id: 'ot.order',
+      displayName: 'Order',
+      propertyTypeIds: [],
+    });
+    await ctx.ontology.addActionType(o.id, approve);
+    await ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
     const r = await ctx.actions.apply({
       ontologyId: o.id,
       actionApiName: 'approve',
       parameters: { orderId: 'x', status: 'ok' },
       principal: 'eve',
+      idempotencyKey: 'deny-eve',
+      expectedObjectVersions: { 'ot.order::x': 1 },
     });
     expect(r.status).toBe('DENIED');
     await sql.close();

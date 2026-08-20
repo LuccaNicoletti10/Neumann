@@ -46,8 +46,18 @@ describe('platform-api JWT hook', () => {
   });
 
   it('health stays public; missing/invalid/expired tokens return 401', async () => {
-    const ctx = createMemoryPlatformContext();
-    const { app } = await createPlatformServer(ctx, { jwtSecret: SECRET, jwtIssuer: 'neumann' });
+    const ctx = createMemoryPlatformContext({ policyFixture: 'allow-all' });
+    const sink = {
+      attempts: [] as { success: boolean; principal?: string }[],
+      recordAttempt(event: { success: boolean; principal?: string }): void {
+        this.attempts.push(event);
+      },
+    };
+    const { app } = await createPlatformServer(ctx, {
+      jwtSecret: SECRET,
+      jwtIssuer: 'neumann',
+      authEventSink: sink,
+    });
 
     const health = await app.inject({ method: 'GET', url: '/health' });
     expect(health.statusCode).toBe(200);
@@ -75,13 +85,29 @@ describe('platform-api JWT hook', () => {
       headers: { authorization: `Bearer ${expired}` },
     });
     expect(expRes.statusCode).toBe(401);
+    expect(sink.attempts.some((a) => a.success === false)).toBe(true);
+
+    const token = signDevToken({ secret: SECRET, principal: 'lucca', issuer: 'neumann' });
+    const ok = await app.inject({
+      method: 'GET',
+      url: '/api/v2/ontologies',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(sink.attempts.some((a) => a.success && a.principal === 'lucca')).toBe(true);
 
     await app.close();
   });
 
-  it('svc-projector token may write objects; fernanda is 403 ActionsOnlyWritePath', async () => {
-    const ctx = createMemoryPlatformContext();
+  it('public POST /objects returns 405 ActionRequired for every principal', async () => {
+    const ctx = createMemoryPlatformContext({ policyFixture: 'allow-all' });
     const o = await ctx.ontology.createOntology({ name: 'authz' });
+    await ctx.ontology.addObjectType(o.id, {
+      id: 'ot.thing',
+      displayName: 'Thing',
+      propertyTypeIds: [],
+    });
+    await ctx.ontology.commit({ ontologyId: o.id, createdBy: 'test' });
     const { app } = await createPlatformServer(ctx, { jwtSecret: SECRET });
 
     const projector = signDevToken({ secret: SECRET, principal: 'svc-projector' });
@@ -91,7 +117,8 @@ describe('platform-api JWT hook', () => {
       headers: { authorization: `Bearer ${projector}` },
       payload: { primaryKey: '1', properties: { n: 1 } },
     });
-    expect(allowed.statusCode).toBe(201);
+    expect(allowed.statusCode).toBe(405);
+    expect(allowed.json().errorName).toBe('ActionRequired');
 
     const human = signDevToken({ secret: SECRET, principal: 'fernanda' });
     const denied = await app.inject({
@@ -100,21 +127,22 @@ describe('platform-api JWT hook', () => {
       headers: { authorization: `Bearer ${human}` },
       payload: { primaryKey: '2', properties: { n: 2 } },
     });
-    expect(denied.statusCode).toBe(403);
-    expect(denied.json().errorName).toBe('ActionsOnlyWritePath');
+    expect(denied.statusCode).toBe(405);
+    expect(denied.json().errorName).toBe('ActionRequired');
 
     await app.close();
   });
 
-  it('NODE_ENV=production without PLATFORM_JWT_SECRET fails boot', async () => {
+  it('NODE_ENV=production refuses memory context before serving', async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.PLATFORM_JWKS_URL;
     try {
-      await expect(createPlatformServer(createMemoryPlatformContext())).rejects.toThrow(
-        /PLATFORM_JWKS_URL|PLATFORM_JWT_SECRET/,
-      );
+      // WHY: production assert runs before JWT resolution; memory is fail-closed first.
+      await expect(
+        createPlatformServer(createMemoryPlatformContext({ policyFixture: 'allow-all' })),
+      ).rejects.toThrow(/production refused|PLATFORM_JWKS_URL|PLATFORM_JWT_SECRET/);
     } finally {
       process.env.NODE_ENV = prev;
     }
@@ -203,7 +231,7 @@ describe('JWKS IdentityProvider', () => {
     if (!addr || typeof addr === 'string') throw new Error('no port');
     const jwksUrl = `http://127.0.0.1:${addr.port}/jwks`;
     try {
-      const { app } = await createPlatformServer(createMemoryPlatformContext(), { jwksUrl });
+      const { app } = await createPlatformServer(createMemoryPlatformContext({ policyFixture: 'allow-all' }), { jwksUrl });
       const token = await new SignJWT({ sub: 'svc-projector' })
         .setProtectedHeader({ alg: 'RS256', kid: 'api-1' })
         .setIssuedAt()

@@ -187,7 +187,13 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  runCommandLine(process.argv.slice(2)).then((code) => {
-    process.exitCode = code;
-  });
+  void runCommandLine(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+      process.exitCode = 1;
+    },
+  );
 }

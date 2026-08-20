@@ -7,16 +7,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ActionTypeDef, ActionWorkflowDef } from 'contracts';
-import {
-  createDeterministicClock,
-  createIdGenerator,
-  createMemoryLinkRepository,
-  createMemoryObjectRepository,
-} from 'object-platform';
-import { createAuditLog } from 'policy-engine';
 
 import { runDemo } from '../src/cli.js';
-import { createActionExecutor } from '../src/core/executor.js';
 import { renderDocumentTemplate } from '../src/core/document-template.js';
 import {
   bindParameterVariable,
@@ -28,26 +20,15 @@ import {
   dependentSteps,
   topologicalSteps,
 } from '../src/core/workflow.js';
+import { executorHarness } from './executor-harness.js';
 
-function harness(actionTypes: ActionTypeDef[], authorizeEve = false) {
-  const clock = createDeterministicClock();
-  const nextId = createIdGenerator();
-  const objects = createMemoryObjectRepository({ clock, nextId });
-  const links = createMemoryLinkRepository({ clock, nextId });
-  const audit = createAuditLog({ clock, nextId });
-  const exec = createActionExecutor({
-    objects,
-    links,
-    audit,
-    clock,
-    nextId,
+async function harness(actionTypes: ActionTypeDef[], authorizeEve = false) {
+  return executorHarness(actionTypes, {
     authorize: (req) =>
       authorizeEve && req.principal === 'eve'
         ? { decision: 'deny', principalEpids: [], resourceEpid: null, reason: 'unauthorized' }
         : { decision: 'allow', principalEpids: [], resourceEpid: null, reason: 'ok' },
-    actionTypes: { o1: actionTypes },
   });
-  return { objects, links, audit, exec };
 }
 
 const approve: ActionTypeDef = {
@@ -71,23 +52,25 @@ const approve: ActionTypeDef = {
 
 describe('Passo 24 — Action engine', () => {
   it('unauthorized → DENIED with audit', async () => {
-    const { objects, exec, audit } = harness([approve], true);
+    const { objects, exec, audit, ontologyId } = await harness([approve], true);
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { status: 'pending' },
     });
     const r = await exec.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'eve',
+      idempotencyKey: 'deny-1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(r.status).toBe('DENIED');
     expect(r.error).toMatch(/unauthorized/);
     expect(r.auditEntryId).toBeTruthy();
-    expect((await objects.get('o1', 'ot.order', '1'))?.properties.status).toBe('pending');
+    expect((await objects.get(ontologyId, 'ot.order', '1'))?.properties.status).toBe('pending');
     const kinds = (await audit.list())
       .map((e) => {
         try {
@@ -101,26 +84,28 @@ describe('Passo 24 — Action engine', () => {
   });
 
   it('duplicate idempotencyKey → 1 execution', async () => {
-    const { objects, exec } = harness([approve]);
+    const { objects, exec, ontologyId } = await harness([approve]);
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { status: 'pending' },
     });
     const a = await exec.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'u1',
       idempotencyKey: 'k1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     const b = await exec.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'u1',
       idempotencyKey: 'k1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(a.status).toBe('SUCCEEDED');
     expect(b.executionId).toBe(a.executionId);
@@ -128,24 +113,25 @@ describe('Passo 24 — Action engine', () => {
   });
 
   it('stale object → conflict + audit', async () => {
-    const { objects, exec, audit } = harness([approve]);
+    const { objects, exec, audit, ontologyId } = await harness([approve]);
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { status: 'pending' },
     });
     const r = await exec.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'u1',
+      idempotencyKey: 'stale-99',
       expectedObjectVersions: { 'ot.order::1': 99 },
     });
     expect(r.status).toBe('FAILED');
     expect(r.error).toMatch(/version conflict/i);
     expect(r.auditEntryId).toBeTruthy();
-    expect((await objects.get('o1', 'ot.order', '1'))?.properties.status).toBe('pending');
+    expect((await objects.get(ontologyId, 'ot.order', '1'))?.properties.status).toBe('pending');
     const kinds = (await audit.list())
       .map((e) => {
         try {
@@ -183,22 +169,24 @@ describe('Passo 24 — Action engine', () => {
         revertTo: { baseType: 'string', required: true },
       },
     };
-    const { objects, exec } = harness([def]);
+    const { objects, exec, ontologyId } = await harness([def]);
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { status: 'pending' },
     });
     const r = await exec.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok', revertTo: 'pending' },
       principal: 'u1',
+      idempotencyKey: 'post-1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(r.status).toBe('FAILED');
     expect(r.error).toMatch(/postcondition/);
-    expect((await objects.get('o1', 'ot.order', '1'))?.properties.status).toBe('pending');
+    expect((await objects.get(ontologyId, 'ot.order', '1'))?.properties.status).toBe('pending');
   });
 
   it('generate_document fills template from object properties', async () => {
@@ -220,35 +208,37 @@ describe('Passo 24 — Action engine', () => {
         },
       ],
     };
-    const { objects, exec } = harness([def]);
+    const { objects, exec, ontologyId } = await harness([def]);
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { name: 'Ada', associates: ['Bob', 'Cyd'] },
     });
     const r = await exec.apply({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'report',
       parameters: { orderId: '1' },
       principal: 'u1',
+      idempotencyKey: 'report-1',
+      expectedObjectVersions: { 'ot.order::1': 1 },
     });
     expect(r.status).toBe('SUCCEEDED');
-    expect((await objects.get('o1', 'ot.order', '1'))?.properties.doc).toBe(
+    expect((await objects.get(ontologyId, 'ot.order', '1'))?.properties.doc).toBe(
       'Hello Ada (Bob;Cyd;)',
     );
   });
 
   it('parameter tree + variable binding', async () => {
-    const { objects, exec } = harness([approve]);
+    const { objects, exec, ontologyId } = await harness([approve]);
     await objects.create({
-      ontologyId: 'o1',
+      ontologyId,
       objectTypeId: 'ot.order',
       primaryKey: '1',
       properties: { status: 'pending', amount: 9 },
     });
     const tree = await exec.parameterTree!({
-      ontologyId: 'o1',
+      ontologyId,
       actionApiName: 'approve',
       parameters: { orderId: '1', status: 'ok' },
       principal: 'u1',
@@ -282,7 +272,7 @@ describe('Passo 24 — Action engine', () => {
         },
       ],
     };
-    const { objects, exec } = harness([create, approve]);
+    const { objects, exec, ontologyId } = await harness([create, approve]);
     const runner = createActionWorkflowRunner(exec);
     const workflow: ActionWorkflowDef = {
       id: 'wf',
@@ -305,28 +295,31 @@ describe('Passo 24 — Action engine', () => {
     expect([...dependentSteps(workflow, 's1')].sort()).toEqual(['s1', 's2']);
 
     const r = await runner.apply({
-      ontologyId: 'o1',
+      ontologyId,
       workflow,
       parameters: { orderId: 'n1', status: 'ok' },
       principal: 'u1',
       idempotencyKey: 'wf1',
+      expectedObjectVersions: { 'ot.order::n1': 1 },
     });
     expect(r.status).toBe('SUCCEEDED');
-    expect((await objects.get('o1', 'ot.order', 'n1'))?.properties.status).toBe('ok');
+    expect((await objects.get(ontologyId, 'ot.order', 'n1'))?.properties.status).toBe('ok');
 
-    await objects.update('o1', 'ot.order', 'n1', { properties: { status: 'pending' } });
+    await objects.update(ontologyId, 'ot.order', 'n1', { properties: { status: 'pending' } });
     const rp = await runner.reprocess(
       {
-        ontologyId: 'o1',
+        ontologyId,
         workflow,
         parameters: { orderId: 'n1', status: 'ok' },
         principal: 'u1',
+        idempotencyKey: 'wf1-reprocess',
+        expectedObjectVersions: { 'ot.order::n1': 3 },
       },
       's2',
     );
     expect(rp.stepResults).toHaveLength(1);
     expect(rp.status).toBe('SUCCEEDED');
-    expect((await objects.get('o1', 'ot.order', 'n1'))?.properties.status).toBe('ok');
+    expect((await objects.get(ontologyId, 'ot.order', 'n1'))?.properties.status).toBe('ok');
   });
 
   it('renderDocumentTemplate is substitution-only', () => {

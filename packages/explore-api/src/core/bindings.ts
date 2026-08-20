@@ -41,12 +41,16 @@ export function visibleProperties(
   principal: string,
   authorizer?: OntologyAuthorizer,
 ): Record<string, unknown> {
-  if (authorizer && !authorizer.canReadObjectType(principal, obj.objectTypeId)) return {};
+  if (authorizer && !authorizer.canReadObjectType(principal, obj.objectTypeId, obj.ontologyId)) {
+    return {};
+  }
   if (!authorizer) return { ...obj.properties };
-  return authorizer.redactProperties(principal, obj.objectTypeId, obj.properties) as Record<
-    string,
-    unknown
-  >;
+  return authorizer.redactProperties(
+    principal,
+    obj.objectTypeId,
+    obj.properties,
+    obj.ontologyId,
+  ) as Record<string, unknown>;
 }
 
 export function suggestBindings(

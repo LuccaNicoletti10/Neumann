@@ -23,8 +23,8 @@ import { evaluateFilter } from './filter.js';
 
 export interface ObjectSetResolverDeps {
   ontologyId: OntologyId;
-  objects: ObjectRepository;
-  links: LinkRepository;
+  objects: Pick<ObjectRepository, 'get' | 'getById' | 'list'>;
+  links: Pick<LinkRepository, 'listFrom' | 'listTo'>;
   propertyTypes?: PropertyTypeLookup;
 }
 

@@ -14,8 +14,8 @@ async function asArray<T>(v: T[] | Promise<T[]>): Promise<T[]> {
 export async function catalogFromRepos(opts: {
   ontologyId: string;
   objectTypeIds: readonly string[];
-  objects: ObjectRepository;
-  links: LinkRepository;
+  objects: Pick<ObjectRepository, 'list'>;
+  links: Pick<LinkRepository, 'listFrom'>;
 }): Promise<ExploreCatalog> {
   const objects: ObjectRecord[] = [];
   const links: LinkRecord[] = [];

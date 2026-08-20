@@ -23,7 +23,11 @@ export interface GraphQueryEngine {
     ontologyId: OntologyId,
     objectTypeId: string,
     primaryKey: string,
-    opts?: { linkTypeId?: string; direction?: TraverseDirection },
+    opts?: {
+      linkTypeId?: string;
+      linkTypeIds?: string[];
+      direction?: TraverseDirection;
+    },
   ): Promise<ObjectRecord[]>;
   searchAround(
     ontologyId: OntologyId,
@@ -53,14 +57,6 @@ function toGraphObject(o: ObjectRecord): GraphObject {
   };
 }
 
-async function asArray<T>(v: T[] | Promise<T[]>): Promise<T[]> {
-  return await v;
-}
-
-async function asMaybe<T>(v: T | undefined | Promise<T | undefined>): Promise<T | undefined> {
-  return await v;
-}
-
 export function createGraphQueryEngine(
   opts: CreateGraphQueryEngineOptions,
 ): GraphQueryEngine {
@@ -71,33 +67,35 @@ export function createGraphQueryEngine(
       const direction = o.direction ?? 'outgoing';
       const out: ObjectRecord[] = [];
       const seen = new Set<string>();
+      const allowedTypes =
+        o.linkTypeIds && o.linkTypeIds.length > 0
+          ? new Set(o.linkTypeIds)
+          : o.linkTypeId
+            ? new Set([o.linkTypeId])
+            : undefined;
+
+      async function pushNeighbor(
+        edgeLinkTypeId: string,
+        neighborTypeId: string,
+        neighborPk: string,
+      ): Promise<void> {
+        if (allowedTypes && !allowedTypes.has(edgeLinkTypeId)) return;
+        const t = await objects.get(ontologyId, neighborTypeId, neighborPk);
+        if (!t) return;
+        const k = `${t.objectTypeId}::${t.primaryKey}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push(t);
+      }
 
       if (direction === 'outgoing' || direction === 'both') {
-        for (const edge of await asArray(
-          links.listFrom(ontologyId, objectTypeId, primaryKey, o.linkTypeId),
-        )) {
-          const t = await asMaybe(
-            objects.get(ontologyId, edge.targetObjectTypeId, edge.targetPrimaryKey),
-          );
-          if (!t) continue;
-          const k = `${t.objectTypeId}::${t.primaryKey}`;
-          if (seen.has(k)) continue;
-          seen.add(k);
-          out.push(t);
+        for (const edge of await links.listFrom(ontologyId, objectTypeId, primaryKey)) {
+          await pushNeighbor(edge.linkTypeId, edge.targetObjectTypeId, edge.targetPrimaryKey);
         }
       }
       if (direction === 'incoming' || direction === 'both') {
-        for (const edge of await asArray(
-          links.listTo(ontologyId, objectTypeId, primaryKey, o.linkTypeId),
-        )) {
-          const t = await asMaybe(
-            objects.get(ontologyId, edge.sourceObjectTypeId, edge.sourcePrimaryKey),
-          );
-          if (!t) continue;
-          const k = `${t.objectTypeId}::${t.primaryKey}`;
-          if (seen.has(k)) continue;
-          seen.add(k);
-          out.push(t);
+        for (const edge of await links.listTo(ontologyId, objectTypeId, primaryKey)) {
+          await pushNeighbor(edge.linkTypeId, edge.sourceObjectTypeId, edge.sourcePrimaryKey);
         }
       }
       return out;
@@ -126,8 +124,10 @@ export function createGraphQueryEngine(
     async traverse(ontologyId, query) {
       const direction = query.direction ?? 'outgoing';
       const unique = query.uniqueNodes !== false;
-      const start = await asMaybe(
-        objects.get(ontologyId, query.startObjectTypeId, query.startPrimaryKey),
+      const start = await objects.get(
+        ontologyId,
+        query.startObjectTypeId,
+        query.startPrimaryKey,
       );
       if (!start) {
         return {
@@ -165,15 +165,11 @@ export function createGraphQueryEngine(
             const edgesOut =
               direction === 'incoming'
                 ? []
-                : await asArray(
-                    links.listFrom(ontologyId, from.objectTypeId, from.primaryKey),
-                  );
+                : await links.listFrom(ontologyId, from.objectTypeId, from.primaryKey);
             const edgesIn =
               direction === 'outgoing'
                 ? []
-                : await asArray(
-                    links.listTo(ontologyId, from.objectTypeId, from.primaryKey),
-                  );
+                : await links.listTo(ontologyId, from.objectTypeId, from.primaryKey);
             const edgeTargets = new Map<string, string>();
             for (const e of [...edgesOut, ...edgesIn]) {
               if (!allowed.has(e.linkTypeId)) continue;
@@ -186,10 +182,13 @@ export function createGraphQueryEngine(
             filtered = neighbors.filter((n) => edgeTargets.has(`${n.objectTypeId}::${n.primaryKey}`));
             for (const n of filtered) {
               const via = edgeTargets.get(`${n.objectTypeId}::${n.primaryKey}`)!;
+              const viaType =
+                [...edgesOut, ...edgesIn].find((e) => e.id === via)?.linkTypeId ??
+                query.linkTypeIds[0]!;
               hops.push({
                 depth,
                 viaLinkId: via,
-                viaLinkTypeId: query.linkTypeIds[0]!,
+                viaLinkTypeId: viaType,
                 fromObjectId: from.id,
                 toObjectId: n.id,
               });
@@ -227,16 +226,48 @@ export function createGraphQueryEngine(
 
     async checkIntegrity(ontologyId) {
       const issues: IntegrityIssue[] = [];
-      // Scan by listing known types is not available — integrity over link endpoints:
-      // We only check links we can discover via... we need all links.
-      // Memory/PG LinkRepository has no listAll — use a soft approach: no issue if no API.
-      // For milestone: integrity is checked when links are created with objectExists.
-      // Still provide report shape for callers that sync objects into KG store.
-      void ontologyId;
+      const allObjects = await objects.listAll(ontologyId, { includeDeleted: true });
+      const liveObjects = allObjects.filter((o) => !o.deleted);
+      const liveKeys = new Set(liveObjects.map((o) => `${o.objectTypeId}::${o.primaryKey}`));
+      const allLinks = await links.listAll(ontologyId, {
+        includeDeletedLinks: true,
+        includeDeletedEndpoints: true,
+      });
+      const liveLinks = allLinks.filter((l) => !l.deleted);
+      const seen = new Set<string>();
+      for (const link of liveLinks) {
+        const dupKey = [
+          link.linkTypeId,
+          link.sourceObjectTypeId,
+          link.sourcePrimaryKey,
+          link.targetObjectTypeId,
+          link.targetPrimaryKey,
+        ].join('|');
+        if (seen.has(dupKey)) {
+          issues.push({ kind: 'duplicate', linkId: link.id, detail: dupKey });
+        }
+        seen.add(dupKey);
+        const src = `${link.sourceObjectTypeId}::${link.sourcePrimaryKey}`;
+        const tgt = `${link.targetObjectTypeId}::${link.targetPrimaryKey}`;
+        if (!liveKeys.has(src)) {
+          issues.push({
+            kind: 'dangling_source',
+            linkId: link.id,
+            detail: src,
+          });
+        }
+        if (!liveKeys.has(tgt)) {
+          issues.push({
+            kind: 'dangling_target',
+            linkId: link.id,
+            detail: tgt,
+          });
+        }
+      }
       return {
         ok: issues.length === 0,
-        linkCount: 0,
-        objectCount: 0,
+        linkCount: liveLinks.length,
+        objectCount: liveObjects.length,
         issues,
       };
     },

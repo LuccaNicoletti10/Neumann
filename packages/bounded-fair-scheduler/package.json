@@ -1,7 +1,7 @@
 {
   "name": "bounded-fair-scheduler",
   "version": "1.0.0",
-  "description": "Agendador justo com fila de execu\u00e7\u00e3o limitada (bounded) para cargas mistas de consultas \u2014 implementa\u00e7\u00e3o funcional independente dos mecanismos da patente US 9,715,526 B2.",
+  "description": "Agendador justo com fila de execução limitada (bounded) para cargas mistas de consultas — implementação funcional independente dos mecanismos da patente US 9,715,526 B2.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,7 +23,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -41,9 +41,10 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

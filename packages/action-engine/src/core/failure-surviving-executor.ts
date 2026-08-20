@@ -47,8 +47,6 @@ export function createFailureSurvivingExecutor(
   const clock = opts.clock ?? (() => new Date().toISOString());
 
   return {
-    getActionType: (o, a) => inner.getActionType(o, a),
-    registerActionType: (o, d) => inner.registerActionType(o, d),
     validate: (req) => inner.validate(req),
     parameterTree: inner.parameterTree
       ? (req) => inner.parameterTree!(req)
@@ -74,11 +72,14 @@ export function createFailureSurvivingExecutor(
             : {
                 id: result.executionId,
                 ontologyId: req.ontologyId,
+                ontologyVersionId: req.ontologyVersionId,
                 actionTypeId: result.actionTypeId,
                 actionApiName: req.actionApiName,
                 parameters: { ...req.parameters },
                 principal: req.principal,
                 status: result.status,
+                idempotencyKey: req.idempotencyKey,
+                expectedObjectVersions: req.expectedObjectVersions,
                 startedAt: clock(),
                 finishedAt: clock(),
                 error: result.error,
@@ -86,11 +87,15 @@ export function createFailureSurvivingExecutor(
           try {
             await rootExecutions.save(record);
           } catch (persistErr) {
-            // Nunca deixar o registro de falha mascarar o resultado real.
-            console.error(
-              '[action-engine] failed to persist FAILED execution record:',
-              persistErr,
+            // WHY: silently swallowing a persistence failure means the caller
+            // believes the outcome was recorded when it was not — fail-closed.
+            const cause = persistErr instanceof Error ? persistErr.message : String(persistErr);
+            const outcome: Error & { code?: string; cause?: unknown } = new Error(
+              `ACTION_OUTCOME_PERSISTENCE_FAILED: ${cause}`,
             );
+            outcome.code = 'ACTION_OUTCOME_PERSISTENCE_FAILED';
+            outcome.cause = persistErr;
+            throw outcome;
           }
         }
       }

@@ -205,7 +205,13 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
 // Execução direta (node dist/cli.js ou tsx src/cli.ts).
 const invokedAsScript = process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (invokedAsScript) {
-  runCli(process.argv.slice(2)).then((code) => {
-    process.exitCode = code;
-  });
+  void runCli(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+      process.exitCode = 1;
+    },
+  );
 }

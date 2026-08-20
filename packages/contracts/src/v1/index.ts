@@ -190,6 +190,10 @@ export {
   type PolicyEngine,
   buildGoldenAuthorizeRequest,
   assertAuthorizeResult,
+  isReadOperation,
+  allowsMutation,
+  allowsRead,
+  authorizeProceeds,
 } from './policy.js';
 
 export {
@@ -226,7 +230,12 @@ export {
 
 export {
   type OutboxInsertInput,
+  type OutboxReader,
   type OutboxRepository,
+  type OutboxRequest,
+  type OutboxDispatchStatus,
+  type OutboxDispatchRecord,
+  type OutboxDispatcher,
 } from './outbox.js';
 
 export {
@@ -261,6 +270,15 @@ export {
   buildGoldenObjectType,
   assertObjectTypeDef,
 } from './ontology.js';
+
+export {
+  type ActionParameterSchemaError,
+  type SafePattern,
+  compilePattern,
+  hasNestedQuantifiers,
+  validateParameterDef,
+  validateActionTypeDefSchema,
+} from './action-parameter-schema.js';
 
 export {
   type ObjectSetOp,
@@ -310,11 +328,60 @@ export {
   type ListObjectsOptions,
   type LinkRecord,
   type CreateLinkInput,
+  type DeleteLinkInput,
   type ListLinksOptions,
   type ObjectRepository,
+  type ObjectReader,
+  type ObjectWriter,
   type LinkRepository,
+  type LinkReader,
+  type LinkWriter,
   urnOf,
 } from './object-repository.js';
+
+export {
+  type ProjectionOperation,
+  type ProjectionStatus,
+  type ProjectObjectCommand,
+  type DeleteProjectedObjectCommand,
+  type ProjectLinkCommand,
+  type DeleteProjectedLinkCommand,
+  type ProjectionResult,
+  type ProjectionEffect,
+  type ProjectionBatchCommand,
+  type ProjectionBatchResult,
+  type ProjectionWriter,
+  type MigrateObjectCommand,
+} from './projection.js';
+
+export {
+  type IngestionRunId,
+  type IngestionQuarantineId,
+  type IngestionRunKind,
+  type IngestionRunStatus,
+  type ConnectorKind,
+  type ConnectorRegistration,
+  type ConnectorRegistrationRepository,
+  type PublishMappingInput,
+  type MappingVersionRepository,
+  type RawEnvelope,
+  type ConnectorPage,
+  type MappingDefinition,
+  type IngestionMappingPin,
+  type EnqueueWebhookInput,
+  type IngestionWebhookResult,
+  type StartPullInput,
+  type RetryQuarantineInput,
+  type IngestionRun,
+  type IngestionQuarantineEntry,
+  type IngestionRuntime,
+  definitionOf,
+  pinFromMappingVersion,
+  envelopeFromCanonical,
+  assertRawEnvelope,
+  assertMappingDefinition,
+  assertIngestionMappingPin,
+} from './ingestion.js';
 
 export {
   type OperationalEventId,
@@ -333,6 +400,8 @@ export {
   type ActionExecution,
   type ActionExecutionClaimResult,
   type ActionExecutionStore,
+  type ResolvedActionDefinition,
+  type ActionDefinitionResolver,
   type ActionExecutor,
   type ActionParameterNode,
   type ActionParameterTree,
@@ -352,8 +421,24 @@ export {
   type FunctionInvokeRequest,
   type FunctionInvokeResult,
   type FunctionRegistry,
+  type FunctionExecutionPin,
+  type FunctionExecutionStatus,
+  type FunctionFailureCode,
+  type FunctionObjectRef,
+  type FunctionActionInvocation,
+  type FunctionTypedError,
+  type FunctionExecution,
+  type FunctionCreateRequest,
+  type FunctionArtifact,
+  type FunctionArtifactStore,
+  type FunctionDefinitionResolver,
+  type FunctionRuntime,
   buildGoldenFunctionDef,
   assertFunctionDef,
+  assertFunctionExecutionPin,
+  isFunctionTerminal,
+  FUNCTION_SHA256,
+  FUNCTION_TERMINAL_STATUSES,
 } from './function-runtime.js';
 
 export {
@@ -608,3 +693,39 @@ export {
   buildGoldenGraphPattern,
   assertGraphPattern,
 } from './explore.js';
+
+export {
+  assertAipAskRequest,
+  assertAipAgentRunRequest,
+  type AipRiskLevel,
+  type ObjectCitation,
+  type AipAskRequest,
+  type AipAskResponse,
+  type AipToolDefinition,
+  type LlmMessageRole,
+  type LlmMessage,
+  type LlmToolCall,
+  type LlmCompletionRequest,
+  type LlmCompletionResult,
+  type LlmProvider,
+  type AipObjectReader,
+  type AipActionPort,
+  type AipAgentStateId,
+  type AipAgentStateStep,
+  type AipAgentRunRequest,
+  type AipAgentRunResponse,
+  type AipProfile,
+} from './aip.js';
+
+export {
+  AIP_ADVERSARIAL_KINDS,
+  assertAipEvalCase,
+  type AipAdversarialKind,
+  type AipEvalMode,
+  type AipEvalExpectedAction,
+  type AipEvalRubric,
+  type AipEvalCase,
+  type AipEvalMetrics,
+  type AipEvalCaseResult,
+  type AipEvalSuiteResult,
+} from './aip-eval.js';

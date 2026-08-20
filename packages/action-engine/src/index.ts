@@ -15,6 +15,15 @@ export {
   createMemoryActionExecutionStore,
 } from './core/executor.js';
 export {
+  createOntologyActionResolver,
+  resolveActionByApiName,
+} from './core/action-definition-resolver.js';
+export {
+  assertActionTransition,
+  isTerminalStatus,
+  transitionExecution,
+} from './core/action-lifecycle.js';
+export {
   renderDocumentTemplate,
   templateContextFrom,
 } from './core/document-template.js';
@@ -40,6 +49,12 @@ export { createPgActionExecutionStore } from './core/pg-execution-store.js';
 export type { CreatePgActionExecutionStoreOptions } from './core/pg-execution-store.js';
 export { createMemoryOutboxRepository } from './core/memory-outbox.js';
 export { createFailureSurvivingExecutor } from './core/failure-surviving-executor.js';
+export {
+  buildActionRequestIdentity,
+  serializeCanonicalRequest,
+  HASH_VERSION as ACTION_HASH_VERSION,
+} from './core/action-request-identity.js';
+export { validateActionParameters } from './core/action-parameter-validator.js';
 export {
   drainWriteBackToConnector,
   demoMappings,

@@ -20,7 +20,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -30,14 +30,15 @@
   },
   "dependencies": {
     "contracts": "workspace:*",
+    "object-platform": "workspace:*",
     "pg": "^8.12.0",
     "pg-boss": "^10.1.5"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "@types/pg": "^8.11.6",
-    "object-platform": "workspace:*",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

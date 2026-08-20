@@ -16,8 +16,13 @@
     "function-registry": "./dist/cli.js",
     "fn": "./dist/cli.js"
   },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^24.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -28,12 +33,17 @@
   },
   "license": "MIT",
   "dependencies": {
-    "contracts": "workspace:*"
+    "contracts": "workspace:*",
+    "execution-sandbox": "workspace:*",
+    "object-platform": "workspace:*",
+    "policy-engine": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
+    "ontology-registry": "workspace:*",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.9"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

@@ -50,7 +50,6 @@ async function post(path: string, body: unknown): Promise<Response> {
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function json(res: Response): Promise<any> {
   return (await res.json()) as any;
 }

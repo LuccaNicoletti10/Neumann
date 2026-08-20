@@ -10,9 +10,11 @@ import type {
   ReviewDecision,
   UpsertGoldPairInput,
 } from 'contracts';
+import { ResourceIds } from 'policy-engine';
 
 import type { PlatformContext } from '../core/context.js';
 import { principalOf } from '../core/principal.js';
+import { declarePolicy } from '../core/route-policy.js';
 
 export async function registerErRoutes(
   app: FastifyInstance,
@@ -20,6 +22,7 @@ export async function registerErRoutes(
 ): Promise<void> {
   app.get<{ Querystring: { runId?: string } }>(
     '/api/v2/er/review-queue',
+    declarePolicy('read', () => ResourceIds.admin('er.review.read'), 'empty-list'),
     async (req) => {
       const data = await ctx.er.listReviewQueue(req.query.runId);
       return { data };
@@ -28,7 +31,10 @@ export async function registerErRoutes(
 
   app.post<{
     Body: { auditId: string; decision: ReviewDecision; note?: string };
-  }>('/api/v2/er/review', async (req, reply) => {
+  }>(
+    '/api/v2/er/review',
+    declarePolicy('modify', () => ResourceIds.admin('er.review.write')),
+    async (req, reply) => {
     const body = req.body ?? ({} as { auditId: string; decision: ReviewDecision; note?: string });
     if (!body.auditId || !body.decision) {
       return reply.code(400).send({ error: 'auditId and decision required' });
@@ -43,12 +49,16 @@ export async function registerErRoutes(
     return reply.code(200).send(result);
   });
 
-  app.get('/api/v2/er/gold-set', async () => {
+  app.get(
+    '/api/v2/er/gold-set',
+    declarePolicy('read', () => ResourceIds.admin('er.gold.read')),
+    async () => {
     return ctx.er.getGoldSet();
   });
 
   app.post<{ Body: { pairs?: UpsertGoldPairInput[] } }>(
     '/api/v2/er/gold-set',
+    declarePolicy('modify', () => ResourceIds.admin('er.gold.write')),
     async (req, reply) => {
       const pairs = req.body?.pairs ?? [];
       const labeledBy = principalOf(req);
@@ -61,17 +71,22 @@ export async function registerErRoutes(
 
   app.get<{ Querystring: { runId?: string } }>(
     '/api/v2/er/metrics',
+    declarePolicy('read', () => ResourceIds.admin('er.metrics')),
     async (req) => {
       return ctx.er.evaluateMetrics(req.query.runId);
     },
   );
 
-  app.post('/api/v2/er/feedback', async () => {
+  app.post(
+    '/api/v2/er/feedback',
+    declarePolicy('modify', () => ResourceIds.admin('er.feedback')),
+    async () => {
     return ctx.er.applyFeedback();
   });
 
   app.post<{ Body: { records?: EntityRecord[] } }>(
     '/api/v2/er/runs',
+    declarePolicy('create', () => ResourceIds.admin('er.runs')),
     async (req, reply) => {
       const records = req.body?.records ?? [];
       if (records.length === 0) {

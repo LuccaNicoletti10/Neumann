@@ -18,8 +18,9 @@
     "connector-postgres": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.9"
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

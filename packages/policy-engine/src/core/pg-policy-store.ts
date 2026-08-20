@@ -3,15 +3,41 @@
  * PostgreSQL PolicyStore with in-memory snapshot cache keyed by policy_generation.
  */
 
-import type { Epid, PolicyNode, PolicyNodeId, PrincipalId, SqlClient } from 'contracts';
+import type {
+  Epid,
+  PolicyNode,
+  PolicyNodeId,
+  PrincipalId,
+  SqlClient,
+  TransactionManager,
+} from 'contracts';
 
-import type { PolicyEpidTuple, PolicySnapshot, PolicyStore } from './policy-store.js';
+import { parsePolicyCatalog } from './policy-catalog.js';
+import { parsePolicyOverlay, type PolicyOverlay } from './policy-overlay.js';
+import {
+  PolicyGenerationConflict,
+  type PolicyEpidTuple,
+  type PolicySnapshot,
+  type PolicySnapshotWrite,
+  type PolicyStore,
+} from './policy-store.js';
 
 const ROOT = 'ROOT';
 
 export interface CreatePgPolicyStoreOptions {
   sql: SqlClient;
+  /** Required for replaceSnapshot; duck-typed from sql when omitted. */
+  transaction?: TransactionManager;
 }
+
+type SqlWithListen = SqlClient & {
+  listen?: (
+    channel: string,
+    onNotify: (payload: string) => void,
+  ) => Promise<() => void | Promise<void>>;
+};
+
+const POLICY_GENERATION_CHANNEL = 'neumann_policy_generation';
 
 function parentKey(parentId: PolicyNodeId | null): string {
   return parentId ?? ROOT;
@@ -31,13 +57,132 @@ function rowToNode(row: Record<string, unknown>): PolicyNode {
   };
 }
 
+function overlayFromRow(raw: unknown): PolicyOverlay {
+  return parsePolicyOverlay(raw);
+}
+
+function resolveTransaction(
+  sql: SqlClient,
+  transaction?: TransactionManager,
+): TransactionManager {
+  if (transaction) return transaction;
+  const maybe = sql as SqlClient & Partial<TransactionManager>;
+  if (typeof maybe.transaction === 'function') return maybe as TransactionManager;
+  throw new Error('createPgPolicyStore.replaceSnapshot requires a TransactionManager');
+}
+
+async function writeSnapshot(
+  sql: SqlClient,
+  next: PolicySnapshotWrite,
+  expectedGeneration?: number,
+): Promise<number> {
+  // WHY: lock policy_meta before replacing child rows so a concurrent publisher
+  // cannot insert the same keys; the loser sees a generation conflict, not
+  // a unique-violation lost-update.
+  const locked =
+    expectedGeneration === undefined
+      ? await sql.query(`SELECT generation FROM policy_meta WHERE id = true FOR UPDATE`)
+      : await sql.query(
+          `SELECT generation FROM policy_meta WHERE id = true AND generation = $1 FOR UPDATE`,
+          [expectedGeneration],
+        );
+  if (expectedGeneration !== undefined && locked.rows.length === 0) {
+    const cur = await sql.query(`SELECT generation FROM policy_meta WHERE id = true`);
+    throw new PolicyGenerationConflict(expectedGeneration, Number(cur.rows[0]?.generation ?? 0));
+  }
+  await sql.query(`DELETE FROM policy_epid_tuples`);
+  await sql.query(`DELETE FROM policy_grants`);
+  await sql.query(`UPDATE policy_nodes SET parent_id = NULL`);
+  await sql.query(`DELETE FROM policy_nodes`);
+  for (const t of next.epids) {
+    await sql.query(
+      `INSERT INTO policy_epid_tuples (policy, parent_id, epid) VALUES ($1, $2, $3)`,
+      [t.policy, parentKey(t.parentId), t.epid],
+    );
+  }
+  for (const g of next.grants) {
+    await sql.query(
+      `INSERT INTO policy_grants (principal_id, policy) VALUES ($1, $2)
+       ON CONFLICT (principal_id, policy) DO NOTHING`,
+      [g.principal, g.policy],
+    );
+  }
+  const ordered = [...next.nodes];
+  const placed = new Set<string>();
+  while (ordered.length > 0) {
+    const idx = ordered.findIndex((n) => !n.parentId || placed.has(n.parentId));
+    if (idx < 0) throw new Error('replaceSnapshot: parent cycle or missing parent');
+    const node = ordered.splice(idx, 1)[0]!;
+    await sql.query(
+      `INSERT INTO policy_nodes (id, resource_id, policy, parent_id, epid)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [node.id, node.resourceId, node.policy, node.parentId, node.epid],
+    );
+    placed.add(node.id);
+  }
+  const result =
+    expectedGeneration === undefined
+      ? await sql.query(
+          `UPDATE policy_meta
+           SET overlay = $1::jsonb, catalog = $2::jsonb, generation = generation + 1
+           WHERE id = true
+           RETURNING generation`,
+          [JSON.stringify(next.overlay), JSON.stringify(next.catalog)],
+        )
+      : await sql.query(
+          `UPDATE policy_meta
+           SET overlay = $1::jsonb, catalog = $2::jsonb, generation = generation + 1
+           WHERE id = true AND generation = $3
+           RETURNING generation`,
+          [JSON.stringify(next.overlay), JSON.stringify(next.catalog), expectedGeneration],
+        );
+  const generation = Number(result.rows[0]?.generation ?? 0);
+  if (expectedGeneration !== undefined && result.rows.length === 0) {
+    const cur = await sql.query(`SELECT generation FROM policy_meta WHERE id = true`);
+    throw new PolicyGenerationConflict(expectedGeneration, Number(cur.rows[0]?.generation ?? 0));
+  }
+  await sql.query(`SELECT pg_notify('neumann_policy_generation', $1)`, [String(generation)]);
+  return generation;
+}
+
 export function createPgPolicyStore(opts: CreatePgPolicyStoreOptions): PolicyStore {
   const { sql } = opts;
   let cache: PolicySnapshot | undefined;
   let cacheGeneration = -1;
+  const generationListeners = new Set<(generation: number) => void>();
+  let stopListen: (() => void | Promise<void>) | undefined;
+  let listenStarted: Promise<void> | undefined;
+
+  async function startNotifications(): Promise<void> {
+    if (listenStarted) return listenStarted;
+    const listen = (sql as SqlWithListen).listen;
+    if (typeof listen !== 'function') {
+      listenStarted = Promise.resolve();
+      return listenStarted;
+    }
+    listenStarted = listen(POLICY_GENERATION_CHANNEL, (payload) => {
+      if (!/^\d+$/.test(payload)) return;
+      const g = Number(payload);
+      cache = undefined;
+      cacheGeneration = -1;
+      for (const listener of generationListeners) listener(g);
+    }).then((stop) => {
+      stopListen = stop;
+    });
+    return listenStarted;
+  }
+
+  async function stopNotifications(): Promise<void> {
+    const stop = stopListen;
+    stopListen = undefined;
+    listenStarted = undefined;
+    if (stop) await stop();
+  }
 
   async function loadSnapshot(): Promise<PolicySnapshot> {
-    const gen = await sql.query(`SELECT generation FROM policy_meta WHERE id = true`);
+    const gen = await sql.query(
+      `SELECT generation, overlay, catalog FROM policy_meta WHERE id = true`,
+    );
     const generation = Number(gen.rows[0]?.generation ?? 0);
     if (cache && cacheGeneration === generation) return cache;
 
@@ -49,6 +194,8 @@ export function createPgPolicyStore(opts: CreatePgPolicyStoreOptions): PolicySto
 
     const snapshot: PolicySnapshot = {
       generation,
+      overlay: overlayFromRow(gen.rows[0]?.overlay),
+      catalog: parsePolicyCatalog(gen.rows[0]?.catalog),
       grants: (grantRows.rows as Record<string, unknown>[]).map((r) => ({
         principal: String(r.principal_id),
         policy: String(r.policy),
@@ -144,6 +291,54 @@ export function createPgPolicyStore(opts: CreatePgPolicyStoreOptions): PolicySto
     async getGeneration() {
       const snap = await loadSnapshot();
       return snap.generation;
+    },
+    async replaceSnapshot(next, expectedGeneration) {
+      const txMgr = resolveTransaction(sql, opts.transaction);
+      const generation = await txMgr.transaction((tx) =>
+        writeSnapshot(tx, next, expectedGeneration),
+      );
+      cache = undefined;
+      cacheGeneration = -1;
+      for (const listener of generationListeners) listener(generation);
+      return generation;
+    },
+    startNotifications,
+    stopNotifications,
+    subscribeGeneration(listener) {
+      generationListeners.add(listener);
+      const listen = (sql as SqlWithListen).listen;
+      // WHY: production uses LISTEN (startNotifications). Fakes without
+      // listen() poll the durable generation so unit tests stay offline.
+      if (typeof listen !== 'function') {
+        let last = -1;
+        let stopped = false;
+        const tick = () => {
+          void (async () => {
+            if (stopped) return;
+            try {
+              const g = await loadSnapshot().then((s) => s.generation);
+              if (stopped) return;
+              if (g !== last) {
+                const prev = last;
+                last = g;
+                if (prev !== -1) listener(g);
+              }
+            } catch {
+              /* keep last valid generation; runtime.refresh marks degraded */
+            }
+          })();
+        };
+        const timer = setInterval(tick, 100);
+        tick();
+        return () => {
+          stopped = true;
+          clearInterval(timer);
+          generationListeners.delete(listener);
+        };
+      }
+      return () => {
+        generationListeners.delete(listener);
+      };
     },
   };
 }

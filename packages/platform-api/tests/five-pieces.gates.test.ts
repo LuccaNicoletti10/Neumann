@@ -36,11 +36,10 @@ function governed() {
   const history = createMemoryObjectHistoryStore({ clock, nextId });
   const objects = createGovernedObjectRepository({
     inner: createMemoryObjectRepository({ clock, nextId }),
-    resolveVersion: async () => version,
+    versionPolicy: { pin: async () => ({ version }) },
     history,
     principal: () => 'fernanda',
     mode: 'enforce',
-    versionCacheTtlMs: 0,
   });
   return { objects, history };
 }
@@ -147,12 +146,18 @@ describe('PEÇA 4 — authorizer declarativo', () => {
   });
 });
 
-describe('PEÇA 2 — write-guard HTTP', () => {
-  it('POST /objects as humano returns 403 ActionsOnlyWritePath', async () => {
+describe('PEÇA 2 — public object writes are Actions-only', () => {
+  it('POST /objects returns 405 ActionRequired', async () => {
     const { createPlatformServer } = await import('../src/server.js');
     const { createMemoryPlatformContext } = await import('../src/core/context.js');
-    const ctx = createMemoryPlatformContext();
+    const ctx = createMemoryPlatformContext({ policyFixture: 'allow-all' });
     const o = await ctx.ontology.createOntology({ name: 'guard' });
+    await ctx.ontology.addObjectType(o.id, {
+      id: 'ot.thing',
+      displayName: 'Thing',
+      propertyTypeIds: [],
+    });
+    await ctx.ontology.commit({ ontologyId: o.id, createdBy: 't' });
     const { app } = await createPlatformServer(ctx);
     const res = await app.inject({
       method: 'POST',
@@ -160,8 +165,8 @@ describe('PEÇA 2 — write-guard HTTP', () => {
       headers: { authorization: 'Bearer lucca' },
       payload: { primaryKey: '1', properties: { n: 1 } },
     });
-    expect(res.statusCode).toBe(403);
-    expect(res.json().errorName).toBe('ActionsOnlyWritePath');
+    expect(res.statusCode).toBe(405);
+    expect(res.json().errorName).toBe('ActionRequired');
     await app.close();
   });
 });

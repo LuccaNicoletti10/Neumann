@@ -1,9 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": false,
+    "outDir": "dist",
+    // WHY: emit must not include tests
     "rootDir": "src",
-    "outDir": "dist"
+    // WHY: parent tsconfig is typecheck-only
+    "noEmit": false
   },
   "include": ["src"]
 }

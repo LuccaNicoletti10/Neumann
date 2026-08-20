@@ -99,7 +99,7 @@ describe('CLI', () => {
       'o.json': JSON.stringify({ assignments: [{ kind: 'object', name: 'Pessoa', properties: { nome: 'string' } }] }),
       'd.txt': 'Ada Lovelace tem 36 anos\n',
     });
-    const { lines, out } = capture();
+    const { out } = capture();
     const code = await run(
       [
         'debug', '--script', p['s.json']!, '--ontology', p['o.json']!, '--data', p['d.txt']!,

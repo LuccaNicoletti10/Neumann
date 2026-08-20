@@ -12,7 +12,7 @@ const SECRET = 'test-hmac-secret-neumann';
 
 describe('Passo 22 — ER review HTTP', () => {
   it('GET review-queue + POST review + GET metrics', async () => {
-    const ctx = createMemoryPlatformContext();
+    const ctx = createMemoryPlatformContext({ policyFixture: 'allow-all' });
     const corpus = buildPasso22GoldCorpus();
     const result = ctx.er.runResolution({ records: corpus.records });
     await ctx.er.commitRun(result);

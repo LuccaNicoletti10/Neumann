@@ -14,8 +14,13 @@
   "bin": {
     "erp-simulator": "./dist/cli.js"
   },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^24.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -25,10 +30,10 @@
   },
   "license": "MIT",
   "dependencies": {
-    "fastify": "^4.28.0"
+    "fastify": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "action-engine": "workspace:*",
     "contracts": "workspace:*",
     "event-bus": "workspace:*",
@@ -37,7 +42,8 @@
     "platform-api": "workspace:*",
     "policy-engine": "workspace:*",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.9"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

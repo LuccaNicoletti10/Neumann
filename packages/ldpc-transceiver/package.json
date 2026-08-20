@@ -28,12 +28,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^1.6.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   }
 }

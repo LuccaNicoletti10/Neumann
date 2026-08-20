@@ -57,6 +57,33 @@ export interface ActionApplyResult {
   auditEntryId?: string;
 }
 
+/**
+ * Frozen ActionType at one ontology version.
+ * `def` is immutable. `hash` is the canonical identity of that snapshot.
+ */
+export interface ResolvedActionDefinition {
+  ontologyId: OntologyId;
+  ontologyVersionId: OntologyVersionId;
+  actionTypeId: ActionTypeId;
+  apiName: string;
+  hash: string;
+  def: ActionTypeDef;
+}
+
+/**
+ * Deep resolver: ontology is the only ActionType source.
+ * Callers never keep a parallel registry.
+ *
+ * Failure: missing version, ontology mismatch, or absent type — throw (fail-closed).
+ */
+export interface ActionDefinitionResolver {
+  resolve(
+    ontologyId: OntologyId,
+    ontologyVersionId: OntologyVersionId,
+    actionTypeId: ActionTypeId,
+  ): Promise<ResolvedActionDefinition>;
+}
+
 export interface ActionExecution {
   id: ActionExecutionId;
   ontologyId: OntologyId;
@@ -78,6 +105,25 @@ export interface ActionExecution {
     decidedBy?: PrincipalId;
     decision?: 'approved' | 'rejected';
   };
+  /**
+   * Pinned ontology version. Required to resume after pause/restart.
+   * Absent on pre-envelope rows — resume fails closed.
+   */
+  ontologyVersionId?: OntologyVersionId;
+  /** Canonical hash of the pinned ActionTypeDef. */
+  actionTypeHash?: string;
+  /** CAS map captured at apply; compared again on approval resume. */
+  expectedObjectVersions?: Record<string, number>;
+  /** Policy generation observed at apply (audit/debug; resume reauthorizes live). */
+  policyGeneration?: number;
+  /**
+   * SHA-256 of the canonicalized apply request (per ActionRequestIdentity).
+   * WHY: same idempotencyKey + different hash = IDEMPOTENCY_CONFLICT, zero writes.
+   * Rows without requestHash (pre-migration) fail closed on hash-divergence replay.
+   */
+  requestHash?: string;
+  /** Version of the hash algorithm (monotonically increasing). */
+  hashVersion?: number;
 }
 
 export interface ActionExecutionClaimResult {
@@ -90,10 +136,17 @@ export interface ActionExecutionClaimResult {
 export interface ActionExecutionStore {
   save(execution: ActionExecution): Promise<void>;
   get(id: ActionExecutionId): Promise<ActionExecution | undefined>;
+  /**
+   * Look up an execution by idempotency key **within the caller's principal scope**.
+   * WHY: idempotency scope is (ontologyId, principal, actionApiName, key); a caller
+   * must never retrieve another principal's execution. Cross-principal administrative
+   * lookup requires a separate, explicitly authorized interface.
+   */
   findByIdempotencyKey(
     ontologyId: OntologyId,
     actionApiName: string,
     idempotencyKey: string,
+    principal: PrincipalId,
   ): Promise<ActionExecution | undefined>;
   /**
    * Insert PENDING execution claiming the idempotency key.
@@ -161,10 +214,11 @@ export interface ActionWorkflowApplyResult {
 /**
  * ActionExecutor lifecycle:
  * request → authorize → validate → tx → write-back → audit
+ *
+ * ActionTypeDefs come only from OntologyRegistry via ActionDefinitionResolver.
+ * There is no register/get cache on this port (ADR-0006).
  */
 export interface ActionExecutor {
-  getActionType(ontologyId: OntologyId, apiName: string): ActionTypeDef | undefined;
-  registerActionType(ontologyId: OntologyId, def: ActionTypeDef): void;
   validate(req: ActionValidateRequest): Promise<ActionValidateResult>;
   apply(req: ActionApplyRequest): Promise<ActionApplyResult>;
   getExecution(id: ActionExecutionId): Promise<ActionExecution | undefined>;

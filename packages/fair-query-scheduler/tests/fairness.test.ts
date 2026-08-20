@@ -45,7 +45,7 @@ describe('round-robin justo', () => {
     expect(scheduler.queueSize).toBe(4); // re-enfileirado
 
     // Próximos 3 ciclos: os pequenos completam (1 task cada, sem re-enqueue).
-    for (const s of smalls) {
+    for (let i = 0; i < smalls.length; i += 1) {
       expect(scheduler.step()).toBe(true);
     }
     for (const s of smalls) {

@@ -16,11 +16,12 @@ import {
   createObjectPlatform,
   createDeterministicClock as objClock,
   createIdGenerator as objIds,
+  createMemoryLinkRepository,
+  createMemoryObjectHistoryStore,
+  createMemoryObjectRepository,
 } from 'object-platform';
 import {
   createKnowledgeGraph,
-  createDeterministicClock as kgClock,
-  createIdGenerator as kgIds,
 } from 'knowledge-graph';
 import {
   createAssetGraph,
@@ -126,9 +127,30 @@ async function main(): Promise<number> {
   const ov = await onto.commit({ ontologyId: o.id });
   log(`  ontology ${ov.id} customer+invoice+link`);
 
+  const clock = objClock('2024-06-01T12:00:00.000Z');
+  const nextId = objIds();
+  const objects = createMemoryObjectRepository({ clock, nextId });
+  const links = createMemoryLinkRepository({
+    clock,
+    nextId,
+    objectExists: (oid, typeId, pk) => Boolean(objects.get(oid, typeId, pk)),
+  });
+  const history = createMemoryObjectHistoryStore({ clock, nextId });
+  const ontologyId = 'demo';
+
   const platform = createObjectPlatform({
-    clock: objClock('2024-06-01T12:00:00.000Z'),
-    nextId: objIds(),
+    clock,
+    nextId,
+    ontologyId,
+    objects,
+    links,
+    history,
+    authorize: (req) => ({
+      decision: 'allow',
+      principalEpids: [],
+      resourceEpid: null,
+      reason: `demo-allow ${req.operation}`,
+    }),
   });
 
   const mapCust = platform.createMapping({
@@ -213,47 +235,20 @@ async function main(): Promise<number> {
   log(`  api customers=${customers.length} invoices=${invoices.length}`);
 
   const kg = createKnowledgeGraph({
-    clock: kgClock('2024-06-01T12:00:00.000Z'),
-    nextId: kgIds(),
+    clock,
+    nextId,
+    objects,
+    links,
+    ontologyId,
+    objectTypeIds: ['ot.customer', 'ot.invoice'],
   });
-  for (const c of customers) {
-    kg.upsertObject({
-      id: c.id,
-      objectTypeId: c.objectTypeId,
-      primaryKey: c.primaryKey,
-      properties: c.properties as Record<string, unknown>,
-    });
-  }
-  for (const inv of invoices) {
-    kg.upsertObject({
-      id: inv.id,
-      objectTypeId: inv.objectTypeId,
-      primaryKey: inv.primaryKey,
-      properties: inv.properties as Record<string, unknown>,
-    });
-  }
-
   const byCustPk = new Map(customers.map((c) => [c.primaryKey, c.id]));
-  let linked = 0;
+  let linked = kg.listLinks({ linkTypeId: 'lt.invoice_of' }).length;
   let dangling = 0;
   for (const inv of invoices) {
     const raw = fatRows.find((r) => String(r.fields['Ordem'] ?? '') === inv.primaryKey);
     const cod = String(raw?.fields['Cód.Cli'] ?? '').replace(/\.0$/, '');
-    const targetId = byCustPk.get(cod);
-    if (!targetId) {
-      dangling += 1;
-      continue;
-    }
-    kg.upsertLink({
-      linkTypeId: 'lt.invoice_of',
-      sourceObjectId: inv.id,
-      targetObjectId: targetId,
-      mappingVersionId: mvFat.id,
-      datasetVersionId: 'dv-fat-sample',
-      sourceDatasetId: 'ds-gd-fat',
-      targetDatasetId: 'ds-gd-clientes',
-    });
-    linked += 1;
+    if (!byCustPk.get(cod)) dangling += 1;
   }
   const integrity = kg.checkIntegrity();
   log(`  kg links=${linked} dangling_skipped=${dangling} integrity.ok=${integrity.ok}`);

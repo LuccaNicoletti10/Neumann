@@ -118,13 +118,11 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
   const app = buildServer();
   await app.listen({ port, host: "0.0.0.0" });
-  // eslint-disable-next-line no-console
   console.log(`API ouvindo na porta ${port}`);
 }
 
 if (require.main === module) {
   main().catch((err) => {
-    // eslint-disable-next-line no-console
     console.error(err);
     process.exit(1);
   });

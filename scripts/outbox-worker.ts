@@ -6,6 +6,7 @@
 import {
   createHttpWritebackConnector,
   createOutboxWorker,
+  createPgOutboxRepository,
   createPgWritebackExecutionStore,
   createSqlMirrorWritebackHandler,
   createWritebackHandler,
@@ -31,8 +32,9 @@ const writebackHandler = erpUrl
       executions,
     });
 
+const dispatcher = createPgOutboxRepository({ sql });
 const worker = createOutboxWorker({
-  sql,
+  dispatcher,
   handlers: {
     'action.side_effect.writeback': writebackHandler,
   },

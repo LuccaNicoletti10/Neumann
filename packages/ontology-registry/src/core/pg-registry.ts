@@ -6,6 +6,7 @@
 
 import {
   assertObjectTypeDef,
+  validateActionTypeDefSchema,
   type ActionTypeDef,
   type CommitOntologyInput,
   type CreateOntologyInput,
@@ -217,12 +218,27 @@ export function createPgOntologyRegistry(
     async addActionType(ontologyId, def: ActionTypeDef) {
       const d = requireDraft(ontologyId);
       if (d.actionTypes[def.id]) throw new Error(`ActionType já existe no draft: ${def.id}`);
+      // WHY: same schema validation as the memory registry — fail-closed at commit.
+      const schemaErrors = validateActionTypeDefSchema(def);
+      if (schemaErrors.length > 0) {
+        throw new Error(
+          `ActionType ${def.id} has invalid parameter schema: ${schemaErrors.map((e) => e.message).join('; ')}`,
+        );
+      }
       d.actionTypes[def.id] = structuredClone(def);
     },
 
     async addFunctionType(ontologyId, def: FunctionTypeDef) {
       const d = requireDraft(ontologyId);
-      if (d.functionTypes[def.id]) throw new Error(`FunctionType já existe no draft: ${def.id}`);
+      const existing = d.functionTypes[def.id];
+      if (existing) {
+        const prev = existing.functionVersion ?? 1;
+        const next = def.functionVersion ?? 1;
+        // WHY: later ontology commits may pin a new artifact; same version must not overwrite.
+        if (next <= prev) {
+          throw new Error(`FunctionType ${def.id} already exists; functionVersion must increase`);
+        }
+      }
       d.functionTypes[def.id] = structuredClone(def);
     },
 

@@ -5,6 +5,7 @@
 
 import type {
   SandboxAuditEvent,
+  SandboxDenyReason,
   SandboxIdentity,
   SandboxPolicy,
   SandboxRunResult,
@@ -15,7 +16,28 @@ import { SandboxEscapeError } from './errors.js';
 import { createRestrictedHost, type HostState } from './host.js';
 import { byteLength, resolvePolicy } from './policy.js';
 import type { CreateSandboxOptions, SandboxedFn } from './types.js';
-import { runInWorker } from './worker-runner.js';
+import { runInWorker, type WorkerFailReason } from './worker-runner.js';
+
+const SANDBOX_DENY_REASONS: readonly SandboxDenyReason[] = [
+  'TIMEOUT',
+  'MEMORY_LIMIT',
+  'FS_ESCAPE',
+  'NETWORK_DENIED',
+  'IDENTITY_REQUIRED',
+  'FORBIDDEN_API',
+  'OUTPUT_TOO_LARGE',
+  'EXECUTION_ERROR',
+];
+
+function isSandboxDenyReason(value: string): value is SandboxDenyReason {
+  return (SANDBOX_DENY_REASONS as readonly string[]).includes(value);
+}
+
+function workerReasonToDeny(reason: WorkerFailReason | string | undefined): SandboxDenyReason {
+  if (reason === 'CANCELLED') return 'EXECUTION_ERROR';
+  if (reason !== undefined && isSandboxDenyReason(reason)) return reason;
+  return 'EXECUTION_ERROR';
+}
 
 export interface ExecutionSandbox {
   registerIdentity(identity: SandboxIdentity): void;
@@ -122,7 +144,7 @@ export function createExecutionSandbox(
       });
       const durationMs = Date.now() - started;
       if (!result.ok) {
-        const reason = (result.reason as SandboxRunResult['deniedReason']) ?? 'FORBIDDEN_API';
+        const reason = workerReasonToDeny(result.reason);
         return deny(args.identityId, args.transformId, reason, result.error ?? 'worker failed', durationMs, bytesIn);
       }
       if (result.files) {

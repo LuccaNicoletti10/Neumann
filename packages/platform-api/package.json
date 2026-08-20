@@ -12,21 +12,28 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^24.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --pool=forks --fileParallelism=false",
     "cli": "tsx src/cli.ts",
-    "dev": "tsx src/cli.ts"
+    "dev": "tsx src/cli.ts",
+    "worker:ingest": "tsx src/ingestion-worker.ts",
+    "worker:function": "tsx bin/function-worker.ts"
   },
   "license": "MIT",
   "dependencies": {
     "action-engine": "workspace:*",
     "api-errors": "workspace:*",
     "contracts": "workspace:*",
-    "fastify": "^4.28.0",
+    "fastify": "catalog:",
     "jose": "^5.9.6",
     "knowledge-graph": "workspace:*",
     "event-bus": "workspace:*",
@@ -37,12 +44,15 @@
     "ontology-registry": "workspace:*",
     "pagination": "workspace:*",
     "policy-engine": "workspace:*",
-    "explore-api": "workspace:*"
+    "explore-api": "workspace:*",
+    "ingestion-runtime": "workspace:*",
+    "aip-gateway": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.9"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

@@ -46,7 +46,9 @@ export function computeObjectScores(
   const metricById = new Map(metrics.map((m) => [m.id, m]));
   const visible = objects.filter((o) => {
     if (o.deleted) return false;
-    if (authorizer && !authorizer.canReadObjectType(principal, o.objectTypeId)) return false;
+    if (authorizer && !authorizer.canReadObjectType(principal, o.objectTypeId, o.ontologyId)) {
+      return false;
+    }
     return true;
   });
 

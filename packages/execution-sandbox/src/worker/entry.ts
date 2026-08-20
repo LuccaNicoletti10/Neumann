@@ -5,6 +5,8 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import vm from 'node:vm';
 
+import { detectForbiddenApi } from './forbidden-api.js';
+
 const data = workerData as {
   transformSource: string;
   input: unknown;
@@ -67,12 +69,10 @@ try {
   });
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
-  let reason = 'FORBIDDEN_API';
+  let reason = 'EXECUTION_ERROR';
   if (message.includes('FS_ESCAPE')) reason = 'FS_ESCAPE';
   else if (message.includes('NETWORK_DENIED')) reason = 'NETWORK_DENIED';
   else if (/timed out|timeout/i.test(message)) reason = 'TIMEOUT';
-  if (/require\s*\(/.test(data.transformSource) || message.includes('require is not defined')) {
-    reason = 'FS_ESCAPE';
-  }
+  else if (detectForbiddenApi(data.transformSource, message)) reason = 'FORBIDDEN_API';
   parentPort?.postMessage({ ok: false, reason, error: message });
 }

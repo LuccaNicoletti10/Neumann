@@ -44,9 +44,14 @@ function nodeOk(
   if (obj.deleted) return false;
   if (obj.objectTypeId !== node.objectTypeId) return false;
   if (node.primaryKey && obj.primaryKey !== node.primaryKey) return false;
-  if (authorizer && !authorizer.canReadObjectType(principal, obj.objectTypeId)) return false;
+  if (authorizer && !authorizer.canReadObjectType(principal, obj.objectTypeId, obj.ontologyId)) {
+    return false;
+  }
+  const props = authorizer
+    ? authorizer.redactProperties(principal, obj.objectTypeId, obj.properties, obj.ontologyId)
+    : obj.properties;
   for (const m of node.matches ?? []) {
-    if (!matchProperty(obj, m)) return false;
+    if (!matchProperty({ ...obj, properties: props as Record<string, unknown> }, m)) return false;
   }
   return true;
 }
@@ -57,10 +62,12 @@ function redact(
   authorizer?: OntologyAuthorizer,
 ): GraphPatternBinding {
   const props = authorizer
-    ? (authorizer.redactProperties(principal, obj.objectTypeId, obj.properties) as Record<
-        string,
-        unknown
-      >)
+    ? (authorizer.redactProperties(
+        principal,
+        obj.objectTypeId,
+        obj.properties,
+        obj.ontologyId,
+      ) as Record<string, unknown>)
     : { ...obj.properties };
   return {
     nodeId: '',

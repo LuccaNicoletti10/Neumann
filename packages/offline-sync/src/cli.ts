@@ -57,7 +57,7 @@ export function runDemo(log: (message: string) => void = console.log): number {
 
   // drop + reorder + duplicate
   const paris = A.patchObject('person-1', { properties: { city: 'Paris' } });
-  const berlin = A.patchObject('person-1', { properties: { city: 'Berlin' } });
+  A.patchObject('person-1', { properties: { city: 'Berlin' } });
   net.deliver('A', 'B', { dropIds: [paris.id] });
   net.deliver('A', 'C', { reverse: true, duplicate: true });
   net.stabilize();
@@ -173,7 +173,13 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  runCommandLine(process.argv.slice(2)).then((code) => {
-    process.exitCode = code;
-  });
+  void runCommandLine(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+      process.exitCode = 1;
+    },
+  );
 }

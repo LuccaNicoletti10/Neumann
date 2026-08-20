@@ -1,0 +1,17 @@
+{
+  "npm.autoDetect": "off",
+  "npm.packageManager": "pnpm",
+  "gitlens.currentLine.enabled": false,
+  "gitlens.codeLens.enabled": false,
+  "gitlens.hovers.currentLine.over": "line",
+  "gitlens.hovers.enabled": false,
+  "gitlens.statusBar.enabled": false,
+  "gitlens.blame.toggleMode": "file",
+  "gitlens.advanced.messages": {
+    "suppressLineUncommittedWarning": true
+  },
+  "[markdown]": {
+    "gitlens.codeLens.enabled": false,
+    "gitlens.currentLine.enabled": false
+  }
+}

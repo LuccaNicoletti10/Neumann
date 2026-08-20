@@ -4,13 +4,15 @@
  */
 
 import type { OperationalEvent, OperationalEventStore } from 'contracts';
+import type { MemoryCheckpoint } from 'object-platform';
+import { restoreArray } from 'object-platform';
 
 import type { Clock, IdGenerator } from './types.js';
 
 export function createMemoryOperationalEventStore(opts: {
   clock: Clock;
   nextId: IdGenerator;
-}): OperationalEventStore {
+}): OperationalEventStore & MemoryCheckpoint {
   const events: OperationalEvent[] = [];
 
   return {
@@ -46,6 +48,12 @@ export function createMemoryOperationalEventStore(opts: {
       }
       if (filter?.limit != null) out = out.slice(-filter.limit);
       return out;
+    },
+    capture() {
+      return events.map((e) => ({ ...e }));
+    },
+    restore(snapshot: unknown) {
+      restoreArray(events, snapshot as OperationalEvent[]);
     },
   };
 }

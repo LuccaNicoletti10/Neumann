@@ -9,6 +9,22 @@ export * from './core/audit.js';
 export * from './core/engine.js';
 export * from './core/ontology-authorizer.js';
 export * from './core/policy-store.js';
+export * from './core/policy-overlay.js';
+export * from './core/policy-catalog.js';
+export * from './core/policy-compiler.js';
+export {
+  createPolicyRuntime,
+  createPolicyRuntimeFromOverlay,
+  createAllowAllTestPolicy,
+  createDenyAllAuthorizer,
+  createOntologyAuthorizer,
+  type PolicyRuntime,
+  type PolicyRuntimeBundle,
+  type PolicyAdmin,
+  type CreatePolicyRuntimeOptions,
+  type OverlayRuntimeOptions,
+} from './core/policy-runtime.js';
+export * from './core/resource-ids.js';
 export { runClassificationPipeline } from './core/classification-pipeline.js';
 export type { ClassifyDemoResult } from './core/classification-pipeline.js';
 export { runRedactionPipeline } from './core/redaction-pipeline.js';

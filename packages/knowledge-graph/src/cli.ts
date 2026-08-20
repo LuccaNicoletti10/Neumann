@@ -25,32 +25,32 @@ export interface CliDeps {
   error?: (message: string) => void;
 }
 
-export function runDemo(log: (message: string) => void = console.log): number {
+export async function runDemo(log: (message: string) => void = console.log): Promise<number> {
   const g = createKnowledgeGraph({
     clock: createDeterministicClock('2024-06-01T12:00:00.000Z'),
     nextId: createIdGenerator(),
   });
 
   log('== 1. materializar Object→Link→Object (FK cruzada) ==');
-  g.upsertObject({
+  await g.upsertObject({
     id: 'obj-A',
     objectTypeId: 'ot.org',
     primaryKey: 'A',
     properties: { name: 'Acme' },
   });
-  g.upsertObject({
+  await g.upsertObject({
     id: 'obj-B',
     objectTypeId: 'ot.org',
     primaryKey: 'B',
     properties: { name: 'Beta' },
   });
-  g.upsertObject({
+  await g.upsertObject({
     id: 'obj-C',
     objectTypeId: 'ot.org',
     primaryKey: 'C',
     properties: { name: 'Gamma' },
   });
-  g.upsertLink({
+  await g.upsertLink({
     linkTypeId: 'lt.parent_of',
     sourceObjectId: 'obj-A',
     targetObjectId: 'obj-B',
@@ -59,7 +59,7 @@ export function runDemo(log: (message: string) => void = console.log): number {
     sourceDatasetId: 'ds-crm',
     targetDatasetId: 'ds-crm',
   });
-  g.upsertLink({
+  await g.upsertLink({
     linkTypeId: 'lt.parent_of',
     sourceObjectId: 'obj-B',
     targetObjectId: 'obj-C',
@@ -70,7 +70,7 @@ export function runDemo(log: (message: string) => void = console.log): number {
   log('== 2. integridade referencial ==');
   let integrityDenied = false;
   try {
-    g.upsertLink({
+    await g.upsertLink({
       linkTypeId: 'lt.parent_of',
       sourceObjectId: 'obj-A',
       targetObjectId: 'obj-MISSING',
@@ -79,11 +79,11 @@ export function runDemo(log: (message: string) => void = console.log): number {
   } catch {
     integrityDenied = true;
   }
-  const report = g.checkIntegrity();
+  const report = await g.checkIntegrity();
   log(`  dangling rejected=${integrityDenied} check.ok=${report.ok} links=${report.linkCount}`);
 
   log('== 3. traverse multi-hop (recursive CTE semantics) ==');
-  const trav = g.traverseLinks({
+  const trav = await g.traverseLinks({
     startObjectId: 'obj-A',
     linkTypeIds: ['lt.parent_of'],
     maxHops: 2,
@@ -101,23 +101,23 @@ export function runDemo(log: (message: string) => void = console.log): number {
   log(`  cte has WITH RECURSIVE=${sql.includes('WITH RECURSIVE')}`);
 
   log('== 4. link migration mapv-1 → mapv-2 ==');
-  const mig = g.migrateLinks({
+  const mig = await g.migrateLinks({
     fromMappingVersionId: 'mapv-1',
     toMappingVersionId: 'mapv-2',
     linkTypeMap: { 'lt.parent_of': 'lt.parent_of_v2' },
     dropOld: true,
   });
-  const after = g.listLinks({ mappingVersionId: 'mapv-2' });
-  const oldLeft = g.listLinks({ mappingVersionId: 'mapv-1' });
+  const after = await g.listLinks({ mappingVersionId: 'mapv-2' });
+  const oldLeft = await g.listLinks({ mappingVersionId: 'mapv-1' });
   log(`  migrated=${mig.migrated} mapv2=${after.length} mapv1left=${oldLeft.length}`);
 
   log('== 5. remote reference (ticket/proxy) ==');
-  const ref = g.createRemoteReference('obj-C');
-  const resolved = g.resolveRemoteReference(ref.ticketId);
-  const name = g.accessRemote(ref.ticketId, 'name');
+  const ref = await g.createRemoteReference('obj-C');
+  const resolved = await g.resolveRemoteReference(ref.ticketId);
+  const name = await g.accessRemote(ref.ticketId, 'name');
   log(`  ticket=${ref.ticketId} pk=${resolved?.primaryKey} name=${String(name)}`);
 
-  const trav2 = g.traverseLinks({
+  const trav2 = await g.traverseLinks({
     startObjectId: 'obj-A',
     linkTypeIds: ['lt.parent_of_v2'],
     maxHops: 2,
@@ -217,7 +217,10 @@ export function runRedactDemo(log: (message: string) => void = console.log): num
   return ok ? 0 : 1;
 }
 
-export function runCommandLine(argv: readonly string[], deps: CliDeps = {}): number {
+export async function runCommandLine(
+  argv: readonly string[],
+  deps: CliDeps = {},
+): Promise<number> {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
   const args = argv.filter((a) => a !== '--');
@@ -227,7 +230,7 @@ export function runCommandLine(argv: readonly string[], deps: CliDeps = {}): num
     log(USAGE);
     return 0;
   }
-  if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'demo') return await runDemo(log);
   if (cmd === 'redact') return runRedactDemo(log);
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);
@@ -244,6 +247,15 @@ function isMain(): boolean {
   }
 }
 
+/**
+ * Process entry. WHY a named function and not top-level await: this module is
+ * also loaded through a CJS interop path, where top-level await cannot be
+ * transformed. A rejection here is fatal by design — the CLI must not exit 0.
+ */
+export async function runMain(argv: readonly string[]): Promise<void> {
+  process.exitCode = await runCommandLine(argv);
+}
+
 if (isMain()) {
-  process.exitCode = runCommandLine(process.argv.slice(2));
+  void runMain(process.argv.slice(2));
 }

@@ -70,59 +70,50 @@ function sendUnauthenticated(reply: FastifyReply, message: string): void {
 }
 
 /**
- * Fastify onRequest hook. Uses callback style so AsyncLocalStorage wraps the
- * rest of the request (done() runs inside principalAls.run).
+ * Fastify onRequest hook.
+ * WHY: async + enterWith so a 401 reply.send stops the lifecycle before
+ * route-policy hidden-miss can overwrite unauthenticated with 200.
  */
 export function bindPrincipalHook(verifier?: TokenVerifier) {
-  return (
-    req: FastifyRequest,
-    reply: FastifyReply,
-    done: (err?: Error) => void,
-  ): void => {
+  return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const url = req.url.split('?')[0] ?? '';
-    if (PUBLIC_PATHS.has(url)) {
-      done();
-      return;
-    }
+    const method = req.method.toUpperCase();
+    if (method === 'OPTIONS') return;
+    if ((method === 'GET' || method === 'HEAD') && PUBLIC_PATHS.has(url)) return;
+    if (method === 'POST' && /^\/api\/v2\/ingest\/[^/]+$/.test(url)) return;
 
     if (!verifier) {
-      principalAls.run(extractDevPrincipal(req), () => done());
+      principalAls.enterWith(extractDevPrincipal(req));
       return;
     }
 
     const token = extractBearerToken(req);
     if (!token) {
       sendUnauthenticated(reply, 'missing bearer token');
-      done();
       return;
     }
 
-    verifier
-      .verify(token)
-      .then((verified) => {
-        principalAls.run(verified.principal, () => done());
-      })
-      .catch((err: unknown) => {
-        const message =
-          err instanceof AuthenticationError
+    try {
+      const verified = await verifier.verify(token);
+      principalAls.enterWith(verified.principal);
+    } catch (err: unknown) {
+      const message =
+        err instanceof AuthenticationError
+          ? err.message
+          : err instanceof Error
             ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'authentication failed';
-        const status =
-          err instanceof AuthenticationError ? err.statusCode : 401;
-        if (status === 503) {
-          void reply.code(503).send({
-            errorCode: 'UNAVAILABLE',
-            errorName: 'AuthenticationError',
-            message,
-          });
-          done();
-          return;
-        }
-        sendUnauthenticated(reply, message);
-        done();
-      });
+            : 'authentication failed';
+      const status = err instanceof AuthenticationError ? err.statusCode : 401;
+      if (status === 503) {
+        void reply.code(503).send({
+          errorCode: 'UNAVAILABLE',
+          errorName: 'AuthenticationError',
+          message,
+        });
+        return;
+      }
+      sendUnauthenticated(reply, message);
+    }
   };
 }
 

@@ -1,40 +1,32 @@
 /**
  * platform-api — src/cli.ts
+ *
+ * Named policy fixture via PLATFORM_POLICY_FIXTURE=allow-all|deny-all.
+ * Postgres with no fixture loads the durable overlay (empty = deny).
  */
 
-import { createOntologyAuthorizer } from 'policy-engine';
-
-import {
-  createMemoryPlatformContext,
-  createPostgresPlatformContext,
-} from './core/context.js';
-import { createPlatformServer } from './server.js';
+import { createPlatformRuntime } from './core/bootstrap.js';
 
 const port = Number(process.env.PORT ?? 8080);
 
-const authz = createOntologyAuthorizer({
-  roles: {
-    lucca: ['admin'],
-    'svc-projector': ['servico'],
-    'svc-migration': ['servico'],
-  },
-  grants: [
-    { role: 'admin', objectTypes: ['*'], actions: ['*'], operations: ['read', 'modify'] },
-    { role: 'servico', objectTypes: ['*'], actions: ['*'], operations: ['read', 'modify'] },
-  ],
-});
-
-const ctx =
-  process.env.PLATFORM_MODE === 'postgres'
-    ? createPostgresPlatformContext({
-        databaseUrl: process.env.DATABASE_URL,
-        authorizer: authz,
-      })
-    : createMemoryPlatformContext({
-        authorizer: authz,
-        deterministic: false,
-      });
-
-const { app } = await createPlatformServer(ctx);
-await app.listen({ port, host: '0.0.0.0' });
-console.log(`Neumann platform-api listening on :${port} (${ctx.mode})`);
+try {
+  const runtime = await createPlatformRuntime({
+    listen: { port, host: '0.0.0.0' },
+  });
+  const app = await runtime.listen({ port, host: '0.0.0.0' });
+  const close = async () => {
+    await runtime.close();
+  };
+  process.on('SIGINT', () => {
+    void close().then(() => process.exit(0));
+  });
+  process.on('SIGTERM', () => {
+    void close().then(() => process.exit(0));
+  });
+  console.log(`Neumann platform-api listening on :${port} (${runtime.ctx.mode})`);
+  void app;
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`platform-api bootstrap failed: ${message}`);
+  process.exit(1);
+}

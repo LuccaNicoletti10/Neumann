@@ -1,8 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // WHY: tests are typechecked, not emitted
     "noEmit": true,
+    // WHY: tests live in test/ (singular); dedicated tsconfig.test.json includes them
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts","test/**/*.ts","vitest.config.ts"]
 }

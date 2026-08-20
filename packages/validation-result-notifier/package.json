@@ -1,7 +1,7 @@
 {
   "name": "validation-result-notifier",
   "version": "1.0.0",
-  "description": "N\u00facleo de valida\u00e7\u00e3o proativa com resultados implicit/expressed e notifica\u00e7\u00e3o multicanal (mensagem, sigla, n\u00famero, painel gr\u00e1fico ASCII).",
+  "description": "Núcleo de validação proativa com resultados implicit/expressed e notificação multicanal (mensagem, sigla, número, painel gráfico ASCII).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +25,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -34,9 +34,10 @@
     "cli": "tsx src/cli.ts"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

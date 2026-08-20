@@ -8,5 +8,7 @@ export * from './core/errors.js';
 export * from './core/policy.js';
 export * from './core/host.js';
 export * from './core/sandbox.js';
+export { runInWorker, classifyWorkerTermination, type WorkerFailReason } from './core/worker-runner.js';
+export { detectForbiddenApi } from './worker/forbidden-api.js';
 export { runCommandLine, runDemo } from './cli.js';
 export type { CliDeps } from './cli.js';

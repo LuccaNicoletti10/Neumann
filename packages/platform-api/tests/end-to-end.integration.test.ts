@@ -6,7 +6,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 import type { ActionTypeDef } from 'contracts';
-import { createOutboxWorker, createSqlMirrorWritebackHandler } from 'event-bus';
+import { createOutboxWorker, createPgOutboxRepository, createSqlMirrorWritebackHandler } from 'event-bus';
 import { tryOpenIsolatedPg } from 'object-platform';
 import { createOntologyAuthorizer } from 'policy-engine';
 
@@ -77,18 +77,27 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
       grants: [
         {
           role: 'admin',
+          ontologyIds: ['*'],
           objectTypes: ['*'],
+          linkTypes: ['*'],
           actions: ['*'],
+          functions: ['*'],
+          adminResources: ['*'],
           operations: ['read', 'modify'],
         },
         {
           role: 'servico',
+          ontologyIds: ['*'],
           objectTypes: ['*'],
+          linkTypes: ['*'],
           actions: ['*'],
+          functions: ['*'],
+          adminResources: ['*'],
           operations: ['read', 'modify'],
         },
         {
           role: 'operator',
+          ontologyIds: ['*'],
           objectTypes: ['ot.order', 'ot.customer'],
           actions: ['approve', 'boom'],
           operations: ['read', 'modify'],
@@ -96,7 +105,7 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
       ],
     });
 
-    const ctx = createPostgresPlatformContext({
+    const ctx = await createPostgresPlatformContext({
       sql: db.sql,
       transaction: db.sql,
       authorizer: authz,
@@ -144,33 +153,42 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
     await ctx.ontology.addActionType(ontologyId, approve);
     await ctx.ontology.addActionType(ontologyId, boom);
     await ctx.ontology.commit({ ontologyId, createdBy: 'svc-projector' });
-    ctx.actions.registerActionType(ontologyId, approve);
-    ctx.actions.registerActionType(ontologyId, boom);
 
-    const customer = await app.inject({
-      method: 'POST',
-      url: `/api/v2/ontologies/${ontologyId}/objects/ot.customer`,
-      headers: { authorization: 'Bearer svc-projector' },
-      payload: { primaryKey: 'C1', properties: { name: 'Acme' } },
+    const customer = await ctx.projections.projectObject({
+      ontologyId,
+      objectTypeId: 'ot.customer',
+      primaryKey: 'C1',
+      properties: { name: 'Acme' },
+      source: 'e2e-projector',
+      sourceEventId: 'cust-C1',
+      principal: 'svc-projector',
     });
-    expect(customer.statusCode).toBe(201);
+    expect(customer.status).toBe('applied');
 
-    const order = await app.inject({
-      method: 'POST',
-      url: `/api/v2/ontologies/${ontologyId}/objects/ot.order`,
-      headers: { authorization: 'Bearer svc-projector' },
-      payload: { primaryKey: 'O1', properties: { status: 'pending' } },
+    const order = await ctx.projections.projectObject({
+      ontologyId,
+      objectTypeId: 'ot.order',
+      primaryKey: 'O1',
+      properties: { status: 'pending' },
+      source: 'e2e-projector',
+      sourceEventId: 'ord-O1',
+      principal: 'svc-projector',
     });
-    expect(order.statusCode).toBe(201);
-    const orderId = order.json().id as string;
+    expect(order.status).toBe('applied');
+    const orderId = order.object!.id;
 
-    const link = await app.inject({
-      method: 'POST',
-      url: `/api/v2/ontologies/${ontologyId}/objects/ot.customer/C1/links/lt.customer_order`,
-      headers: { authorization: 'Bearer svc-projector' },
-      payload: { targetObjectType: 'ot.order', targetPrimaryKey: 'O1' },
+    const link = await ctx.projections.projectLink({
+      ontologyId,
+      linkTypeId: 'lt.customer_order',
+      sourceObjectTypeId: 'ot.customer',
+      sourcePrimaryKey: 'C1',
+      targetObjectTypeId: 'ot.order',
+      targetPrimaryKey: 'O1',
+      source: 'e2e-projector',
+      sourceEventId: 'link-C1-O1',
+      principal: 'svc-projector',
     });
-    expect(link.statusCode).toBe(201);
+    expect(link.status).toBe('applied');
 
     const forbidden = await app.inject({
       method: 'POST',
@@ -178,14 +196,18 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
       headers: { authorization: 'Bearer alice' },
       payload: { primaryKey: 'O2', properties: { status: 'pending' } },
     });
-    expect(forbidden.statusCode).toBe(403);
-    expect(forbidden.json().errorName).toBe('ActionsOnlyWritePath');
+    expect(forbidden.statusCode).toBe(405);
+    expect(forbidden.json().errorName).toBe('ActionRequired');
 
     const applied = await app.inject({
       method: 'POST',
       url: `/api/v2/ontologies/${ontologyId}/actions/approve/apply`,
       headers: { authorization: 'Bearer alice' },
-      payload: { parameters: { orderId: 'O1', status: 'ok' } },
+      payload: {
+        parameters: { orderId: 'O1', status: 'ok' },
+        idempotencyKey: 'e2e-approve',
+        expectedObjectVersions: { 'ot.order::O1': 1 },
+      },
     });
     expect(applied.statusCode).toBe(200);
     expect(applied.json().status).toBe('SUCCEEDED');
@@ -203,7 +225,7 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
     expect(exec?.status).toBe('SUCCEEDED');
 
     const worker = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: createPgOutboxRepository({ sql: db.sql }),
       handlers: {
         'action.side_effect.writeback': createSqlMirrorWritebackHandler({
           sql: db.sql,
@@ -221,7 +243,11 @@ describe.skipIf(!db)('platform E2E (no file connector)', () => {
       method: 'POST',
       url: `/api/v2/ontologies/${ontologyId}/actions/boom/apply`,
       headers: { authorization: 'Bearer alice' },
-      payload: { parameters: { orderId: 'boom-1', missingId: 'does-not-exist' } },
+      payload: {
+        parameters: { orderId: 'boom-1', missingId: 'does-not-exist' },
+        idempotencyKey: 'e2e-boom',
+        expectedObjectVersions: { 'ot.order::does-not-exist': 1 },
+      },
     });
     expect(failed.json().status).toBe('FAILED');
     expect(await ctx.objects.get(ontologyId, 'ot.order', 'boom-1')).toBeUndefined();

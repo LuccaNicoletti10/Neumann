@@ -31,9 +31,18 @@ export function createIdGenerator(): IdGenerator {
   };
 }
 
-/** Production clock. */
+/**
+ * Production clock. Monotonic per instance so two kernel events never share
+ * an asOf instant; history.asOf would otherwise pick the later version.
+ */
 export function createSystemClock(): Clock {
-  return () => new Date().toISOString();
+  let lastMs = 0;
+  return () => {
+    let ms = Date.now();
+    if (ms <= lastMs) ms = lastMs + 1;
+    lastMs = ms;
+    return new Date(ms).toISOString();
+  };
 }
 
 /** Production collision-safe IDs (UUID v4). Prefix is informational only. */

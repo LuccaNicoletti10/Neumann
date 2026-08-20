@@ -84,7 +84,7 @@ export interface BuildServerOptions {
 }
 
 export function buildServer(options: BuildServerOptions): FastifyInstance {
-  const { store, provider, monitoring } = options;
+  const { provider, monitoring } = options;
   const app = Fastify({ logger: options.logger ?? false });
 
   app.decorateRequest('principal', null);

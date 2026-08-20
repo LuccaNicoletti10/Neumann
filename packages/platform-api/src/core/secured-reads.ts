@@ -2,13 +2,11 @@
  * platform-api — src/core/secured-reads.ts
  *
  * Unique HTTP read surface: ObjectSets / history / links / aggregates
- * go through OntologyAuthorizer when present. Raw ctx.objects stays
- * unredacted for Actions + projector.
+ * go through ctx.policy. Raw writers stay on PlatformContext for Actions + ProjectionWriter.
  */
 
 import type { ObjectRecord, ObjectSet, ObjectSetAggregation } from 'contracts';
 import {
-  aggregateObjectsPg,
   aggregateRecords,
   coerceObjectSet,
   loadObjects,
@@ -17,7 +15,7 @@ import {
   resolveObjectSet,
 } from 'object-set';
 
-import type { PlatformContext } from './context.js';
+import type { PublicPlatformContext } from './context.js';
 
 export class ReadForbiddenError extends Error {
   readonly errorCode = 'READ_FORBIDDEN';
@@ -49,36 +47,30 @@ function collectDeclaredTypes(set: ObjectSet): string[] {
   }
 }
 
-export function createSecuredReads(ctx: PlatformContext) {
+export function createSecuredReads(ctx: PublicPlatformContext) {
   function policy() {
-    if (ctx.authorizer) return ctx.authorizer;
-    if (ctx.mode === 'postgres') {
-      throw new Error('postgres SecuredReads require authorizer (fail-closed)');
-    }
-    return undefined;
+    return ctx.policy;
   }
 
-  function canRead(principal: string, objectTypeId: string): boolean {
-    const authz = policy();
-    if (!authz) return true;
-    return authz.canReadObjectType(principal, objectTypeId);
+  function canRead(principal: string, ontologyId: string, objectTypeId: string): boolean {
+    return policy().canReadObjectType(principal, objectTypeId, ontologyId);
   }
 
   function redact(principal: string, rec: ObjectRecord): ObjectRecord {
     const authz = policy();
-    if (!authz) return rec;
     return {
       ...rec,
-      properties: authz.redactProperties(principal, rec.objectTypeId, rec.properties) as Record<
-        string,
-        unknown
-      >,
+      properties: authz.redactProperties(
+        principal,
+        rec.objectTypeId,
+        rec.properties,
+        rec.ontologyId,
+      ) as Record<string, unknown>,
     };
   }
 
   function filterAndRedact(principal: string, records: readonly ObjectRecord[]): ObjectRecord[] {
-    const authz = policy();
-    const visible = authz ? authz.filterReadable(principal, records) : [...records];
+    const visible = policy().filterReadable(principal, records);
     return visible.map((r) => redact(principal, r));
   }
 
@@ -88,13 +80,13 @@ export function createSecuredReads(ctx: PlatformContext) {
     filterAndRedact,
 
     async getObject(principal: string, ontologyId: string, objectTypeId: string, primaryKey: string) {
-      if (!canRead(principal, objectTypeId)) return undefined;
+      if (!canRead(principal, ontologyId, objectTypeId)) return undefined;
       const obj = await ctx.objects.get(ontologyId, objectTypeId, primaryKey);
       return obj ? redact(principal, obj) : undefined;
     },
 
     async listObjects(principal: string, ontologyId: string, objectTypeId: string) {
-      if (!canRead(principal, objectTypeId)) return [];
+      if (!canRead(principal, ontologyId, objectTypeId)) return [];
       const listed = await ctx.objects.list(ontologyId, objectTypeId);
       return listed.map((o) => redact(principal, o));
     },
@@ -103,18 +95,16 @@ export function createSecuredReads(ctx: PlatformContext) {
       const trail = await ctx.history.listByObject(objectId);
       if (trail.length === 0) return [];
       const objectTypeId = trail[0]!.objectTypeId;
-      if (!canRead(principal, objectTypeId)) return [];
+      const ontologyId = trail[0]!.ontologyId;
+      if (!canRead(principal, ontologyId, objectTypeId)) return [];
       return trail.map((entry) => ({
         ...entry,
-        properties: (() => {
-          const authz = policy();
-          return authz
-            ? (authz.redactProperties(principal, objectTypeId, entry.properties) as Record<
-                string,
-                unknown
-              >)
-            : entry.properties;
-        })(),
+        properties: policy().redactProperties(
+          principal,
+          objectTypeId,
+          entry.properties,
+          ontologyId,
+        ) as Record<string, unknown>,
       }));
     },
 
@@ -125,10 +115,10 @@ export function createSecuredReads(ctx: PlatformContext) {
       sourcePrimaryKey: string,
       linkTypeId: string,
     ) {
-      if (!canRead(principal, sourceObjectTypeId)) return [];
+      if (!canRead(principal, ontologyId, sourceObjectTypeId)) return [];
       const latest = await ctx.ontology.getLatestVersion(ontologyId);
       const targetType = latest?.linkTypes[linkTypeId]?.targetObjectTypeId;
-      if (targetType && !canRead(principal, targetType)) return [];
+      if (targetType && !canRead(principal, ontologyId, targetType)) return [];
 
       const edges = await ctx.links.listFrom(
         ontologyId,
@@ -138,7 +128,7 @@ export function createSecuredReads(ctx: PlatformContext) {
       );
       const data: ObjectRecord[] = [];
       for (const e of edges) {
-        if (!canRead(principal, e.targetObjectTypeId)) continue;
+        if (!canRead(principal, ontologyId, e.targetObjectTypeId)) continue;
         const t = await ctx.objects.get(ontologyId, e.targetObjectTypeId, e.targetPrimaryKey);
         if (t) data.push(redact(principal, t));
       }
@@ -150,7 +140,9 @@ export function createSecuredReads(ctx: PlatformContext) {
       ontologyId: string,
       req: Parameters<typeof loadObjects>[0],
     ) {
-      const denied = collectDeclaredTypes(req.objectSet).some((t) => !canRead(principal, t));
+      const denied = collectDeclaredTypes(req.objectSet).some(
+        (t) => !canRead(principal, ontologyId, t),
+      );
       if (denied) return { data: [] as ObjectRecord[] };
       const latest = await ctx.ontology.getLatestVersion(ontologyId);
       const lookup = propertyLookupFromOntology(latest);
@@ -174,27 +166,23 @@ export function createSecuredReads(ctx: PlatformContext) {
       ontologyId: string,
       req: { objectSet: ObjectSet; aggregations: ObjectSetAggregation[] },
     ) {
-      const denied = collectDeclaredTypes(req.objectSet).some((t) => !canRead(principal, t));
+      const denied = collectDeclaredTypes(req.objectSet).some(
+        (t) => !canRead(principal, ontologyId, t),
+      );
       if (denied) return aggregateRecords([], req.aggregations);
       const latest = await ctx.ontology.getLatestVersion(ontologyId);
       const lookup = propertyLookupFromOntology(latest);
       const objectSet = latest
         ? coerceObjectSet(req.objectSet, lookup, 'strict')
         : req.objectSet;
-      if (ctx.sql) {
-        return aggregateObjectsPg(
-          { objectSet, aggregations: req.aggregations },
-          { sql: ctx.sql, ontologyId, propertyTypes: lookup },
-        );
-      }
       const objs = await resolveObjectSet(objectSet, {
         ontologyId,
         objects: ctx.objects,
         links: ctx.links,
         propertyTypes: lookup,
       });
-      const authz = policy();
-      const visible = authz ? authz.filterReadable(principal, objs) : objs;
+      // WHY: redaction must precede aggregate; SQL count over raw rows would leak hidden fields.
+      const visible = filterAndRedact(principal, objs);
       return aggregateRecords(visible, req.aggregations);
     },
   };

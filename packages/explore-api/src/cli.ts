@@ -53,11 +53,13 @@ export function runDemo(log: (message: string) => void = console.log): number {
     grants: [
       {
         role: 'financeiro',
+        ontologyIds: ['ont-sales'],
         objectTypes: ['ot.customer', 'ot.sales_order', 'ot.internal_note'],
         operations: ['read', 'modify'],
       },
       {
         role: 'ops',
+        ontologyIds: ['ont-sales'],
         objectTypes: ['ot.customer', 'ot.sales_order'],
         operations: ['read'],
         hiddenProperties: ['internal'],
@@ -209,7 +211,13 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  runCommandLine(process.argv.slice(2)).then((code) => {
-    process.exitCode = code;
-  });
+  void runCommandLine(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+      process.exitCode = 1;
+    },
+  );
 }

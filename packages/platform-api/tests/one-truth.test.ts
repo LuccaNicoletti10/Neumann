@@ -9,7 +9,6 @@ import { createGraphQueryEngine } from 'knowledge-graph';
 import {
   createDeterministicClock,
   createIdGenerator,
-  createMemoryLinkRepository,
   createMemoryObjectRepository,
   createUuidIdGenerator,
   createSystemClock,
@@ -21,8 +20,37 @@ import { createPlatformServer } from '../src/server.js';
 
 describe('GATE 1 — one source of truth', () => {
   it('ObjectRepository is shared across ObjectSet, Graph, Action, /api/v2', async () => {
-    const ctx = createMemoryPlatformContext();
+    const ctx = createMemoryPlatformContext({ policyFixture: 'allow-all' });
     const ontologyId = (await ctx.ontology.createOntology({ name: 'shared' })).id;
+    await ctx.ontology.addPropertyType(ontologyId, {
+      id: 'status',
+      displayName: 'Status',
+      baseType: 'string',
+    });
+    await ctx.ontology.addObjectType(ontologyId, {
+      id: 'ot.thing',
+      displayName: 'Thing',
+      propertyTypeIds: ['status'],
+    });
+    await ctx.ontology.addActionType(ontologyId, {
+      id: 'act.close',
+      apiName: 'close',
+      displayName: 'Close',
+      inputObjectTypeIds: ['ot.thing'],
+      parameters: {
+        id: { baseType: 'object_reference', objectTypeId: 'ot.thing', required: true },
+        status: { baseType: 'string', required: true },
+      },
+      rules: [
+        {
+          kind: 'modify_object',
+          objectTypeId: 'ot.thing',
+          primaryKeyFromParam: 'id',
+          setPropertiesFromParams: { status: 'status' },
+        },
+      ],
+    });
+    await ctx.ontology.commit({ ontologyId, createdBy: 'test' });
 
     const obj = await ctx.objects.create({
       ontologyId,
@@ -62,29 +90,13 @@ describe('GATE 1 — one source of truth', () => {
     expect(set.some((o) => o.id === obj.id)).toBe(true);
 
     // Action mutates same store
-    ctx.actions.registerActionType(ontologyId, {
-      id: 'act.close',
-      apiName: 'close',
-      displayName: 'Close',
-      inputObjectTypeIds: ['ot.thing'],
-      parameters: {
-        id: { baseType: 'object_reference', objectTypeId: 'ot.thing', required: true },
-        status: { baseType: 'string', required: true },
-      },
-      rules: [
-        {
-          kind: 'modify_object',
-          objectTypeId: 'ot.thing',
-          primaryKeyFromParam: 'id',
-          setPropertiesFromParams: { status: 'status' },
-        },
-      ],
-    });
     const applied = await ctx.actions.apply({
       ontologyId,
       actionApiName: 'close',
       parameters: { id: 'T-1', status: 'closed' },
       principal: 'tester',
+      idempotencyKey: 'close-t1',
+      expectedObjectVersions: { 'ot.thing::T-1': 1 },
     });
     expect(applied.status).toBe('SUCCEEDED');
     expect((await ctx.objects.get(ontologyId, 'ot.thing', 'T-1'))?.properties.status).toBe(
@@ -151,7 +163,7 @@ describe('soft-delete revive', () => {
 
 describe('listOntologies', () => {
   it('GET /api/v2/ontologies returns created ontologies', async () => {
-    const ctx = createMemoryPlatformContext();
+    const ctx = createMemoryPlatformContext({ policyFixture: 'allow-all' });
     const o = await ctx.ontology.createOntology({ name: 'alpha' });
     const { app } = await createPlatformServer(ctx);
     const res = await app.inject({ method: 'GET', url: '/api/v2/ontologies' });

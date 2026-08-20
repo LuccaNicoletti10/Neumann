@@ -1,7 +1,7 @@
 {
   "name": "cli-script-debugger",
   "version": "1.0.0",
-  "description": "Depurador de transformation scripts via linha de comando com associa\u00e7\u00e3o a ontology parameters (reimplementa\u00e7\u00e3o funcional independente).",
+  "description": "Depurador de transformation scripts via linha de comando com associação a ontology parameters (reimplementação funcional independente).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +12,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -24,9 +24,10 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.9"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

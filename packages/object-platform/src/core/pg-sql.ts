@@ -21,10 +21,78 @@ export function quoteIdent(ident: string): string {
   return `"${ident}"`;
 }
 
+export const POLICY_GENERATION_CHANNEL = 'neumann_policy_generation';
+
+export interface NotificationClient {
+  query(text: string, params?: unknown[]): Promise<unknown>;
+  on(event: string, handler: (msg: { channel: string; payload?: string }) => void): void;
+  off?(event: string, handler: (msg: { channel: string; payload?: string }) => void): void;
+  release?: () => void;
+}
+
+export interface PoolLike {
+  connect(): Promise<NotificationClient>;
+}
+
+/**
+ * LISTEN on `channel` using a caller-provided client. Caller owns release.
+ */
+export async function listenForNotifications(
+  client: NotificationClient,
+  channel: string,
+  onNotify: (payload: string) => void,
+): Promise<() => Promise<void>> {
+  await client.query(`LISTEN ${quoteIdent(channel)}`);
+  const handler = (msg: { channel: string; payload?: string }) => {
+    if (msg.channel === channel) onNotify(msg.payload ?? '');
+  };
+  client.on('notification', handler);
+  return async () => {
+    client.off?.('notification', handler);
+    await client.query(`UNLISTEN ${quoteIdent(channel)}`).catch(() => undefined);
+  };
+}
+
+/**
+ * Hold one pool connection for LISTEN until the returned stop() runs.
+ * WHY: Pool checkouts are released after each query; NOTIFY requires a
+ * session that stays subscribed.
+ */
+export async function attachPoolListen(
+  pool: PoolLike,
+  opts: { schema?: string; channel: string; onNotify: (payload: string) => void },
+): Promise<() => Promise<void>> {
+  const client = await pool.connect();
+  try {
+    if (opts.schema) {
+      await client.query(`SET search_path TO ${quoteIdent(opts.schema)}`);
+    }
+    // WHY: pool.end() while this checkout is live emits Connection terminated;
+    // the handler keeps shutdown fail-closed without an unhandled rejection.
+    client.on('error', () => undefined);
+    const stop = await listenForNotifications(client, opts.channel, opts.onNotify);
+    let stopped = false;
+    return async () => {
+      if (stopped) return;
+      stopped = true;
+      await stop();
+      await client.query('RESET search_path').catch(() => undefined);
+      client.release?.();
+    };
+  } catch (err) {
+    client.release?.();
+    throw err;
+  }
+}
+
 export interface TransactionalSqlClient extends SqlClient, TransactionManager {
   close(): Promise<void>;
   /** Hold one pool connection for the duration of `fn` (advisory locks, migration runner). */
   withSession<T>(fn: (sql: SqlClient) => Promise<T>): Promise<T>;
+  /**
+   * Dedicated LISTEN connection. Production replica path (ADR-0009).
+   */
+  listen(channel: string, onNotify: (payload: string) => void): Promise<() => void | Promise<void>>;
 }
 
 export interface CreatePgSqlClientOptions {
@@ -59,6 +127,7 @@ export function createPgSqlClient(opts: CreatePgSqlClientOptions): Transactional
   }
 
   let closed = false;
+  const listenStops = new Set<() => Promise<void>>();
 
   return {
     async query<T = Record<string, unknown>>(text: string, params?: unknown[]) {
@@ -101,9 +170,21 @@ export function createPgSqlClient(opts: CreatePgSqlClientOptions): Transactional
       });
     },
 
+    async listen(channel, onNotify) {
+      const stop = await attachPoolListen(pool, { schema, channel, onNotify });
+      const wrapped = async () => {
+        listenStops.delete(wrapped);
+        await stop();
+      };
+      listenStops.add(wrapped);
+      return wrapped;
+    },
+
     async close() {
       if (closed) return;
       closed = true;
+      await Promise.all([...listenStops].map((stop) => stop()));
+      listenStops.clear();
       await pool.end();
     },
   };
@@ -205,26 +286,159 @@ export async function applyPlatformMigrations(sql: SqlClient, sqlDir?: string): 
   await runPlatformMigrations(sql, sqlDir);
 }
 
-export const DEFAULT_TEST_DATABASE_URL =
-  process.env.DATABASE_URL ?? 'postgres://neumann:neumann@127.0.0.1:5432/neumann';
+export class PostgresUnavailableError extends Error {
+  override readonly name = 'PostgresUnavailableError';
+  readonly code: string;
 
-export async function tryOpenIsolatedPg(url = DEFAULT_TEST_DATABASE_URL): Promise<
-  | {
-      sql: TransactionalSqlClient;
-      schema: string;
-      connectionString: string;
-      reconnect(): TransactionalSqlClient;
-      close(): Promise<void>;
+  constructor(message: string, code: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export class PostgresConfigError extends Error {
+  override readonly name = 'PostgresConfigError';
+  readonly code: string;
+
+  constructor(message: string, code: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export type IsolatedPg = {
+  sql: TransactionalSqlClient;
+  schema: string;
+  connectionString: string;
+  reconnect(): TransactionalSqlClient;
+  close(): Promise<void>;
+};
+
+/** Present only when `DATABASE_URL` is set. No implicit host port 5432. */
+export const DEFAULT_TEST_DATABASE_URL = process.env.DATABASE_URL ?? '';
+
+export function redactDatabaseUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) parsed.password = '***';
+    return parsed.toString();
+  } catch {
+    return '<unparseable DATABASE_URL>';
+  }
+}
+
+function stripSecrets(text: string): string {
+  return text.replace(/:([^:@/]+)@/g, ':***@');
+}
+
+export function classifyPgConnectError(err: unknown, redactedUrl: string): Error {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code: unknown }).code)
+      : '';
+  const raw = err instanceof Error ? err.message : String(err);
+  const message = stripSecrets(raw);
+
+  if (code === '28P01' || /password authentication failed/i.test(message)) {
+    return new PostgresConfigError(
+      `PostgreSQL authentication failed at ${redactedUrl} (${code || '28P01'})`,
+      code || '28P01',
+    );
+  }
+  if (code === '3D000' || /database ".*" does not exist/i.test(message)) {
+    return new PostgresConfigError(
+      `PostgreSQL database does not exist at ${redactedUrl} (${code || '3D000'})`,
+      code || '3D000',
+    );
+  }
+  if (code === '28000' || /role ".*" does not exist/i.test(message)) {
+    return new PostgresConfigError(
+      `PostgreSQL role does not exist at ${redactedUrl} (${code || '28000'})`,
+      code || '28000',
+    );
+  }
+  if (
+    code === 'ECONNREFUSED' ||
+    code === 'ENOTFOUND' ||
+    code === 'ENETUNREACH' ||
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'EAI_AGAIN'
+  ) {
+    return new PostgresUnavailableError(
+      `PostgreSQL is not reachable at ${redactedUrl} (${code})`,
+      code,
+    );
+  }
+  return new PostgresConfigError(
+    `PostgreSQL connection failed at ${redactedUrl}: ${message}`,
+    code || 'PG_CONNECT',
+  );
+}
+
+function resolveConnectionString(url?: string): string {
+  if (url && url.length > 0) return url;
+  return process.env.DATABASE_URL ?? '';
+}
+
+export async function waitForPostgres(
+  url: string,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+  if (!url) {
+    throw new PostgresConfigError(
+      'DATABASE_URL is required for PostgreSQL integration',
+      'DATABASE_URL_MISSING',
+    );
+  }
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const intervalMs = opts.intervalMs ?? 500;
+  const redacted = redactDatabaseUrl(url);
+  const started = Date.now();
+  let last: Error | undefined;
+  while (Date.now() - started < timeoutMs) {
+    const pool = new Pool({
+      connectionString: url,
+      connectionTimeoutMillis: Math.min(2_000, timeoutMs),
+    });
+    try {
+      await pool.query('SELECT 1');
+      await pool.end();
+      return;
+    } catch (err) {
+      await pool.end().catch(() => undefined);
+      last = classifyPgConnectError(err, redacted);
+      if (last instanceof PostgresConfigError) {
+        throw last;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
-  | undefined
-> {
+  }
+  throw (
+    last ??
+    new PostgresUnavailableError(
+      `PostgreSQL is not reachable at ${redacted} within ${timeoutMs}ms`,
+      'TIMEOUT',
+    )
+  );
+}
+
+export function listPlatformMigrationFiles(sqlDir?: string): string[] {
+  const dir = sqlDir ?? findInfraSqlDir();
+  return readdirSync(dir)
+    .filter((f) => /^\d+_.*\.sql$/.test(f))
+    .sort();
+}
+
+async function openIsolatedPgAt(url: string): Promise<IsolatedPg> {
+  const redacted = redactDatabaseUrl(url);
   const schema = `t_${randomBytes(6).toString('hex')}`;
-  const admin = new Pool({ connectionString: url });
+  const admin = new Pool({ connectionString: url, connectionTimeoutMillis: 5_000 });
   try {
     await admin.query('SELECT 1');
-  } catch {
+  } catch (err) {
     await admin.end().catch(() => undefined);
-    return undefined;
+    throw classifyPgConnectError(err, redacted);
   }
   try {
     await admin.query(`CREATE SCHEMA ${quoteIdent(schema)}`);
@@ -235,7 +449,12 @@ export async function tryOpenIsolatedPg(url = DEFAULT_TEST_DATABASE_URL): Promis
   await admin.end();
 
   const sql = createPgSqlClient({ connectionString: url, schema });
-  await applyPlatformMigrations(sql);
+  try {
+    await applyPlatformMigrations(sql);
+  } catch (err) {
+    await sql.close().catch(() => undefined);
+    throw err;
+  }
   return {
     sql,
     schema,
@@ -253,4 +472,32 @@ export async function tryOpenIsolatedPg(url = DEFAULT_TEST_DATABASE_URL): Promis
       }
     },
   };
+}
+
+/** Mandatory open: missing URL, auth, config, and migration failures throw. */
+export async function openIsolatedPg(url?: string): Promise<IsolatedPg> {
+  const connectionString = resolveConnectionString(url);
+  if (!connectionString) {
+    throw new PostgresConfigError(
+      'DATABASE_URL is required for PostgreSQL integration',
+      'DATABASE_URL_MISSING',
+    );
+  }
+  return openIsolatedPgAt(connectionString);
+}
+
+/**
+ * Optional open for unit/local. Returns undefined only when DATABASE_URL is
+ * unset or PostgreSQL is not listening (ECONNREFUSED / ENOTFOUND / …).
+ * Authentication, wrong database, and migration failures always throw.
+ */
+export async function tryOpenIsolatedPg(url?: string): Promise<IsolatedPg | undefined> {
+  const connectionString = resolveConnectionString(url);
+  if (!connectionString) return undefined;
+  try {
+    return await openIsolatedPgAt(connectionString);
+  } catch (err) {
+    if (err instanceof PostgresUnavailableError) return undefined;
+    throw err;
+  }
 }

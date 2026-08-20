@@ -39,7 +39,8 @@ export async function startDemoServer(options: DemoServerOptions = {}): Promise<
 
   publisher.start();
 
-  const server = createServer(async (req, res) => {
+  const server = createServer((req, res) => {
+    void (async () => {
     try {
       if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -84,6 +85,7 @@ export async function startDemoServer(options: DemoServerOptions = {}): Promise<
       res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
     }
+    })();
   });
 
   const port = options.port ?? 0;

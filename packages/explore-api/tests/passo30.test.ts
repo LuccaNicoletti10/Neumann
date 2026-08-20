@@ -31,11 +31,13 @@ function authz() {
     grants: [
       {
         role: 'financeiro',
+        ontologyIds: ['ont-sales'],
         objectTypes: ['ot.customer', 'ot.sales_order', 'ot.internal_note'],
         operations: ['read', 'modify'],
       },
       {
         role: 'ops',
+        ontologyIds: ['ont-sales'],
         objectTypes: ['ot.customer', 'ot.sales_order'],
         operations: ['read'],
         hiddenProperties: ['internal'],

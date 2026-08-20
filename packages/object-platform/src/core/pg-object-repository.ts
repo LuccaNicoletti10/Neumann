@@ -57,7 +57,7 @@ export function createPgObjectRepository(
 
   return {
     async create(input: CreateObjectInput): Promise<ObjectRecord> {
-      const id = nextId('obj');
+      const id = input.id ?? nextId('obj');
       const now = clock();
       // Revive soft-deleted logical identity; reject if live duplicate.
       const result = await sql.query(
@@ -144,6 +144,19 @@ export function createPgObjectRepository(
       return (result.rows as Record<string, unknown>[]).map(rowToRecord);
     },
 
+    async listAll(ontologyId: OntologyId, opts?: ListObjectsOptions) {
+      const includeDeleted = opts?.includeDeleted ?? false;
+      const result = await sql.query(
+        `SELECT * FROM platform_objects
+         WHERE ontology_id = $1
+           AND ($2::boolean OR deleted = false)
+         ORDER BY object_type_id ASC, primary_key ASC
+         LIMIT $3 OFFSET $4`,
+        [ontologyId, includeDeleted, opts?.limit ?? 10_000, opts?.offset ?? 0],
+      );
+      return (result.rows as Record<string, unknown>[]).map(rowToRecord);
+    },
+
     async update(
       ontologyId: OntologyId,
       objectTypeId: ObjectTypeId,
@@ -171,10 +184,14 @@ export function createPgObjectRepository(
           ? input.properties
           : { ...current.properties, ...input.properties };
       const now = clock();
-      // Atomic CAS — never trust app-memory alone.
+      const provenance = input.provenance
+        ? { ...current.provenance, ...input.provenance }
+        : current.provenance;
       const result = await sql.query(
         `UPDATE platform_objects
-         SET properties = $1::jsonb, version = version + 1, updated_at = $2
+         SET properties = $1::jsonb, version = version + 1, updated_at = $2,
+             provenance = COALESCE($7::jsonb, provenance),
+             ontology_version_id = COALESCE($8, ontology_version_id)
          WHERE ontology_id = $3 AND object_type_id = $4 AND primary_key = $5
            AND deleted = false AND version = $6
          RETURNING *`,
@@ -185,6 +202,8 @@ export function createPgObjectRepository(
           objectTypeId,
           primaryKey,
           expected,
+          provenance ? JSON.stringify(provenance) : null,
+          input.migrateToOntologyVersionId ?? null,
         ],
       );
       if (!result.rows[0]) {

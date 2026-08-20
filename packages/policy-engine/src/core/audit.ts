@@ -40,16 +40,23 @@ export function createDecisionLogSink(audit: AuditLog): {
   drain: () => Promise<void>;
 } {
   let chain = Promise.resolve();
+  let persistFailed: unknown;
   return {
     onDecision(d) {
       chain = chain
-        .then(() => recordDecision(audit, d))
-        .then(() => undefined)
-        .catch((err) => {
-          console.error('[policy-engine] decision log append failed:', err);
+        .then(async () => {
+          if (persistFailed) throw persistFailed;
+          await recordDecision(audit, d);
+        })
+        .catch((err: unknown) => {
+          // WHY: same as PolicyEngine.flush — append failure is visible on drain(), not console.error.
+          persistFailed = err;
         });
     },
-    drain: () => chain,
+    drain: async () => {
+      await chain;
+      if (persistFailed) throw persistFailed;
+    },
   };
 }
 

@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   },
   "bin": {
     "passo03": "./dist/cli.js"
@@ -18,15 +18,16 @@
     "start": "node dist/server/index.js serve --port 3000"
   },
   "dependencies": {
-    "fastify": "^4.28.1",
+    "fastify": "catalog:",
     "pino": "^9.4.0",
     "zod": "^3.23.8",
     "age-encryption": "^0.2.4"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.19.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.1.1"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

@@ -3,6 +3,7 @@
  * EPID node graph + authorize + create admissions + secured read (US 10,432,469 / 10,397,229).
  */
 
+import { allowsMutation } from 'contracts';
 import type {
   AuthorizeRequest,
   AuthorizeResult,
@@ -20,6 +21,7 @@ import type {
 import { assertAuthorizeResult } from 'contracts';
 
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
+import { EVERYONE_PRINCIPAL } from './policy-compiler.js';
 import type { PolicyStore } from './policy-store.js';
 import type { CreatePolicyEngineOptions, DecisionRecord } from './types.js';
 
@@ -47,6 +49,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Hydrat
   const sampleSeed = opts.sampleSeed ?? 'policy-decision';
   const pending: Promise<void>[] = [];
   let persistChain: Promise<void> = Promise.resolve();
+  let persistFailed: unknown;
 
   /** principal → set de policy ids (grupos). */
   const grants = new Map<PrincipalId, Set<string>>();
@@ -62,9 +65,15 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Hydrat
 
   function enqueue(op: () => Promise<void>): void {
     if (!store) return;
-    persistChain = persistChain.then(op).catch((err) => {
-      console.error('[policy-engine] persist failed:', err);
-    });
+    persistChain = persistChain
+      .then(async () => {
+        if (persistFailed) throw persistFailed;
+        await op();
+      })
+      .catch((err: unknown) => {
+        // WHY: persist failure must not be console.error + continue; flush() rethrows.
+        persistFailed = err;
+      });
     pending.push(persistChain);
   }
 
@@ -120,13 +129,18 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Hydrat
   }
 
   function epidsForPrincipal(principal: PrincipalId): Epid[] {
-    const policies = grants.get(principal);
-    if (!policies || policies.size === 0) return [];
     const out = new Set<Epid>();
-    for (const policy of policies) {
-      const set = policyToEpids.get(policy);
-      if (set) for (const epid of set) out.add(epid);
-    }
+    const collect = (who: PrincipalId): void => {
+      const policies = grants.get(who);
+      if (!policies || policies.size === 0) return;
+      for (const policy of policies) {
+        const set = policyToEpids.get(policy);
+        if (set) for (const epid of set) out.add(epid);
+      }
+    };
+    collect(principal);
+    // WHY: overlay everyoneRole compiles as grants on EVERYONE_PRINCIPAL; evaluator stays EPID.
+    if (principal !== EVERYONE_PRINCIPAL) collect(EVERYONE_PRINCIPAL);
     return [...out];
   }
 
@@ -272,6 +286,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Hydrat
     async flush() {
       await persistChain;
       pending.length = 0;
+      if (persistFailed) throw persistFailed;
     },
 
     grantPolicy(principal, policyId) {
@@ -359,7 +374,7 @@ export function createPolicyEngine(opts: CreatePolicyEngineOptions = {}): Hydrat
         const parent = nodes.get(spec.parentId);
         if (!parent) return { ok: false, denyReason: 'not found' };
         const parentAuth = decide(principal, parent.resourceId, 'create');
-        if (parentAuth.decision === 'deny') {
+        if (!allowsMutation(parentAuth)) {
           return { ok: false, denyReason: 'not found' };
         }
       }

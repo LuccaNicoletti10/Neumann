@@ -107,14 +107,23 @@ describe('Passo 14 gates', () => {
     expect(Date.now() - t0).toBeLessThan(800);
     expect(r.ok).toBe(false);
     expect(r.deniedReason).toBe('TIMEOUT');
+  }, 10_000);
 
+  it('worker isolation: require(fs) is denied', async () => {
+    const s = createExecutionSandbox({
+      isolation: 'worker',
+      timeoutMs: 5_000,
+      policy: { maxCpuMs: 50, allowNetwork: false, fsAllowPrefixes: [] },
+    });
+    s.registerIdentity({ subjectId: 'u1', displayName: 'U', roles: ['run'] });
     s.registerTransform('fs', () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // WHY: the worker forbidden-API detector must see a real CJS require('fs').
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- fixture for FORBIDDEN_API
       require('fs');
       return 1;
     });
     const escape = await s.runAsync({ identityId: 'u1', transformId: 'fs', input: {} });
     expect(escape.ok).toBe(false);
-    expect(['FS_ESCAPE', 'FORBIDDEN_API']).toContain(escape.deniedReason);
+    expect(escape.deniedReason).toBe('FORBIDDEN_API');
   }, 10_000);
 });

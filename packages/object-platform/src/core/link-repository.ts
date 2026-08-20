@@ -8,6 +8,7 @@
 
 import type {
   CreateLinkInput,
+  DeleteLinkInput,
   LinkRecord,
   LinkRecordId,
   LinkRepository,
@@ -17,9 +18,13 @@ import type {
   OntologyId,
 } from 'contracts';
 
+import { VersionConflictError } from './errors.js';
+
 import { createSystemClock, createUuidIdGenerator } from './determinism.js';
 import { LinkIntegrityError } from './errors.js';
 import { cardinalityViolation, resolveCardinality } from './link-integrity.js';
+import type { MemoryCheckpoint } from './memory-checkpoint.js';
+import { restoreMap } from './memory-checkpoint.js';
 import type { Clock, IdGenerator } from './types.js';
 
 export interface CreateMemoryLinkRepositoryOptions {
@@ -34,12 +39,12 @@ export interface CreateMemoryLinkRepositoryOptions {
     ontologyId: string,
     objectTypeId: string,
     primaryKey: string,
-  ) => boolean | Promise<boolean>;
+  ) => Promise<boolean>;
   /** Cardinality from LinkType schema (never trust raw client). */
   cardinalityOf?: (
     ontologyId: string,
     linkTypeId: string,
-  ) => string | undefined | Promise<string | undefined>;
+  ) => Promise<string | undefined>;
 }
 
 function linkKey(input: {
@@ -69,7 +74,7 @@ function freezeLink(link: LinkRecord): LinkRecord {
 
 export function createMemoryLinkRepository(
   opts: CreateMemoryLinkRepositoryOptions = {},
-): LinkRepository {
+): LinkRepository & MemoryCheckpoint {
   const clock = opts.clock ?? createSystemClock();
   const nextId = opts.nextId ?? createUuidIdGenerator();
 
@@ -102,89 +107,116 @@ export function createMemoryLinkRepository(
 
   async function endpointsLive(link: LinkRecord): Promise<boolean> {
     if (!opts.objectExists) return true;
-    const srcOk = await opts.objectExists(
-      link.ontologyId,
-      link.sourceObjectTypeId,
-      link.sourcePrimaryKey,
-    );
-    const tgtOk = await opts.objectExists(
-      link.ontologyId,
-      link.targetObjectTypeId,
-      link.targetPrimaryKey,
-    );
-    return Boolean(srcOk && tgtOk);
+    const [srcOk, tgtOk] = await Promise.all([
+      opts.objectExists(link.ontologyId, link.sourceObjectTypeId, link.sourcePrimaryKey),
+      opts.objectExists(link.ontologyId, link.targetObjectTypeId, link.targetPrimaryKey),
+    ]);
+    return srcOk && tgtOk;
   }
 
   async function visible(link: LinkRecord, listOpts?: ListLinksOptions): Promise<boolean> {
     if (link.deleted && !listOpts?.includeDeletedLinks) return false;
-    if (!listOpts?.includeDeletedEndpoints && !(await endpointsLive(link))) return false;
-    return true;
+    if (listOpts?.includeDeletedEndpoints) return true;
+    return endpointsLive(link);
+  }
+
+  async function filterVisible(
+    candidates: LinkRecord[],
+    listOpts?: ListLinksOptions,
+  ): Promise<LinkRecord[]> {
+    const flags = await Promise.all(candidates.map((link) => visible(link, listOpts)));
+    return candidates.filter((_, i) => flags[i] === true);
+  }
+
+  function insertLink(input: CreateLinkInput, schemaCardinality: string | undefined): LinkRecord {
+    const key = linkKey(input);
+    const existingId = byKey.get(key);
+    const existing = existingId ? byId.get(existingId) : undefined;
+    const cardinality = resolveCardinality(schemaCardinality, input.cardinality);
+
+    // WHY: CAS guard — when the caller declares expectedVersion we must compare
+    // atomically before writing. This prevents a concurrent projection from
+    // reviving a link that was deleted by another action.
+    if (input.expectedVersion !== undefined) {
+      const currentVersion = existing?.version ?? 0;
+      if (currentVersion !== input.expectedVersion) {
+        throw new VersionConflictError(
+          `link version conflict: expected ${input.expectedVersion}, got ${currentVersion}`,
+        );
+      }
+    }
+
+    if (existing && !existing.deleted) {
+      // WHY: active upsert is CAS on version — distinct from revive (deleted=true).
+      // expectedVersion is required; without it this is a pure-create conflict.
+      if (input.expectedVersion === undefined) {
+        throw new LinkIntegrityError(`link already exists: ${input.linkTypeId}`);
+      }
+      const now = clock();
+      const record = freezeLink({
+        ...existing,
+        updatedAt: now,
+        version: (existing.version ?? 0) + 1,
+        cardinality: cardinality ?? existing.cardinality,
+        source: input.source ?? existing.source,
+        provenance: input.provenance ?? existing.provenance,
+        principal: input.principal ?? existing.principal,
+      });
+      byId.set(record.id, record);
+      return record;
+    }
+    const violated = cardinalityViolation(cardinality, hasFromSource(input), hasIntoTarget(input));
+    if (violated) throw new LinkIntegrityError(`${violated} (${input.linkTypeId})`);
+    const now = clock();
+    const record = freezeLink({
+      id: input.id ?? existing?.id ?? nextId('link'),
+      ontologyId: input.ontologyId,
+      linkTypeId: input.linkTypeId,
+      sourceObjectTypeId: input.sourceObjectTypeId,
+      sourcePrimaryKey: input.sourcePrimaryKey,
+      targetObjectTypeId: input.targetObjectTypeId,
+      targetPrimaryKey: input.targetPrimaryKey,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      version: (existing?.version ?? 0) + 1,
+      deleted: false,
+      cardinality,
+      source: input.source ?? existing?.source,
+      provenance: input.provenance ?? existing?.provenance,
+      principal: input.principal ?? existing?.principal,
+    });
+    byId.set(record.id, record);
+    byKey.set(key, record.id);
+    return record;
   }
 
   return {
     async create(input: CreateLinkInput): Promise<LinkRecord> {
-      const key = linkKey(input);
-      const existingId = byKey.get(key);
-      const existing = existingId ? byId.get(existingId) : undefined;
-
-      if (opts.objectExists) {
-        const srcOk = await opts.objectExists(
-          input.ontologyId,
-          input.sourceObjectTypeId,
-          input.sourcePrimaryKey,
-        );
-        const tgtOk = await opts.objectExists(
-          input.ontologyId,
-          input.targetObjectTypeId,
-          input.targetPrimaryKey,
-        );
-        if (!srcOk || !tgtOk) {
-          throw new LinkIntegrityError('link endpoints must reference existing objects');
-        }
+      const [srcOk, tgtOk, schemaCardinality] = await Promise.all([
+        opts.objectExists
+          ? opts.objectExists(input.ontologyId, input.sourceObjectTypeId, input.sourcePrimaryKey)
+          : true,
+        opts.objectExists
+          ? opts.objectExists(input.ontologyId, input.targetObjectTypeId, input.targetPrimaryKey)
+          : true,
+        opts.cardinalityOf
+          ? opts.cardinalityOf(input.ontologyId, input.linkTypeId)
+          : undefined,
+      ]);
+      if (opts.objectExists && (!srcOk || !tgtOk)) {
+        throw new LinkIntegrityError('link endpoints must reference existing objects');
       }
-
-      const schemaCardinality = opts.cardinalityOf
-        ? await opts.cardinalityOf(input.ontologyId, input.linkTypeId)
-        : undefined;
-      const cardinality = resolveCardinality(schemaCardinality, input.cardinality);
-
-      if (existing && !existing.deleted) {
-        throw new LinkIntegrityError(`link already exists: ${input.linkTypeId}`);
-      }
-
-      const violated = cardinalityViolation(cardinality, hasFromSource(input), hasIntoTarget(input));
-      if (violated) throw new LinkIntegrityError(`${violated} (${input.linkTypeId})`);
-
-      const now = clock();
-      const record = freezeLink({
-        id: existing?.id ?? nextId('link'),
-        ontologyId: input.ontologyId,
-        linkTypeId: input.linkTypeId,
-        sourceObjectTypeId: input.sourceObjectTypeId,
-        sourcePrimaryKey: input.sourcePrimaryKey,
-        targetObjectTypeId: input.targetObjectTypeId,
-        targetPrimaryKey: input.targetPrimaryKey,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        version: (existing?.version ?? 0) + 1,
-        deleted: false,
-        cardinality,
-        source: input.source ?? existing?.source,
-        provenance: input.provenance ?? existing?.provenance,
-        principal: input.principal ?? existing?.principal,
-      });
-      byId.set(record.id, record);
-      byKey.set(key, record.id);
-      return record;
+      return insertLink(input, schemaCardinality);
     },
 
-    delete(
+    async delete(
       ontologyId,
       linkTypeId,
       sourceObjectTypeId,
       sourcePrimaryKey,
       targetObjectTypeId,
       targetPrimaryKey,
+      input?: DeleteLinkInput,
     ) {
       const key = linkKey({
         ontologyId,
@@ -198,6 +230,13 @@ export function createMemoryLinkRepository(
       if (!id) return false;
       const prev = byId.get(id);
       if (!prev || prev.deleted) return false;
+      // WHY: CAS — if the caller provides expectedVersion we must compare atomically
+      // before writing. Zero rows = VERSION_CONFLICT (not a silent no-op).
+      if (input?.expectedVersion !== undefined && prev.version !== input.expectedVersion) {
+        throw new VersionConflictError(
+          `link version conflict: expected ${input.expectedVersion}, got ${prev.version ?? 'undefined'}`,
+        );
+      }
       byId.set(
         id,
         freezeLink({
@@ -216,17 +255,16 @@ export function createMemoryLinkRepository(
       sourcePrimaryKey: string,
       linkTypeId?: LinkTypeId,
       listOpts?: ListLinksOptions,
-    ) {
-      const out: LinkRecord[] = [];
+    ): Promise<LinkRecord[]> {
+      const candidates: LinkRecord[] = [];
       for (const link of byId.values()) {
         if (link.ontologyId !== ontologyId) continue;
         if (link.sourceObjectTypeId !== sourceObjectTypeId) continue;
         if (link.sourcePrimaryKey !== sourcePrimaryKey) continue;
         if (linkTypeId && link.linkTypeId !== linkTypeId) continue;
-        if (!(await visible(link, listOpts))) continue;
-        out.push(link);
+        candidates.push(link);
       }
-      return out;
+      return filterVisible(candidates, listOpts);
     },
 
     async listTo(
@@ -235,17 +273,35 @@ export function createMemoryLinkRepository(
       targetPrimaryKey: string,
       linkTypeId?: LinkTypeId,
       listOpts?: ListLinksOptions,
-    ) {
-      const out: LinkRecord[] = [];
+    ): Promise<LinkRecord[]> {
+      const candidates: LinkRecord[] = [];
       for (const link of byId.values()) {
         if (link.ontologyId !== ontologyId) continue;
         if (link.targetObjectTypeId !== targetObjectTypeId) continue;
         if (link.targetPrimaryKey !== targetPrimaryKey) continue;
         if (linkTypeId && link.linkTypeId !== linkTypeId) continue;
-        if (!(await visible(link, listOpts))) continue;
-        out.push(link);
+        candidates.push(link);
       }
-      return out;
+      return filterVisible(candidates, listOpts);
+    },
+
+    async listAll(ontologyId: OntologyId, listOpts?: ListLinksOptions): Promise<LinkRecord[]> {
+      const candidates: LinkRecord[] = [];
+      for (const link of byId.values()) {
+        if (link.ontologyId !== ontologyId) continue;
+        candidates.push(link);
+      }
+      return filterVisible(candidates, listOpts);
+    },
+
+    capture() {
+      return { byId: new Map(byId), byKey: new Map(byKey) };
+    },
+
+    restore(snapshot: unknown) {
+      const snap = snapshot as { byId: Map<LinkRecordId, LinkRecord>; byKey: Map<string, LinkRecordId> };
+      restoreMap(byId, snap.byId);
+      restoreMap(byKey, snap.byKey);
     },
   };
 }

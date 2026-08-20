@@ -9,6 +9,7 @@
 
 import type {
   CreateLinkInput,
+  DeleteLinkInput,
   LinkRecord,
   LinkRepository,
   LinkTypeId,
@@ -18,6 +19,8 @@ import type {
   SqlClient,
   TransactionManager,
 } from 'contracts';
+
+import { VersionConflictError } from './errors.js';
 
 import { createSystemClock, createUuidIdGenerator } from './determinism.js';
 import { LinkIntegrityError } from './errors.js';
@@ -166,6 +169,69 @@ export function createPgLinkRepository(
           }
         }
 
+        const now = clock();
+        const existingExact = await client.query(
+          `SELECT * FROM platform_links
+           WHERE ontology_id = $1 AND link_type_id = $2
+             AND source_object_type_id = $3 AND source_primary_key = $4
+             AND target_object_type_id = $5 AND target_primary_key = $6
+           FOR UPDATE`,
+          [
+            input.ontologyId,
+            input.linkTypeId,
+            input.sourceObjectTypeId,
+            input.sourcePrimaryKey,
+            input.targetObjectTypeId,
+            input.targetPrimaryKey,
+          ],
+        );
+        const existingRow = existingExact.rows[0] as Record<string, unknown> | undefined;
+        const existingLink = existingRow ? rowToLink(existingRow) : undefined;
+        if (existingLink && !existingLink.deleted) {
+          // WHY: active upsert is CAS on version — distinct from revive (deleted=true).
+          if (input.expectedVersion === undefined) {
+            throw new LinkIntegrityError(`link already exists: ${input.linkTypeId}`);
+          }
+          const currentVersion = existingLink.version ?? 0;
+          if (currentVersion !== input.expectedVersion) {
+            throw new VersionConflictError(
+              `link version conflict: expected version ${input.expectedVersion} not matched during upsert`,
+            );
+          }
+          const updated = await client.query(
+            `UPDATE platform_links
+             SET version = version + 1,
+                 updated_at = $1,
+                 source = COALESCE($2, source),
+                 provenance = COALESCE($3::jsonb, provenance),
+                 principal = COALESCE($4, principal)
+             WHERE ontology_id = $5 AND link_type_id = $6
+               AND source_object_type_id = $7 AND source_primary_key = $8
+               AND target_object_type_id = $9 AND target_primary_key = $10
+               AND deleted = false AND version = $11
+             RETURNING *`,
+            [
+              now,
+              input.source ?? null,
+              input.provenance ? JSON.stringify(input.provenance) : null,
+              input.principal ?? null,
+              input.ontologyId,
+              input.linkTypeId,
+              input.sourceObjectTypeId,
+              input.sourcePrimaryKey,
+              input.targetObjectTypeId,
+              input.targetPrimaryKey,
+              input.expectedVersion,
+            ],
+          );
+          if (!updated.rows[0]) {
+            throw new VersionConflictError(
+              `link version conflict: expected version ${input.expectedVersion} not matched during upsert`,
+            );
+          }
+          return rowToLink(updated.rows[0] as Record<string, unknown>);
+        }
+
         const schemaCardinality = opts.cardinalityOf
           ? await opts.cardinalityOf(input.ontologyId, input.linkTypeId)
           : undefined;
@@ -194,9 +260,17 @@ export function createPgLinkRepository(
         );
         if (violated) throw new LinkIntegrityError(`${violated} (${input.linkTypeId})`);
 
-        const id = nextId('link');
-        const now = clock();
+        const id = input.id ?? nextId('link');
         try {
+          // WHY: when expectedVersion is set, the DO UPDATE WHERE clause includes
+          // a version check — zero rows affected means the current version differs
+          // (VERSION_CONFLICT). Without this, a concurrent project_link could
+          // revive a link that was deleted by another action at a different version.
+          const casClause =
+            input.expectedVersion !== undefined
+              ? `platform_links.deleted = true AND platform_links.version = ${Number(input.expectedVersion)}`
+              : `platform_links.deleted = true`;
+
           const result = await client.query(
             `INSERT INTO platform_links (
                id, ontology_id, link_type_id,
@@ -218,7 +292,7 @@ export function createPgLinkRepository(
                  source = COALESCE(EXCLUDED.source, platform_links.source),
                  provenance = COALESCE(EXCLUDED.provenance, platform_links.provenance),
                  principal = COALESCE(EXCLUDED.principal, platform_links.principal)
-               WHERE platform_links.deleted = true
+               WHERE ${casClause}
              RETURNING *`,
             [
               id,
@@ -236,6 +310,11 @@ export function createPgLinkRepository(
             ],
           );
           if (!result.rows[0]) {
+            if (input.expectedVersion !== undefined) {
+              throw new VersionConflictError(
+                `link version conflict: expected version ${input.expectedVersion} not matched during upsert`,
+              );
+            }
             throw new LinkIntegrityError(`link already exists: ${input.linkTypeId}`);
           }
           return rowToLink(result.rows[0] as Record<string, unknown>);
@@ -257,9 +336,40 @@ export function createPgLinkRepository(
       sourcePrimaryKey,
       targetObjectTypeId,
       targetPrimaryKey,
+      input?: DeleteLinkInput,
     ) {
       return inTx(sql, async (client) => {
         const now = clock();
+        if (input?.expectedVersion !== undefined) {
+          // WHY: CAS delete — the WHERE clause includes version so zero rows = VERSION_CONFLICT,
+          // not a silent no-op. This ensures concurrent delete_link actions produce a conflict
+          // rather than one silently succeeding and the other doing nothing.
+          const result = await client.query(
+            `UPDATE platform_links
+             SET deleted = true, version = version + 1, updated_at = $1
+             WHERE ontology_id = $2 AND link_type_id = $3
+               AND source_object_type_id = $4 AND source_primary_key = $5
+               AND target_object_type_id = $6 AND target_primary_key = $7
+               AND deleted = false AND version = $8
+             RETURNING id`,
+            [
+              now,
+              ontologyId,
+              linkTypeId,
+              sourceObjectTypeId,
+              sourcePrimaryKey,
+              targetObjectTypeId,
+              targetPrimaryKey,
+              input.expectedVersion,
+            ],
+          );
+          if (result.rows.length === 0) {
+            throw new VersionConflictError(
+              `link version conflict: expected version ${input.expectedVersion} not found (already deleted or version changed)`,
+            );
+          }
+          return true;
+        }
         const result = await client.query(
           `UPDATE platform_links
            SET deleted = true, version = version + 1, updated_at = $1
@@ -324,6 +434,20 @@ export function createPgLinkRepository(
            AND ($4::text IS NULL OR l.link_type_id = $4)
            AND ${predicate}`,
         [ontologyId, targetObjectTypeId, targetPrimaryKey, linkTypeId ?? null],
+      );
+      return (result.rows as Record<string, unknown>[]).map(rowToLink);
+    },
+
+    async listAll(ontologyId: OntologyId, listOpts?: ListLinksOptions) {
+      const predicate = liveGraphPredicate(
+        listOpts?.includeDeletedLinks,
+        listOpts?.includeDeletedEndpoints,
+      );
+      const result = await sql.query(
+        `SELECT l.* FROM platform_links l
+         WHERE l.ontology_id = $1
+           AND ${predicate}`,
+        [ontologyId],
       );
       return (result.rows as Record<string, unknown>[]).map(rowToLink);
     },

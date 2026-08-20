@@ -1,3 +1,10 @@
 packages:
   - "packages/*"
   - "apps/erp-simulator"
+
+catalog:
+  typescript: "5.5.4"
+  vitest: "2.1.9"
+  "@vitest/coverage-v8": "2.1.9"
+  fastify: "4.28.1"
+  "@types/node": "20.14.15"

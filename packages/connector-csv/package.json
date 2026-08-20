@@ -4,8 +4,20 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "scripts": { "build": "tsc -p tsconfig.build.json", "typecheck": "tsc --noEmit", "test": "vitest run --passWithNoTests" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
   "license": "MIT",
-  "dependencies": { "connector-sdk": "workspace:*", "contracts": "workspace:*" },
-  "devDependencies": { "@types/node": "20.14.15", "typescript": "5.5.4", "vitest": "^2.1.9" }
+  "dependencies": {
+    "connector-sdk": "workspace:*",
+    "contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
+  }
 }

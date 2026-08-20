@@ -1,0 +1,119 @@
+---
+description: Constituição de engenharia do kernel Neumann — APoSD, uma fonte de verdade, Actions, memória vs PostgreSQL.
+alwaysApply: true
+---
+
+# Constituição de engenharia — Neumann
+
+Kernel operacional genérico. Não é planner, ERP, BI nem wrapper de LLM.
+Mapa factual: `docs/architecture/current-state.md`. Alvo: `docs/architecture/target-state.md`. ADRs: `docs/architecture/adr/`.
+
+## Objetivo (invariante de produto)
+
+- Uma fonte de verdade operacional.
+- Connectors entregam dados reais; raw / version / history / lineage são preservados.
+- Dados de runtime: ontologia, objetos, links, ObjectSets genéricos.
+- Mutação e decisão só por Actions governadas, transacionais, auditáveis e idempotentes.
+- Conceito de negócio específico só em `apps/`, fixtures e exemplos. Nunca em `packages/`.
+- Memória é test double semanticamente equivalente. Produção = PostgreSQL. Sem fallback silencioso.
+
+## Antes de alterar runtime
+
+1. Ler o mapa em `docs/architecture/current-state.md` e o alvo em `docs/architecture/target-state.md`.
+2. Identificar a fonte de verdade do conceito (policy, objects, ontology, actions, query, persistence). Não criar outra.
+3. Contrato público em `packages/contracts` não muda sem ADR em `docs/architecture/adr/`.
+4. Escopo fechado: sem commit, push, rename de pacote, ou “enquanto estou aqui”.
+5. Toda alteração inclui testes negativos e de invariante. Não marcar resolvido sem teste.
+
+## APoSD — operacional
+
+- Módulo profundo: interface estreita, semântica forte, implementação escondida. Preferir um `authorize(req)` a uma família de helpers públicos paralelos.
+- Proibido wrapper pass-through que só encaminha e esconde o problema (segundo store, segundo authorize, catch que loga e segue).
+- Um conceito = uma API pública. Se já existe em `contracts` v1, implementar essa. Não exportar gêmeo.
+- Estado inválido é impossível no tipo ou rejeitado na borda (HTTP, connector, Action validate). Não “corrige” no meio.
+- Configuração suportada que vira no-op silencioso é bug. Fail-fast / fail-closed.
+- Comentário explica porquê e invariante. Proibido histórico de Passo, número de patente, ou narração do óbvio.
+- Proibido: `any`, double cast, `catch` que engole erro, `console.error` como garantia de durabilidade.
+- Teste que só cobre o caminho feliz não fecha o gate.
+
+## Fontes de verdade (não duplicar)
+
+| Conceito | Contrato | Runtime canônico hoje | Não é fonte |
+|---|---|---|---|
+| Policy HTTP Actions+Reads | `AuthorizeRequest` / `AuthorizeResult` | `OntologyAuthorizer` (`createOntologyAuthorizer`) | `allowAll`, `AuthorizeFn` solto, `X-Principal` em produção |
+| Policy EPID | `PolicyEngine` | `createPolicyEngine` + `PolicyStore` | não está no caminho HTTP; não inventar terceiro |
+| Objects/Links | `ObjectRepository` / `LinkRepository` | memory ou PG via `PlatformContext` | `createObjectPlatform` Maps, `createKnowledgeGraph` Maps, índice do `query-api` |
+| Ontology | `OntologyRegistry` | `createOntologyRegistry` / `createPgOntologyRegistry` | cache `ActionExecutor.registerActionType` |
+| Mutations | `ActionExecutor` | `createActionExecutor` + `ActionUnitOfWork` em PG | POST/PUT/DELETE `/objects` e `/links` (serviço); writes no repository fora de Action |
+| Query Objects | `ObjectSet` | `object-set` (`resolveObjectSet` / `compile-sql`) | inverted index de `query-api`, catálogo efêmero de explore |
+| Persistence | adapters | PostgreSQL em produção | memória, `/tmp`, JSON OpenFoundry |
+
+Detalhe e caminhos crus: `docs/architecture/current-state.md`.
+
+## Memória vs PostgreSQL
+
+- `createMemoryPlatformContext` — testes e demos. Determinismo injetável.
+- `createPostgresPlatformContext` — runtime. Sem `DATABASE_URL`/`sql` → throw. Sem `policy` (ou fixture/overlay explícitos) → throw. Sem fallback para memória. `ctx.authorizer` é o mesmo objecto que `ctx.policy` (ADR-0009).
+- `createPlatformContext` é alias deprecado da memória. Não usar em código novo.
+- `PLATFORM_MODE=postgres` com context memory → recusar (`createPlatformServer`).
+- Test double deve preservar: CAS/version, soft-delete revive, deny de policy, falha de Action sem estado parcial, idempotency key. Se a memória não consegue, o teste é de integração PG — não afrouxar o contrato.
+
+## Fronteiras
+
+```
+apps/*  →  packages/*     permitido
+packages/*  ✗→  apps/*    proibido
+connector  ✗→  ontology   proibido
+```
+
+`packages/` não contém Customer, SalesOrder, Titulo, SKU, máquina, forecast, ERP real. Isso é app, fixture ou exemplo.
+
+## Mutação
+
+Produção: `authorize → validate → submission criteria → UnitOfWork(rules + objects/links + events + audit + outbox) → COMMIT`. Writeback externo depois, via worker.
+HTTP direto em objetos/links é serviço (`svc-projector`, `svc-migration`) até ADR remover as rotas. Humanos e apps usam Actions.
+Não adicionar nova porta de escrita.
+
+## Auth / policy no HTTP
+
+```
+Bearer → TokenVerifier → Principal → ctx.policy.authorize → recurso
+```
+
+`X-Principal` só com `ALLOW_DEV_PRINCIPAL_HEADER=true`. Produção exige `PLATFORM_JWKS_URL` ou `PLATFORM_JWT_SECRET`. `/health` e `/ready` públicos.
+
+`ctx.authorizer` é alias de `ctx.policy` (mesmo objecto, ADR-0009). Proibido segundo evaluator / segundo `hydrate()` no HTTP.
+
+## Bootstrap
+
+Não servir tráfego de negócio antes do que o modo exige. Postgres: `await` migrations → snapshot de policy → LISTEN → catalog sync → `ready=true` → `listen()`. Falha em qualquer passo não escuta. `/ready` 503 se `!ready` ou `policy.degraded()`.
+
+## Qualidade de código
+
+- TypeScript strict do `tsconfig.base.json` (`noUncheckedIndexedAccess`, sem `any`).
+- Erro tipado na borda (`NeumannApiError`, erros de repositório). Não status 500 para conflito/validação.
+- Persistência: falha propaga. `enqueue` + `console.error` em `createPolicyEngine` não é modelo.
+- SQL parametrizado. `quoteIdent` para identificadores. Não concatenar input.
+- Migration em `infra/sql/` é append-only. Histórico editado falha checksum. Não editar arquivo já aplicado.
+- Relógio e IDs: produção `createSystemClock` / `createUuidIdGenerator`; testes injetam determinísticos. Não criar quarta fábrica.
+
+## Testes (obrigatório em toda alteração)
+
+- Feliz + negativo (deny, conflito de versão, payload inválido, idempotency replay, restart quando o store é durável).
+- Invariante explícito (uma verdade, fail-closed, sem estado parcial).
+- PG: `tryOpenIsolatedPg` / schema isolado. Sem mock de banco em teste de invariante de store.
+- ObjectSet: memória é oráculo; PG via `compile-sql`. Paridade não se “assume”.
+- Não apagar teste que prova o gap para ficar verde.
+
+## Contratos e ADRs
+
+- `packages/contracts/src/v1/*` congela na release. Breaking → ADR + `v2/` (não “ajustar o tipo”).
+- Implementações importam contratos do pacote `contracts`, não de `internals` alheios.
+- Dois exports públicos para o mesmo conceito exigem plano de convergência no ADR, não mais um terceiro.
+
+## Escopo desta sessão (agente)
+
+- Não alterar runtime nesta constituição. Docs e rules somente, salvo o usuário pedir código.
+- Não commitar, não dar push, não `--no-verify`.
+- Não marcar P0–P73 / Passo N como resolvido sem teste no diff.
+- Não seguir `_archive/legacy-docs/`. Spec ativa: README, esta rule, `docs/architecture/*`, `packages/*`.

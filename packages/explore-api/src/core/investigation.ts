@@ -118,7 +118,12 @@ function propertyVisible(
 ): boolean {
   if (property.startsWith('__')) return true;
   if (!authorizer) return true;
-  const redacted = authorizer.redactProperties(principal, obj.objectTypeId, obj.properties);
+  const redacted = authorizer.redactProperties(
+    principal,
+    obj.objectTypeId,
+    obj.properties,
+    obj.ontologyId,
+  );
   return Object.prototype.hasOwnProperty.call(redacted, property);
 }
 
@@ -130,7 +135,9 @@ function toHit(
 ): InvestigationIndexHit | undefined {
   const obj = catalog.objects.find((o) => o.id === v.objectId);
   if (!obj || obj.deleted) return undefined;
-  if (authorizer && !authorizer.canReadObjectType(principal, obj.objectTypeId)) return undefined;
+  if (authorizer && !authorizer.canReadObjectType(principal, obj.objectTypeId, obj.ontologyId)) {
+    return undefined;
+  }
   if (!propertyVisible(obj, v.property, principal, authorizer)) return undefined;
   return {
     objectId: obj.id,

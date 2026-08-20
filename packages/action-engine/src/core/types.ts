@@ -3,14 +3,14 @@
  */
 
 import type {
+  ActionDefinitionResolver,
   ActionExecutionStore,
-  ActionTypeDef,
   AuditLog,
   AuthorizeFn,
   LinkRepository,
   ObjectRepository,
   OperationalEventStore,
-  OntologyId,
+  OntologyRegistry,
   OutboxRepository,
 } from 'contracts';
 
@@ -38,15 +38,17 @@ export interface CreateActionExecutorOptions {
   events?: OperationalEventStore;
   executions?: ActionExecutionStore;
   outbox?: OutboxRepository;
-  authorize?: AuthorizeFn;
-  /**
-   * `production` refuses missing authorize (fail-closed).
-   * Memory/tests may omit authorize only when mode is not production.
-   */
+  authorize: AuthorizeFn;
   mode?: 'memory' | 'production';
   unitOfWork?: ActionUnitOfWork;
   clock?: Clock;
   nextId?: IdGenerator;
-  /** Seed ActionTypeDefs per ontology. */
-  actionTypes?: Record<OntologyId, ActionTypeDef[]>;
+  /**
+   * Ontology is the ActionType source (ADR-0006). Required unless `resolver` is set.
+   */
+  ontology?: OntologyRegistry;
+  /** Injected resolver; default is createOntologyActionResolver(ontology). */
+  resolver?: ActionDefinitionResolver;
+  /** Observed at apply and stored on the envelope. Resume reauthorizes live policy. */
+  policyGeneration?: () => number;
 }

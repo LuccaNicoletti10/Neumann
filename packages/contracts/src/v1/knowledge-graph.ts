@@ -142,24 +142,31 @@ export interface RemoteObjectRef {
   createdAt: string;
 }
 
+/**
+ * WHY async (ADR-0014): objects and links live in the async storage kernel.
+ * A sync facade would have to detect a Promise after a write already started.
+ */
 export interface KnowledgeGraphStore {
-  upsertObject(obj: GraphObject): void;
-  getObject(id: GraphObjectId): GraphObject | undefined;
-  listObjects(objectTypeId?: ObjectTypeId): GraphObject[];
+  upsertObject(obj: GraphObject): Promise<void>;
+  getObject(id: GraphObjectId): Promise<GraphObject | undefined>;
+  listObjects(objectTypeId?: ObjectTypeId): Promise<GraphObject[]>;
 
   /**
    * Materializa link tipado. Falha se source/target inexistentes
    * (integridade referencial).
    */
-  upsertLink(link: Omit<TypedLink, 'id'> & { id?: LinkInstanceId }): TypedLink;
-  getLink(id: LinkInstanceId): TypedLink | undefined;
-  listLinks(filter?: { linkTypeId?: LinkTypeId; mappingVersionId?: MappingVersionId }): TypedLink[];
+  upsertLink(link: Omit<TypedLink, 'id'> & { id?: LinkInstanceId }): Promise<TypedLink>;
+  getLink(id: LinkInstanceId): Promise<TypedLink | undefined>;
+  listLinks(filter?: {
+    linkTypeId?: LinkTypeId;
+    mappingVersionId?: MappingVersionId;
+  }): Promise<TypedLink[]>;
 
   /** Integridade referencial do grafo. */
-  checkIntegrity(): IntegrityReport;
+  checkIntegrity(): Promise<IntegrityReport>;
 
   /** Travessia multi-hop (semântica de WITH RECURSIVE). */
-  traverseLinks(query: TraverseQuery): TraverseResult;
+  traverseLinks(query: TraverseQuery): Promise<TraverseResult>;
 
   /**
    * Gera SQL Postgres recursive CTE equivalente à query
@@ -168,13 +175,13 @@ export interface KnowledgeGraphStore {
   toRecursiveCteSql(query: TraverseQuery): string;
 
   /** Migração de links ao mudar mapping_version. */
-  migrateLinks(input: LinkMigrationInput): LinkMigrationResult;
+  migrateLinks(input: LinkMigrationInput): Promise<LinkMigrationResult>;
 
   /** Remote reference: ticket → resolve. */
-  createRemoteReference(objectId: GraphObjectId): RemoteObjectRef;
-  resolveRemoteReference(ticketId: TicketId): GraphObject | null;
+  createRemoteReference(objectId: GraphObjectId): Promise<RemoteObjectRef>;
+  resolveRemoteReference(ticketId: TicketId): Promise<GraphObject | null>;
   /** Acesso via proxy (forward member/property). */
-  accessRemote(ticketId: TicketId, property: string): unknown;
+  accessRemote(ticketId: TicketId, property: string): Promise<unknown>;
 }
 
 export function buildGoldenTypedLink(): TypedLink {

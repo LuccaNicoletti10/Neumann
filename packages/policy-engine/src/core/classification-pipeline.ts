@@ -17,6 +17,7 @@ import { createDeterministicClock, createIdGenerator, createLineageStore } from 
 import { createKnowledgeGraph } from 'knowledge-graph';
 
 import { createOntologyAuthorizer } from './ontology-authorizer.js';
+import { KERNEL_ONTOLOGY } from './resource-ids.js';
 
 export interface ClassifyDemoResult {
   ok: boolean;
@@ -107,7 +108,7 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
     clock: createDeterministicClock('2024-06-01T12:00:00.000Z'),
     nextId: createIdGenerator(),
   });
-  graph.upsertObject({
+  await graph.upsertObject({
     id: 'obj-cust-C1',
     objectTypeId: 'ot.customer',
     primaryKey: 'C1',
@@ -115,7 +116,7 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
     classification: custClass,
     properties: { name: 'Acme' },
   });
-  graph.upsertObject({
+  await graph.upsertObject({
     id: 'obj-ord-SO-1',
     objectTypeId: 'ot.sales_order',
     primaryKey: 'SO-1',
@@ -123,7 +124,7 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
     classification: orderClass,
     properties: { amount: 150 },
   });
-  graph.upsertObject({
+  await graph.upsertObject({
     id: 'obj-enriched-SO-1',
     objectTypeId: 'ot.order_enriched',
     primaryKey: 'SO-1',
@@ -131,7 +132,7 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
     classification: derivedClassification,
     properties: { customer: 'Acme', amount: 150 },
   });
-  graph.upsertLink({
+  await graph.upsertLink({
     linkTypeId: 'lt.placed',
     sourceObjectId: 'obj-cust-C1',
     targetObjectId: 'obj-ord-SO-1',
@@ -140,27 +141,43 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
     targetDatasetId: 'orders',
   });
 
-  const cust = graph.getObject('obj-cust-C1');
-  const ord = graph.getObject('obj-ord-SO-1');
+  const cust = await graph.getObject('obj-cust-C1');
+  const ord = await graph.getObject('obj-ord-SO-1');
   const linkConstraint = sharingConstraint(cust?.classification, ord?.classification).name;
 
-  const authorizer = createOntologyAuthorizer({
-    everyoneRole: 'reader',
-    roles: { alice: ['analyst'], bob: ['analyst'] },
-    grants: [
-      {
-        role: 'reader',
-        objectTypes: ['*'],
-        operations: ['read'],
+  const authorizer = createOntologyAuthorizer(
+    {
+      everyoneRole: 'reader',
+      roles: { alice: ['analyst'], bob: ['analyst'] },
+      grants: [
+        {
+          role: 'reader',
+          objectTypes: ['*'],
+          operations: ['read'],
+        },
+      ],
+      maxClassification: {
+        alice: 'Confidential',
+        bob: 'Unclassified',
       },
-    ],
-    maxClassification: {
-      alice: 'Confidential',
-      bob: 'Unclassified',
     },
-  });
+    {
+      catalog: {
+        ontologies: [KERNEL_ONTOLOGY],
+        objectTypes: [
+          { ontologyId: KERNEL_ONTOLOGY, id: 'ot.customer' },
+          { ontologyId: KERNEL_ONTOLOGY, id: 'ot.sales_order' },
+          { ontologyId: KERNEL_ONTOLOGY, id: 'ot.order_enriched' },
+        ],
+        linkTypes: [],
+        actions: [],
+        functions: [],
+        admin: [],
+      },
+    },
+  );
 
-  const universe = graph.listObjects().map((o) => ({
+  const universe = (await graph.listObjects()).map((o) => ({
     id: o.id,
     objectTypeId: o.objectTypeId,
     classification: o.classification,
@@ -171,17 +188,17 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
   const aliceView = disseminationView(universe, 'Confidential');
   const bobView = disseminationView(universe, 'Unclassified');
 
-  const aliceTrav = graph.traverseLinks({
+  const aliceTrav = await graph.traverseLinks({
     startObjectId: 'obj-cust-C1',
     maxHops: 1,
     viewingLevel: 'Confidential',
   });
-  const bobTrav = graph.traverseLinks({
+  const bobTrav = await graph.traverseLinks({
     startObjectId: 'obj-cust-C1',
     maxHops: 1,
     viewingLevel: 'Unclassified',
   });
-  const bobFromOrder = graph.traverseLinks({
+  const bobFromOrder = await graph.traverseLinks({
     startObjectId: 'obj-ord-SO-1',
     maxHops: 1,
     viewingLevel: 'Unclassified',
@@ -221,7 +238,7 @@ export async function runClassificationPipeline(): Promise<ClassifyDemoResult> {
   return {
     ok,
     derivedClassification,
-    objectClassification: graph.getObject('obj-enriched-SO-1')?.classification ?? '',
+    objectClassification: (await graph.getObject('obj-enriched-SO-1'))?.classification ?? '',
     linkConstraint,
     aliceVisible: aliceItems.map((i) => i.id).sort(),
     bobVisible: bobItems.map((i) => i.id).sort(),

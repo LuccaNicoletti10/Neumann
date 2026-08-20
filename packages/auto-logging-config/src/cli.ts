@@ -31,7 +31,6 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function printJson(value: unknown): void {
-  // eslint-disable-next-line no-console
   console.log(JSON.stringify(value, null, 2));
 }
 
@@ -143,7 +142,6 @@ async function main(): Promise<void> {
       const port = Number(flags.port ?? process.env.PORT ?? 3000);
       const app = buildServer(createContext(datastorePath));
       await app.listen({ port, host: "0.0.0.0" });
-      // eslint-disable-next-line no-console
       console.log(`API ouvindo na porta ${port}`);
       return;
     }
@@ -154,7 +152,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);
 });

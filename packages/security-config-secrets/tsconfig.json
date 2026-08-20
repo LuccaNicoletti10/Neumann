@@ -1,23 +1,11 @@
 {
+  "extends": "../../tsconfig.node.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    // WHY: this package compiled without verbatim imports; enabling it is a separate type-fix, not a tooling preset change
+    "verbatimModuleSyntax": false,
     "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "exactOptionalPropertyTypes": false,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
-    "forceConsistentCasingInFileNames": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "declaration": true,
-    "sourceMap": true,
-    "resolveJsonModule": true,
-    "types": ["node"]
+    // WHY: build and typecheck share this file; tests must stay outside emit
+    "rootDir": "src"
   },
   "include": ["src/**/*.ts"]
 }

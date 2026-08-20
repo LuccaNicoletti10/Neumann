@@ -11,10 +11,11 @@ import {
 import { createAuditLog, createDecisionLogSink } from '../src/core/audit.js';
 import { createPolicyEngine } from '../src/core/engine.js';
 import {
-  createAllowAllAuthorizer,
+  createAllowAllTestPolicy,
   createDenyAllAuthorizer,
   createOntologyAuthorizer,
 } from '../src/core/ontology-authorizer.js';
+import { KERNEL_ONTOLOGY, ResourceIds } from '../src/core/resource-ids.js';
 import { runClassifyDemo, runDemo, runNoninterferenceDemo, runRedactDemo } from '../src/cli.js';
 
 function eng() {
@@ -144,24 +145,48 @@ describe('Passo 16 gates', () => {
     expect(
       authz.explainDecision({
         principal: 'alice',
-        resource: 'action:approve',
+        resource: ResourceIds.action(KERNEL_ONTOLOGY, 'approve'),
         operation: 'modify',
       }).reason,
-    ).toContain('granted');
-    expect(createAllowAllAuthorizer().authorizeAction('anyone', 'x').decision).toBe('allow');
+    ).toMatch(/grant/);
+    expect(
+      createAllowAllTestPolicy({
+        ontologies: [],
+        objectTypes: [],
+        linkTypes: [],
+        actions: [{ ontologyId: KERNEL_ONTOLOGY, apiName: 'x' }],
+        functions: [],
+        admin: [],
+      }).authorizeAction('anyone', 'x').decision,
+    ).toBe('allow');
     expect(createDenyAllAuthorizer().authorizeRead('eve', 'ot.order').decision).toBe('deny');
   });
 
   it('Passo 26: classification gate deny when marking exceeds principal max', () => {
-    const authz = createOntologyAuthorizer({
-      roles: { bob: ['ops'] },
-      grants: [{ role: 'ops', objectTypes: ['*'], operations: ['read'] }],
-      maxClassification: { bob: 'Unclassified' },
-    });
+    const authz = createOntologyAuthorizer(
+      {
+        roles: { bob: ['ops'] },
+        grants: [{ role: 'ops', objectTypes: ['*'], operations: ['read'] }],
+        maxClassification: { bob: 'Unclassified' },
+      },
+      {
+        catalog: {
+          ontologies: [KERNEL_ONTOLOGY],
+          objectTypes: [
+            { ontologyId: KERNEL_ONTOLOGY, id: 'ot.customer' },
+            { ontologyId: KERNEL_ONTOLOGY, id: 'ot.order' },
+          ],
+          linkTypes: [],
+          actions: [],
+          functions: [],
+          admin: [],
+        },
+      },
+    );
     expect(
       authz.authorize({
         principal: 'bob',
-        resource: 'object:ot.customer',
+        resource: ResourceIds.objectType(KERNEL_ONTOLOGY, 'ot.customer'),
         operation: 'read',
         context: { classification: 'Confidential' },
       }).decision,

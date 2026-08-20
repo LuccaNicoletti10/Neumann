@@ -88,7 +88,7 @@ function rawPublic(key: KeyObject): Buffer {
 export class AgeLikeCrypto {
   /** Gera um novo par X25519 com codificacao age-like. */
   static generateKeyPair(): AgeLikeKeyPair {
-    const { publicKey, privateKey } = generateKeyPairSync('x25519');
+    const { publicKey: _publicKey, privateKey } = generateKeyPairSync('x25519');
     const privJwk = privateKey.export({ format: 'jwk' }) as { d?: string; x?: string };
     if (!privJwk.d || !privJwk.x) throw new Error('falha ao exportar par X25519');
     const d = Buffer.from(privJwk.d, 'base64url');

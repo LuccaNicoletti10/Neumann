@@ -5,7 +5,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=20"
+    "node": "^24.0.0"
   },
   "bin": {
     "psm": "./dist/cli.js"
@@ -17,13 +17,14 @@
     "start": "node dist/cli.js serve --port 3000"
   },
   "dependencies": {
-    "fastify": "^4.28.0",
+    "fastify": "catalog:",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
+    "@types/node": "catalog:",
     "tsx": "^4.16.0",
-    "typescript": "5.5.4",
-    "vitest": "^2.0.0"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@vitest/coverage-v8": "catalog:"
   }
 }

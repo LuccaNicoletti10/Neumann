@@ -7,7 +7,6 @@ import { startServer } from '../src/server/index.js';
 import type { StartedServer } from '../src/server/index.js';
 
 let started: StartedServer;
-let scheduler: BoundedFairScheduler;
 
 async function startTestServer(maxQueueSize: number): Promise<StartedServer> {
   const dbms = DatabaseManagementSystem.uniform(['node-A', 'node-B'], generateRows(1000));
@@ -34,7 +33,6 @@ function closeServer(s: StartedServer): Promise<void> {
 
 beforeEach(async () => {
   started = await startTestServer(1);
-  scheduler = started.scheduler;
 });
 
 afterEach(async () => {

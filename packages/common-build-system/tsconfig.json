@@ -1,11 +1,11 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tsconfig.node.json",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    // WHY: this package compiled without verbatim imports; enabling it is a separate type-fix, not a tooling preset change
+    "verbatimModuleSyntax": false,
     "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"]
+    // WHY: build and typecheck share this file; tests must stay outside emit
+    "rootDir": "src"
   },
   "include": ["src/**/*"]
 }

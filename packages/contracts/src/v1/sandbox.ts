@@ -10,7 +10,8 @@ export type SandboxDenyReason =
   | 'NETWORK_DENIED'
   | 'IDENTITY_REQUIRED'
   | 'FORBIDDEN_API'
-  | 'OUTPUT_TOO_LARGE';
+  | 'OUTPUT_TOO_LARGE'
+  | 'EXECUTION_ERROR';
 
 export interface SandboxPolicy {
   /** Soft wall-clock budget (ms) — enforced via injectable clock ticks + step count. */

@@ -33,7 +33,7 @@ describe.skipIf(!db)('outbox worker', () => {
 
     const executions = createPgWritebackExecutionStore({ sql: db.sql });
     const ok = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: repo,
       handlers: {
         'action.side_effect.writeback': createSqlMirrorWritebackHandler({
           sql: db.sql,
@@ -67,7 +67,7 @@ describe.skipIf(!db)('outbox worker', () => {
       traceId: boomId,
     });
     const failing = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: repo,
       maxAttempts: 2,
       backoff: { random: () => 0.5, schedule: [0, 0] },
       onError: () => {},

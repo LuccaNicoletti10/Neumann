@@ -68,7 +68,7 @@ describe('ObjectRepository + LinkRepository', () => {
       properties: { n: 1 },
     });
     await objects.update('o1', 'ot.a', '1', { properties: { n: 2 } });
-    expect(() => objects.delete('o1', 'ot.a', '1', { expectedVersion: 1 })).toThrow(
+    await expect(objects.delete('o1', 'ot.a', '1', { expectedVersion: 1 })).rejects.toThrow(
       VersionConflictError,
     );
     expect(await objects.get('o1', 'ot.a', '1')).toBeTruthy();

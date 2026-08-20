@@ -24,7 +24,7 @@ export interface CliDeps {
   error?: (message: string) => void;
 }
 
-export function runDemo(log: (message: string) => void = console.log): number {
+export async function runDemo(log: (message: string) => void = console.log): Promise<number> {
   const denied = new Set<string>(['object:secret-denied']);
   const authorize: AuthorizeFn = (req) => {
     if (req.operation === 'read' && denied.has(req.resource)) {
@@ -90,7 +90,7 @@ export function runDemo(log: (message: string) => void = console.log): number {
   log(`  mv2=${mv2.id} n=${mv2.versionNumber} props=${mv2.propertyMappings.length}`);
 
   log('== 3. projetor (dataset version → objects + history + provenance) ==');
-  const proj = platform.project({
+  const proj = await platform.project({
     mappingVersionId: mv2.id,
     datasetVersionId: 'dv-1',
     rows: [
@@ -102,20 +102,20 @@ export function runDemo(log: (message: string) => void = console.log): number {
 
   log('== 4. Object API (via authorize) ==');
   const principal = 'alice';
-  const listed = platform.queryObjects(principal, { objectTypeId: 'ot.customer' });
+  const listed = await platform.queryObjects(principal, { objectTypeId: 'ot.customer' });
   const ada = listed.find((o) => o.primaryKey === 'C1')!;
   const bob = listed.find((o) => o.primaryKey === 'C2')!;
-  const got = platform.getObject(principal, ada.id);
-  const hist = platform.getHistory(principal, ada.id);
-  const prov = platform.getProvenance(principal, ada.id);
-  const around = platform.traverseLinks(principal, bob.id, 'lt.customer_of');
+  const got = await platform.getObject(principal, ada.id);
+  const hist = await platform.getHistory(principal, ada.id);
+  const prov = await platform.getProvenance(principal, ada.id);
+  const around = await platform.traverseLinks(principal, bob.id, 'lt.customer_of');
   log(`  query=${listed.length} get=${got?.properties['pt.name']} hist=${hist?.length}`);
   log(`  provenance ds=${prov?.datasetVersionId} map=${prov?.mappingVersionId}`);
   log(`  traverseLinks bob→${around.map((o) => o.primaryKey).join(',') || '(none)'}`);
 
   log('== 5. user_edit vence data_source ==');
-  platform.applyUserEdit(ada.id, { 'pt.name': 'Ada Lovelace' }, principal);
-  platform.project({
+  await platform.applyUserEdit(ada.id, { 'pt.name': 'Ada Lovelace' }, principal);
+  await platform.project({
     mappingVersionId: mv2.id,
     datasetVersionId: 'dv-2',
     rows: [
@@ -123,15 +123,15 @@ export function runDemo(log: (message: string) => void = console.log): number {
       { fields: { id: 'C2', name: 'Bob', email: 'bob@ex.com', region: 'US', parent_id: 'C1' } },
     ],
   });
-  const after = platform.getObject(principal, ada.id)!;
+  const after = (await platform.getObject(principal, ada.id))!;
   log(`  name after reproject=${String(after.properties['pt.name'])}`);
 
   log('== 6. authorize deny esconde objeto ==');
   // Força resource id fixo só para o gate deny — usa id real se já estiver na deny list.
   // Demo: negar leitura do bob via set local (authorize checa object:id).
-  denied.add(`object:${bob.id}`);
-  const hidden = platform.getObject(principal, bob.id);
-  const stillAda = platform.getObject(principal, ada.id);
+  denied.add(`object:_/${encodeURIComponent(bob.id)}`);
+  const hidden = await platform.getObject(principal, bob.id);
+  const stillAda = await platform.getObject(principal, ada.id);
   log(`  bob hidden=${hidden === null} ada visible=${stillAda !== null}`);
 
   const ok =
@@ -153,10 +153,10 @@ export function runDemo(log: (message: string) => void = console.log): number {
   return ok ? 0 : 1;
 }
 
-export function runCommandLine(
+export async function runCommandLine(
   argv: readonly string[],
   deps: CliDeps = {},
-): number {
+): Promise<number> {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
   const args = argv.filter((a) => a !== '--');
@@ -166,7 +166,7 @@ export function runCommandLine(
     log(USAGE);
     return 0;
   }
-  if (cmd === 'demo') return runDemo(log);
+  if (cmd === 'demo') return await runDemo(log);
   error(`comando desconhecido: ${cmd}`);
   log(USAGE);
   return 1;
@@ -182,6 +182,15 @@ function isMain(): boolean {
   }
 }
 
+/**
+ * Process entry. WHY a named function and not top-level await: this module is
+ * also loaded through a CJS interop path, where top-level await cannot be
+ * transformed. A rejection here is fatal by design — the CLI must not exit 0.
+ */
+export async function runMain(argv: readonly string[]): Promise<void> {
+  process.exitCode = await runCommandLine(argv);
+}
+
 if (isMain()) {
-  process.exitCode = runCommandLine(process.argv.slice(2));
+  void runMain(process.argv.slice(2));
 }

@@ -120,7 +120,8 @@ function asJobRequest(value: unknown): JobRequest {
 
 export function createHandler(deps: ServerDeps): http.RequestListener {
   const { scheduler, dbms } = deps;
-  return async (req, res) => {
+  return (req, res) => {
+    void (async () => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const path = url.pathname;
@@ -204,6 +205,7 @@ export function createHandler(deps: ServerDeps): http.RequestListener {
         : 500;
       sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
     }
+    })();
   };
 }
 

@@ -56,7 +56,7 @@ describe('OutboxPublisher + IdempotentConsumer', () => {
       });
     });
 
-    const record = store.listUnpublished()[0]!;
+    expect(store.listUnpublished()[0]).toBeDefined();
     const publisher = new OutboxPublisher(store, async (r) => {
       await consumer.handle(r, () => {
         businessRuns += 1;

@@ -5,7 +5,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { toParameterValuePairs } from '../src/core/exporter.js';
-import { createInternalDb } from '../src/core/internalDb.js';
 import { CoreError } from '../src/core/types.js';
 import { makeStack, makeTag, sampleSession } from './helpers.js';
 

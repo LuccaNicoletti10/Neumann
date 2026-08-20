@@ -178,7 +178,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const { env, key } = req.params as { env: string; key: string };
     const body = z.object({ value: z.string() }).parse(req.body);
     try {
-      secretsFromHeader(req).set(env, key, body.value);
+      await secretsFromHeader(req).set(env, key, body.value);
       return { ok: true, env, key };
     } catch (err) {
       const e = err as { statusCode?: number; message: string };
@@ -189,7 +189,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   app.get('/secrets/:env/keys', async (req, reply) => {
     const { env } = req.params as { env: string };
     try {
-      return { env, keys: secretsFromHeader(req).listKeys(env) };
+      return { env, keys: await secretsFromHeader(req).listKeys(env) };
     } catch (err) {
       const e = err as { statusCode?: number; message: string };
       return reply.code(e.statusCode ?? 400).send({ message: e.message });

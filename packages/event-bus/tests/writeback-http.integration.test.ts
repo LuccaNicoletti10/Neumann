@@ -74,7 +74,7 @@ describe.skipIf(!db)('HTTP writeback idempotency', () => {
       const connector = createHttpWritebackConnector({ baseUrl: erp.url });
       let crashOnce = true;
       const worker = createOutboxWorker({
-        sql: db.sql,
+        dispatcher: createPgOutboxRepository({ sql: db.sql }),
         maxAttempts: 5,
         backoff: { random: () => 0.5, schedule: [0] },
         onError: () => {},

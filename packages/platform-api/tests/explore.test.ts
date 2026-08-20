@@ -16,7 +16,9 @@ describe('Passo 30 — GraphPattern HTTP', () => {
       grants: [
         {
           role: 'financeiro',
+          ontologyIds: ['*'],
           objectTypes: ['ot.customer', 'ot.sales_order'],
+          linkTypes: ['lt.placed'],
           operations: ['read', 'modify'],
           actions: ['*'],
         },

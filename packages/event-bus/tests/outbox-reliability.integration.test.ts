@@ -29,7 +29,7 @@ describe.skipIf(!db)('outbox reliability', () => {
       traceId: retryId,
     });
     const worker = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: repo,
       maxAttempts: 8,
       backoff: { random: () => 0.5, schedule: [60_000] },
       onError: () => {},
@@ -66,7 +66,7 @@ describe.skipIf(!db)('outbox reliability', () => {
     });
     const alerts: string[] = [];
     const w2 = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: repo,
       handlers: {},
       onUnhandled: (ev) => alerts.push(ev.eventId),
     });
@@ -98,7 +98,7 @@ describe.skipIf(!db)('outbox reliability', () => {
       resolveHang = resolve;
     });
     const stuck = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: repo,
       workerId: 'stuck',
       leaseMs: 60_000,
       handlers: {
@@ -124,7 +124,7 @@ describe.skipIf(!db)('outbox reliability', () => {
     ]);
 
     const rescuer = createOutboxWorker({
-      sql: db.sql,
+      dispatcher: repo,
       workerId: 'rescuer',
       handlers: {
         'action.side_effect.writeback': async () => {},

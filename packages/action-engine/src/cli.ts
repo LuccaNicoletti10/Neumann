@@ -17,6 +17,7 @@ import {
 } from 'object-platform';
 import { sourceFieldsToProperties } from 'connector-sdk';
 import { createAuditLog } from 'policy-engine';
+import { createOntologyRegistry } from 'ontology-registry';
 
 import { createActionExecutor, createMemoryOperationalEventStore } from './core/executor.js';
 import { renderDocumentTemplate } from './core/document-template.js';
@@ -129,27 +130,49 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
   const objects = createMemoryObjectRepository({ clock, nextId });
   const links = createMemoryLinkRepository({ clock, nextId });
   const audit = createAuditLog({ clock, nextId });
+  const ontology = createOntologyRegistry({ clock, nextId });
+  const onto = await ontology.createOntology({ name: 'demo', createdBy: 'cli' });
+  const oid = onto.id;
+  await ontology.addObjectType(oid, {
+    id: 'ot.customer',
+    displayName: 'Customer',
+    propertyTypeIds: [],
+  });
+  await ontology.addObjectType(oid, {
+    id: 'ot.product',
+    displayName: 'Product',
+    propertyTypeIds: [],
+  });
+  await ontology.addObjectType(oid, {
+    id: 'ot.sales-order',
+    displayName: 'Sales Order',
+    propertyTypeIds: [],
+  });
+  await ontology.addActionType(oid, APPROVE);
+  await ontology.addActionType(oid, CREATE_ORDER);
+  await ontology.addActionType(oid, REPORT);
+  await ontology.commit({ ontologyId: oid, createdBy: 'cli' });
 
   await objects.create({
-    ontologyId: 'o1',
+    ontologyId: oid,
     objectTypeId: 'ot.customer',
     primaryKey: 'C-1',
     properties: { name: 'ACME' },
   });
   await objects.create({
-    ontologyId: 'o1',
+    ontologyId: oid,
     objectTypeId: 'ot.product',
     primaryKey: 'P-1',
     properties: { sku: 'SKU-1' },
   });
   await objects.create({
-    ontologyId: 'o1',
+    ontologyId: oid,
     objectTypeId: 'ot.sales-order',
     primaryKey: 'SO-1',
     properties: { status: 'pending', amount: 150 },
   });
   await objects.create({
-    ontologyId: 'o1',
+    ontologyId: oid,
     objectTypeId: 'ot.sales-order',
     primaryKey: 'SO-gate',
     properties: { status: 'pending', amount: 10 },
@@ -159,47 +182,52 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
     objects,
     links,
     audit,
+    ontology,
     clock,
     nextId,
     authorize: (req) =>
       req.principal === 'eve'
         ? { decision: 'deny', principalEpids: [], resourceEpid: null, reason: 'unauthorized' }
         : { decision: 'allow', principalEpids: [], resourceEpid: null, reason: 'ok' },
-    actionTypes: { o1: [APPROVE, CREATE_ORDER, REPORT] },
   });
 
   log('== 1. unauthorized → DENIED ==');
   const denied = await exec.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'approve-sales-order',
     parameters: { orderId: 'SO-gate', status: 'approved' },
     principal: 'eve',
+    idempotencyKey: 'deny-cli',
+    expectedObjectVersions: { 'ot.sales-order::SO-gate': 1 },
   });
   log(`  status=${denied.status} error=${denied.error} audit=${denied.auditEntryId}`);
 
   log('== 2. apply + idempotencyKey ==');
   const first = await exec.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'approve-sales-order',
     parameters: { orderId: 'SO-1', status: 'approved' },
     principal: 'alice',
     idempotencyKey: 'approve-SO-1',
+    expectedObjectVersions: { 'ot.sales-order::SO-1': 1 },
   });
   const again = await exec.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'approve-sales-order',
     parameters: { orderId: 'SO-1', status: 'approved' },
     principal: 'alice',
     idempotencyKey: 'approve-SO-1',
+    expectedObjectVersions: { 'ot.sales-order::SO-1': 1 },
   });
   log(`  first=${first.status} again=${again.status} sameId=${first.executionId === again.executionId}`);
 
   log('== 3. stale expectedObjectVersions → conflict ==');
   const stale = await exec.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'approve-sales-order',
     parameters: { orderId: 'SO-gate', status: 'approved' },
     principal: 'alice',
+    idempotencyKey: 'stale-cli',
     expectedObjectVersions: { 'ot.sales-order::SO-gate': 99 },
   });
   log(`  status=${stale.status} error=${stale.error}`);
@@ -222,7 +250,7 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
 
   log('== 5. parameter tree + variable binding ==');
   const tree = await exec.parameterTree!({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'approve-sales-order',
     parameters: { orderId: 'SO-1', status: 'approved' },
     principal: 'alice',
@@ -236,18 +264,20 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
     sku: 'SKU-1',
   });
   const report = await exec.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'order-report',
     parameters: { orderId: 'SO-1' },
     principal: 'alice',
+    idempotencyKey: 'report-cli',
+    expectedObjectVersions: { 'ot.sales-order::SO-1': 2 },
   });
-  const so1 = await objects.get('o1', 'ot.sales-order', 'SO-1');
+  const so1 = await objects.get(oid, 'ot.sales-order', 'SO-1');
   log(`  template="${rendered}" report.status=${report.status} doc=${String(so1?.properties.report ?? '')}`);
 
   log('== 7. workflow ordenado (create → approve) ==');
   const runner = createActionWorkflowRunner(exec);
   const wf = await runner.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     workflow: {
       id: 'wf.fulfill',
       displayName: 'Fulfill',
@@ -268,8 +298,9 @@ export async function runDemo(log: (message: string) => void = console.log): Pro
     parameters: { orderId: 'SO-new', amount: 42, status: 'approved' },
     principal: 'alice',
     idempotencyKey: 'wf-1',
+    expectedObjectVersions: { 'ot.sales-order::SO-new': 1 },
   });
-  const created = await objects.get('o1', 'ot.sales-order', 'SO-new');
+  const created = await objects.get(oid, 'ot.sales-order', 'SO-new');
   log(`  wf=${wf.status} steps=${wf.stepResults.length} SO-new.status=${String(created?.properties.status ?? '')}`);
 
   const ok =
@@ -309,9 +340,19 @@ export async function runWritebackDemo(
   const mappings = demoMappings();
 
   log('== 1. observe fonte ==');
+  const ontology = createOntologyRegistry({ clock, nextId });
+  const onto = await ontology.createOntology({ name: 'wb', createdBy: 'cli' });
+  const oid = onto.id;
+  await ontology.addObjectType(oid, {
+    id: 'ot.sales-order',
+    displayName: 'Sales Order',
+    propertyTypeIds: [],
+  });
+  await ontology.addActionType(oid, APPROVE);
+  await ontology.commit({ ontologyId: oid, createdBy: 'cli' });
   const seed = sourceFieldsToProperties(connector.getRecord('SO-1') ?? {}, mappings);
   await objects.create({
-    ontologyId: 'o1',
+    ontologyId: oid,
     objectTypeId: 'ot.sales-order',
     primaryKey: 'SO-1',
     properties: seed,
@@ -323,20 +364,27 @@ export async function runWritebackDemo(
     objects,
     links,
     audit,
+    ontology,
     clock,
     nextId,
+    authorize: () => ({
+      decision: 'allow',
+      principalEpids: [],
+      resourceEpid: null,
+      reason: 'ok',
+    }),
     events,
     outbox,
-    actionTypes: { o1: [APPROVE] },
   });
 
   log('== 2. decide + act (Action apply) ==');
   const applied = await exec.apply({
-    ontologyId: 'o1',
+    ontologyId: oid,
     actionApiName: 'approve-sales-order',
     parameters: { orderId: 'SO-1', status: 'approved' },
     principal: 'alice',
     idempotencyKey: 'approve-SO-1',
+    expectedObjectVersions: { 'ot.sales-order::SO-1': 1 },
   });
   log(`  action=${applied.status} audit=${applied.auditEntryId}`);
 
@@ -345,7 +393,7 @@ export async function runWritebackDemo(
     outboxRecords: outbox.records,
     connector,
     objects,
-    ontologyId: 'o1',
+    ontologyId: oid,
     objectTypeId: 'ot.sales-order',
     mappings,
     events,
@@ -353,7 +401,7 @@ export async function runWritebackDemo(
     principal: 'alice',
   });
   const srcAfter = connector.getRecord('SO-1');
-  const objAfter = await objects.get('o1', 'ot.sales-order', 'SO-1');
+  const objAfter = await objects.get(oid, 'ot.sales-order', 'SO-1');
   log(`  drained=${drained} source=${String(srcAfter?.order_status)} object=${String(objAfter?.properties.status)} v=${objAfter?.version}`);
 
   log('== 4. audit do ciclo ==');

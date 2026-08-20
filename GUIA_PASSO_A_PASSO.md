@@ -6,9 +6,9 @@
 > Fluxo: ingestão → memória imutável → transform → qualidade → lineage/policy → ontologia → …  
 > **Não** é app de fábrica, planejamento, forecasting nem vertical de negócio. Especialização na empresa só **depois** dos gates em datasets de teste, e sempre como app em cima do kernel.  
 > Spec ativa = este arquivo + `packages/*`. Docs antigos em `_archive/legacy-docs/` (não seguir).  
-> **Status:** Blocos **1–6 entregues** + **Passos 20–32** (ER + gold/review + functions + Action engine + write-back + 2ª fonte/classificação + lineage colunar/redaction + noninterference/fuzz + Query API + exploração genérica + federation T1.5 + edge/subscribe CanonicalEvent) + **Passos 33–34** (replicação cross-ACL + offline/conflitos) + **milestone Object/Action `/api/v2`**.
+> **Status:** Blocos **1–6 entregues** + **Passos 20–37** (AIP ask + agent + eval adversariais) + **milestone Object/Action `/api/v2`**.
 > **Em andamento:** consolidação/hardening (ver `docs/platform-consolidation-audit.md`) — uma fonte de verdade Objects/Links, Postgres CAS, auth, Actions transacionais.
-> Próximo roadmap clássico após gates de consolidação: **Passo 35** (AIP / AI Gateway).
+> Próximo roadmap clássico: **Passo 38** (E2E 17 passos).
 
 ---
 
@@ -408,9 +408,10 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 
 ---
 
-## BLOCO 12 — AIP (IA sobre a Ontology, em 4 degraus)
+## BLOCO 12 — AIP (IA sobre a Ontology, em 4 degraus) (17/08/2026)
 
 ### PASSO 35 — Degrau 1: AI Gateway + LLM read-only
+<!-- ENTREGUE: packages/aip-gateway + contracts/v1/aip + ADR-0022 + POST /api/v2/ontologies/:id/aip/ask. Gate: pnpm aip -- demo; pnpm --filter aip-gateway test -->
 **Construir:** User → AI Gateway → Identity+Context → Policy → Agent Runtime → Tool Registry (tool = wrapper de API autorizada: tool_id, input_schema, output_schema, required_permission, risk_level, timeout, rate_limit) → Result → Policy filtering → Response.
 **Patentes:**
 - **US 12,405,983** — serve para: **LLM operando sobre a Ontology** (grounding em objetos reais).
@@ -420,9 +421,10 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US20240403396A1** — serve para: **saída de LLM respeitando permissões** (output filtrado por policy).
 - **US20240403103A1** — serve para: integração de modelos.
 - **US20260017123A1** — serve para: assistente AI cross-application.
-**Gate:** pergunta NL → resposta grounded citando objetos; trocar o LLM → nada quebra. *(tasks 151–158)*
+**Gate:** pergunta NL → resposta grounded citando objetos; trocar o LLM → nada quebra. *(tasks 151–158)* — `pnpm aip -- demo` + `pnpm --filter aip-gateway test`
 
 ### PASSO 36 — Degrau 2–4: agent→function → proposed action → authorized action
+<!-- ENTREGUE: createAiAgent state-machine + propose_action → ActionExecutor; ADR-0023; POST .../aip/agent/run. Gate: pnpm --filter aip-gateway test; platform-api aip-agent.test -->
 **Construir:** state-machine agent (START→UNDERSTAND→GATHER_DATA→ANALYZE→PROPOSE_ACTION→APPROVAL?→EXECUTE→VERIFY→DONE, cada estado com allowed_tools, prompt, transition_conditions, max_iterations, approval_policy); context builder (identity+role+permissions+object context+conversation+workflow state+tools+policies); high-risk gate: propose→simulate→validate→policy→human approval→execute→verify.
 **Patentes:**
 - **US20250110753A1 / EP4530883** — servem para: **agentes LLM apoiados em state machine** (não deixar agente crítico improvisar).
@@ -430,15 +432,16 @@ Não avançar para AIP, search, replication, apps verticais ou `apps/contas-a-pa
 - **US20250384290A1 / EP4668176A1** — servem para: ML assistido por LLM + Ontology.
 - **US20260065540A1** — serve para: visualizações multidimensionais controladas por NL.
 - **US20260127387A1 / EP4738182A1** — servem para: seleção de exemplos few-shot.
-**Gate:** agente propõe → humano aprova → executa pelo MESMO Action engine do Passo 24. *(tasks 159–166)*
+**Gate:** agente propõe → humano aprova → executa pelo MESMO Action engine do Passo 24. *(tasks 159–166)* — `pnpm --filter aip-gateway test` + `platform-api` `aip-agent`
 
 ### PASSO 37 — Evaluation framework + testes adversariais
+<!-- ENTREGUE: packages/aip-eval + contracts/v1/aip-eval + ADR-0024; 11 adversariais. Gate: pnpm --filter aip-eval test; pnpm aip-eval -->
 **Construir:** suíte versionada (eval_case: input, context, allowed_tools, expected facts, expected action, forbidden actions, rubric, result, model_version, prompt_version, agent_version); métricas (task success, groundedness, tool-selection accuracy, permission violations, hallucination, latency, cost, human override); 11 adversariais obrigatórios.
 **Patentes:**
 - **US20250199932A1 / EP4571511A1** — servem para: **avaliação de agentes** (eval framework).
 - **US20240420258A1** — serve para: avaliação de modelos.
 - **US20250147832A1 / US 12,487,876 / US20260127063A1** — servem para: análise de erros assistida por LLM.
-**Gate:** eval suite verde incluindo prompt injection, exfiltration, unauthorized tool, fake instructions em documento, poisoned search, stale context, conflicting facts, infinite loop, action duplication, tool timeout, model outage. *(tasks 167–172)*
+**Gate:** eval suite verde incluindo prompt injection, exfiltration, unauthorized tool, fake instructions em documento, poisoned search, stale context, conflicting facts, infinite loop, action duplication, tool timeout, model outage. *(tasks 167–172)* — `pnpm --filter aip-eval test`
 
 ---
 
@@ -466,17 +469,17 @@ BLOCO 4  Transform (runner, DAG, qualidade, sandbox)   → passos 11–14  ✓ E
 BLOCO 5  Lineage + Policy + Audit                      → passos 15–16  ✓ ENTREGUE
 BLOCO 6  Ontology (registry, mapping, grafo)           → passos 17–19  ✓ ENTREGUE
 BLOCO 7  Entity Resolution (ER + gold set)             → passos 20–22  ✓ ENTREGUE
-BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ◀ Passos 23–25 ✓; 26 próximo clássico
+BLOCO 8  Functions + Actions + Write-back              → passos 23–26  ◀ 23–26 ✓
 BLOCO 9  Security hardening                            → passos 27–28
 BLOCO 10 Search + APIs (+Federation; Edge só se pedido)→ passos 29–32  ◀ 29–32 ✓
-BLOCO 11 Replication + Offline                         → passos 33–34
-BLOCO 12 AIP (4 degraus + evals)                       → passos 35–37
+BLOCO 11 Replication + Offline                         → passos 33–34  ◀ 33–34 ✓
+BLOCO 12 AIP (4 degraus + evals)                       → passos 35–37  ◀ 35–37 ✓
 BLOCO 13 Closed-loop E2E + hardening                   → passos 38–39
 ```
 
 **Dataset-first:** validar cada bloco com datasets de teste genéricos. App real da empresa (qualquer vertical) entra em `apps/<nome>/` **só depois** — nunca no core.
 
-**Ordem obrigatória daqui pra frente:** Passo 26 (2ª fonte) → demais.
+**Ordem obrigatória daqui pra frente:** Passo 38 (E2E 17 passos) → demais.
 
 **Não vira core (patentes verticais — ficam fora da fundação):**
 US 9,129,219 / 9,836,694 (crime-risk) · US 9,501,202 (genomic) · US 9,431,507 (acoustic sensing) · US 9,872,083 / 10,708,669 (media/ads) · US 8,494,941 (financial similarity) · US 9,830,157 / 9,676,662 (image metadata) · US 9,606,647 (gestures) · US 11,706,090 (network troubleshooting).

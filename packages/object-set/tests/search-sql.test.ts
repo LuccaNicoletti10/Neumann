@@ -9,6 +9,7 @@ describe('catalog search SQL', () => {
     expect(sql.params).toContain("a'; drop");
     expect(sql.params).toContain('onto-1');
     expect(sql.text).toMatch(/\$1/);
+    expect(sql.text).toMatch(/UNION/i);
   });
 
   it('catalogHitUrn is stable', () => {

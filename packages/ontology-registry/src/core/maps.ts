@@ -5,6 +5,8 @@
 
 import {
   assertObjectTypeDef,
+  compilePattern,
+  validateActionTypeDefSchema,
   type OntologyDraft,
   type OntologyVersion,
 } from 'contracts';
@@ -99,6 +101,23 @@ export function validateDraft(d: OntologyDraft): void {
     }
     if (!d.objectTypes[lt.targetObjectTypeId]) {
       throw new Error(`LinkType ${lt.id}: target ObjectType inexistente`);
+    }
+  }
+  for (const def of Object.values(d.propertyTypes)) {
+    for (const v of def.validators ?? []) {
+      if (v.kind === 'regex') {
+        // WHY: PropertyType regex is admitted at commit with the same linear-safe
+        // subset as ActionType patterns so a dangerous pattern never reaches apply.
+        compilePattern(def.id, v.pattern);
+      }
+    }
+  }
+  for (const def of Object.values(d.actionTypes)) {
+    const schemaErrors = validateActionTypeDefSchema(def);
+    if (schemaErrors.length > 0) {
+      throw new Error(
+        `ActionType ${def.id} has invalid parameter schema: ${schemaErrors.map((e) => e.message).join('; ')}`,
+      );
     }
   }
 }

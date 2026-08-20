@@ -3,8 +3,7 @@
  * Foundry-like /api/v2 routes (adapted from OpenFoundry Apache-2.0 conventions).
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type {
   ActionTypeDef,
   GraphPattern,
@@ -17,17 +16,12 @@ import { compileCatalogSearch, catalogHitUrn, normalizeFilter } from 'object-set
 import { catalogFromRepos, executeGraphPattern } from 'explore-api';
 import { paginateArray } from 'pagination';
 import { notFound } from 'api-errors';
+import { ResourceIds } from 'policy-engine';
 
-import type { PlatformContext } from '../core/context.js';
+import type { PublicPlatformContext } from '../core/context.js';
 import { principalOf } from '../core/principal.js';
+import { declarePolicy } from '../core/route-policy.js';
 import { createSecuredReads } from '../core/secured-reads.js';
-
-function hmacHexEqual(raw: string, secret: string, signature: string): boolean {
-  const expected = createHmac('sha256', secret).update(raw).digest('hex');
-  const a = Buffer.from(expected);
-  const b = Buffer.from(signature);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
   const type = String(raw.type ?? '').toUpperCase();
@@ -72,27 +66,44 @@ function normalizeObjectSet(raw: Record<string, unknown>): ObjectSet {
   }
 }
 
+function ont(req: FastifyRequest): string {
+  return (req.params as { ontology: string }).ontology;
+}
+
+function ot(req: FastifyRequest): string {
+  return (req.params as { objectType: string }).objectType;
+}
+
+function actionName(req: FastifyRequest): string {
+  return (req.params as { action: string }).action;
+}
+
+function actionRequiredBody(): {
+  errorCode: string;
+  errorName: string;
+  message: string;
+} {
+  return {
+    errorCode: 'ACTION_REQUIRED',
+    errorName: 'ActionRequired',
+    message:
+      'Object and link writes are not a public API. Use POST /api/v2/ontologies/{ontology}/actions/{action}/apply.',
+  };
+}
+
 export async function registerV2Routes(
   app: FastifyInstance,
-  ctx: PlatformContext,
+  ctx: PublicPlatformContext,
 ): Promise<void> {
   const reads = createSecuredReads(ctx);
 
-  async function ensureActionType(ontologyId: string, action: string): Promise<void> {
-    if (ctx.actions.getActionType(ontologyId, action)) return;
-    const v = await ctx.ontology.getLatestVersion(ontologyId);
-    const def = Object.values(v?.actionTypes ?? {}).find(
-      (a) => a.apiName === action || a.id === action,
-    );
-    if (def) ctx.actions.registerActionType(ontologyId, def);
-  }
-
-  app.get('/api/v2/ontologies', async () => {
+  app.get('/api/v2/ontologies', declarePolicy('read', () => ResourceIds.admin('ontology.list'), 'empty-list'), async () => {
     return { data: await ctx.ontology.listOntologies() };
   });
 
   app.post<{ Body: { name: string; description?: string } }>(
     '/api/v2/ontologies',
+    declarePolicy('create', () => ResourceIds.admin('ontology.create')),
     async (req, reply) => {
       const o = await ctx.ontology.createOntology({
         name: req.body.name,
@@ -105,7 +116,8 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology',
-    async (req, reply) => {
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'not-found'),
+    async (req, _reply) => {
       const o = await ctx.ontology.getOntology(req.params.ontology);
       if (!o) throw notFound('OntologyNotFound', 'ontology not found', { ontology: req.params.ontology });
       return o;
@@ -114,6 +126,7 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/latestVersion',
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'not-found'),
     async (req, reply) => {
       const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       if (!v) return reply.code(404).send({ error: 'ontology not found' });
@@ -123,6 +136,7 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/versions/latest',
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'not-found'),
     async (req, reply) => {
       const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       if (!v) return reply.code(404).send({ error: 'ontology not found' });
@@ -132,11 +146,13 @@ export async function registerV2Routes(
 
   app.get<{ Params: { objectId: string } }>(
     '/api/v2/objects/:objectId/history',
+    declarePolicy('read', () => ResourceIds.admin('ontology.read'), 'empty-list'),
     async (req) => ({ data: await reads.listHistory(principalOf(req), req.params.objectId) }),
   );
 
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/objectTypes',
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'empty-list'),
     async (req, reply) => {
       const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       if (!v) return reply.code(404).send({ error: 'ontology not found' });
@@ -146,16 +162,18 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string; objectType: string } }>(
     '/api/v2/ontologies/:ontology/objectTypes/:objectType',
+    declarePolicy('read', (req) => ResourceIds.objectType(ont(req), ot(req)), 'not-found'),
     async (req, reply) => {
       const v = await ctx.ontology.getLatestVersion(req.params.ontology);
-      const ot = v?.objectTypes[req.params.objectType];
-      if (!ot) return reply.code(404).send({ error: 'objectType not found' });
-      return ot;
+      const def = v?.objectTypes[req.params.objectType];
+      if (!def) return reply.code(404).send({ error: 'objectType not found' });
+      return def;
     },
   );
 
   app.get<{ Params: { ontology: string; objectType: string }; Querystring: { pageSize?: string; pageToken?: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType',
+    declarePolicy('read', (req) => ResourceIds.objectType(ont(req), ot(req)), 'empty-list'),
     async (req) => {
       const data = await reads.listObjects(
         principalOf(req),
@@ -171,6 +189,7 @@ export async function registerV2Routes(
 
   app.get<{ Params: { ontology: string; objectType: string; primaryKey: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey',
+    declarePolicy('read', (req) => ResourceIds.objectType(ont(req), ot(req)), 'not-found'),
     async (req, reply) => {
       const obj = await reads.getObject(
         principalOf(req),
@@ -186,65 +205,32 @@ export async function registerV2Routes(
   app.post<{
     Params: { ontology: string; objectType: string };
     Body: { primaryKey: string; properties?: Record<string, unknown>; source?: string };
-  }>('/api/v2/ontologies/:ontology/objects/:objectType', async (req, reply) => {
-    const obj = await ctx.objects.create({
-      ontologyId: req.params.ontology,
-      objectTypeId: req.params.objectType,
-      primaryKey: req.body.primaryKey,
-      properties: req.body.properties,
-      source: req.body.source ?? 'api',
-    });
-    await ctx.events.append({
-      kind: 'ObjectCreated',
-      ontologyId: req.params.ontology,
-      principal: principalOf(req),
-      objectId: obj.id,
-      objectTypeId: obj.objectTypeId,
-      primaryKey: obj.primaryKey,
-    });
-    return reply.code(201).send(obj);
-  });
+  }>(
+    '/api/v2/ontologies/:ontology/objects/:objectType',
+    declarePolicy('create', (req) => ResourceIds.objectType(ont(req), ot(req))),
+    async (_req, reply) => reply.code(405).send(actionRequiredBody()),
+  );
 
   app.put<{
     Params: { ontology: string; objectType: string; primaryKey: string };
     Body: { properties: Record<string, unknown> };
   }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey',
-    async (req) => {
-      const obj = await ctx.objects.update(
-        req.params.ontology,
-        req.params.objectType,
-        req.params.primaryKey,
-        { properties: req.body.properties },
-      );
-      await ctx.events.append({
-        kind: 'ObjectModified',
-        ontologyId: req.params.ontology,
-        principal: principalOf(req),
-        objectId: obj.id,
-        objectTypeId: obj.objectTypeId,
-        primaryKey: obj.primaryKey,
-      });
-      return obj;
-    },
+    declarePolicy('modify', (req) => ResourceIds.objectType(ont(req), ot(req))),
+    async (_req, reply) => reply.code(405).send(actionRequiredBody()),
   );
 
   app.delete<{ Params: { ontology: string; objectType: string; primaryKey: string } }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey',
-    async (req, reply) => {
-      await ctx.objects.delete(
-        req.params.ontology,
-        req.params.objectType,
-        req.params.primaryKey,
-      );
-      return reply.code(204).send();
-    },
+    declarePolicy('delete', (req) => ResourceIds.objectType(ont(req), ot(req))),
+    async (_req, reply) => reply.code(405).send(actionRequiredBody()),
   );
 
   app.get<{
     Params: { ontology: string; objectType: string; primaryKey: string; linkType: string };
   }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey/links/:linkType',
+    declarePolicy('read', (req) => ResourceIds.linkType(ont(req), (req.params as { linkType: string }).linkType), 'empty-list'),
     async (req) => ({
       data: await reads.listLinkTargets(
         principalOf(req),
@@ -261,30 +247,8 @@ export async function registerV2Routes(
     Body: { targetObjectType: string; targetPrimaryKey: string; cardinality?: string };
   }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey/links/:linkType',
-    async (req, reply) => {
-      const link = await ctx.links.create({
-        ontologyId: req.params.ontology,
-        linkTypeId: req.params.linkType,
-        sourceObjectTypeId: req.params.objectType,
-        sourcePrimaryKey: req.params.primaryKey,
-        targetObjectTypeId: req.body.targetObjectType,
-        targetPrimaryKey: req.body.targetPrimaryKey,
-        cardinality: req.body.cardinality as
-          | '1:1'
-          | '1:N'
-          | 'N:1'
-          | 'N:N'
-          | undefined,
-      });
-      await ctx.events.append({
-        kind: 'LinkCreated',
-        ontologyId: req.params.ontology,
-        principal: principalOf(req),
-        linkId: link.id,
-        linkTypeId: link.linkTypeId,
-      });
-      return reply.code(201).send(link);
-    },
+    declarePolicy('modify', (req) => ResourceIds.objectType(ont(req), ot(req))),
+    async (_req, reply) => reply.code(405).send(actionRequiredBody()),
   );
 
   app.post<{
@@ -295,14 +259,18 @@ export async function registerV2Routes(
       pageSize?: number;
       pageToken?: string;
     };
-  }>('/api/v2/ontologies/:ontology/objectSets/loadObjects', async (req) => {
+  }>(
+    '/api/v2/ontologies/:ontology/objectSets/loadObjects',
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'empty-list'),
+    async (req) => {
     return reads.loadObjectSet(principalOf(req), req.params.ontology, {
       objectSet: normalizeObjectSet(req.body.objectSet),
       orderBy: req.body.orderBy,
       pageSize: req.body.pageSize,
       pageToken: req.body.pageToken,
     });
-  });
+    },
+  );
 
   app.post<{
     Params: { ontology: string };
@@ -310,18 +278,30 @@ export async function registerV2Routes(
       objectSet: Record<string, unknown>;
       aggregations: ObjectSetAggregation[];
     };
-  }>('/api/v2/ontologies/:ontology/objectSets/aggregate', async (req) => {
+  }>(
+    '/api/v2/ontologies/:ontology/objectSets/aggregate',
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'empty-list', {
+      data: { count: 0 },
+    }),
+    async (req) => {
     const data = await reads.aggregateObjectSet(principalOf(req), req.params.ontology, {
       objectSet: normalizeObjectSet(req.body.objectSet),
       aggregations: req.body.aggregations,
     });
     return { data };
-  });
+    },
+  );
 
   app.post<{
     Params: { ontology: string };
     Body: { pattern: GraphPattern; limit?: number };
-  }>('/api/v2/ontologies/:ontology/graphPatterns/execute', async (req) => {
+  }>(
+    '/api/v2/ontologies/:ontology/graphPatterns/execute',
+    declarePolicy('read', (req) => ResourceIds.ontology(ont(req)), 'empty-list', {
+      matches: [],
+      total: 0,
+    }),
+    async (req) => {
     const pattern = req.body.pattern;
     assertGraphPattern(pattern);
     const objectTypeIds = [...new Set(pattern.nodes.map((n) => String(n.objectTypeId)))];
@@ -335,13 +315,14 @@ export async function registerV2Routes(
       catalog,
       pattern,
       principal: principalOf(req),
-      authorizer: ctx.authorizer,
+      authorizer: ctx.policy,
       limit: req.body.limit,
     });
   });
 
   app.get<{ Params: { ontology: string } }>(
     '/api/v2/ontologies/:ontology/actionTypes',
+    declarePolicy('read', () => ResourceIds.admin('actionType.read'), 'empty-list'),
     async (req, reply) => {
       const v = await ctx.ontology.getLatestVersion(req.params.ontology);
       if (!v) return reply.code(404).send({ error: 'ontology not found' });
@@ -352,26 +333,32 @@ export async function registerV2Routes(
   app.post<{
     Params: { ontology: string };
     Body: ActionTypeDef;
-  }>('/api/v2/ontologies/:ontology/actionTypes', async (req, reply) => {
+  }>(
+    '/api/v2/ontologies/:ontology/actionTypes',
+    declarePolicy('create', () => ResourceIds.admin('actionType.write')),
+    async (req, reply) => {
     await ctx.ontology.openDraft(req.params.ontology);
     await ctx.ontology.addActionType(req.params.ontology, req.body);
     await ctx.ontology.commit({ ontologyId: req.params.ontology, createdBy: principalOf(req) });
-    ctx.actions.registerActionType(req.params.ontology, req.body);
     return reply.code(201).send(req.body);
-  });
+    },
+  );
 
   app.post<{
     Params: { ontology: string; action: string };
     Body: { parameters: Record<string, unknown> };
-  }>('/api/v2/ontologies/:ontology/actions/:action/validate', async (req) => {
-    await ensureActionType(req.params.ontology, req.params.action);
+  }>(
+    '/api/v2/ontologies/:ontology/actions/:action/validate',
+    declarePolicy('modify', (req) => ResourceIds.action(ont(req), actionName(req))),
+    async (req) => {
     return ctx.actions.validate({
       ontologyId: req.params.ontology,
       actionApiName: req.params.action,
       parameters: req.body.parameters ?? {},
       principal: principalOf(req),
     });
-  });
+    },
+  );
 
   app.post<{
     Params: { ontology: string; action: string };
@@ -380,8 +367,10 @@ export async function registerV2Routes(
       idempotencyKey?: string;
       expectedObjectVersions?: Record<string, number>;
     };
-  }>('/api/v2/ontologies/:ontology/actions/:action/apply', async (req) => {
-    await ensureActionType(req.params.ontology, req.params.action);
+  }>(
+    '/api/v2/ontologies/:ontology/actions/:action/apply',
+    declarePolicy('modify', (req) => ResourceIds.action(ont(req), actionName(req))),
+    async (req) => {
     return ctx.actions.apply({
       ontologyId: req.params.ontology,
       actionApiName: req.params.action,
@@ -390,13 +379,16 @@ export async function registerV2Routes(
       idempotencyKey: req.body.idempotencyKey,
       expectedObjectVersions: req.body.expectedObjectVersions,
     });
-  });
+    },
+  );
 
   app.post<{
     Params: { ontology: string; action: string };
     Body: { parameters?: Record<string, unknown> };
-  }>('/api/v2/ontologies/:ontology/actions/:action/parameter-tree', async (req) => {
-    await ensureActionType(req.params.ontology, req.params.action);
+  }>(
+    '/api/v2/ontologies/:ontology/actions/:action/parameter-tree',
+    declarePolicy('read', (req) => ResourceIds.action(ont(req), actionName(req))),
+    async (req) => {
     if (!ctx.actions.parameterTree) {
       throw new Error('parameterTree not supported');
     }
@@ -406,15 +398,18 @@ export async function registerV2Routes(
       parameters: req.body.parameters ?? {},
       principal: principalOf(req),
     });
-  });
+    },
+  );
 
   app.post<{
     Params: { ontology: string; objectType: string; primaryKey: string };
     Body: { template: string };
   }>(
     '/api/v2/ontologies/:ontology/objects/:objectType/:primaryKey/render',
+    declarePolicy('read', () => ResourceIds.admin('render')),
     async (req) => {
-      const obj = await ctx.objects.get(
+      const obj = await reads.getObject(
+        principalOf(req),
         req.params.ontology,
         req.params.objectType,
         req.params.primaryKey,
@@ -434,16 +429,9 @@ export async function registerV2Routes(
 
   app.post<{ Params: { id: string } }>(
     '/api/v2/actions/executions/:id/approve',
+    declarePolicy('modify', () => ResourceIds.admin('action-execution')),
     async (req) => {
       const principal = principalOf(req);
-      const authz = ctx.authorizer?.authorize({
-        principal,
-        resource: `action-execution:${req.params.id}`,
-        operation: 'modify',
-      }) ?? { decision: 'allow' as const, reason: 'default-allow', principalEpids: [], resourceEpid: null };
-      if (authz.decision === 'deny') {
-        throw new Error(authz.reason);
-      }
       if (!ctx.actions.approve) throw new Error('approvals not supported');
       return ctx.actions.approve(req.params.id, principal);
     },
@@ -451,16 +439,9 @@ export async function registerV2Routes(
 
   app.post<{ Params: { id: string } }>(
     '/api/v2/actions/executions/:id/reject',
+    declarePolicy('modify', () => ResourceIds.admin('action-execution')),
     async (req) => {
       const principal = principalOf(req);
-      const authz = ctx.authorizer?.authorize({
-        principal,
-        resource: `action-execution:${req.params.id}`,
-        operation: 'modify',
-      }) ?? { decision: 'allow' as const, reason: 'default-allow', principalEpids: [], resourceEpid: null };
-      if (authz.decision === 'deny') {
-        throw new Error(authz.reason);
-      }
       if (!ctx.actions.reject) throw new Error('approvals not supported');
       return ctx.actions.reject(req.params.id, principal);
     },
@@ -468,6 +449,7 @@ export async function registerV2Routes(
 
   app.get<{ Querystring: { q?: string; ontology?: string; limit?: string } }>(
     '/api/v2/catalog/search',
+    declarePolicy('read', () => ResourceIds.admin('catalog.search'), 'empty-list'),
     async (req) => {
       const q = String(req.query.q ?? '').trim();
       const principal = principalOf(req);
@@ -482,19 +464,33 @@ export async function registerV2Routes(
         const hits = [];
         for (const row of result.rows as Array<Record<string, unknown>>) {
           const objectTypeId = String(row.object_type_id);
-          if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, objectTypeId)) {
+          if (!ctx.policy.canReadObjectType(principal, objectTypeId, String(row.ontology_id))) {
+            continue;
+          }
+          const properties = ctx.policy.redactProperties(
+            principal,
+            objectTypeId,
+            (row.properties as Record<string, unknown>) ?? {},
+            String(row.ontology_id),
+          );
+          const needle = q.toLowerCase();
+          const pk = String(row.primary_key);
+          if (
+            !pk.toLowerCase().includes(needle) &&
+            !JSON.stringify(properties).toLowerCase().includes(needle)
+          ) {
             continue;
           }
           hits.push({
             urn: catalogHitUrn({
               ontology_id: String(row.ontology_id),
               object_type_id: objectTypeId,
-              primary_key: String(row.primary_key),
+              primary_key: pk,
             }),
             ontologyId: String(row.ontology_id),
             objectTypeId,
-            primaryKey: String(row.primary_key),
-            properties: (row.properties as Record<string, unknown>) ?? {},
+            primaryKey: pk,
+            properties,
           });
         }
         return { data: hits };
@@ -510,17 +506,23 @@ export async function registerV2Routes(
           const listed = await ctx.objects.list(onto.id, t.id);
           for (const o of listed) {
             if (o.deleted) continue;
-            if (ctx.authorizer && !ctx.authorizer.canReadObjectType(principal, o.objectTypeId)) {
+            if (!ctx.policy.canReadObjectType(principal, o.objectTypeId, o.ontologyId)) {
               continue;
             }
-            const blob = JSON.stringify(o.properties).toLowerCase();
+            const visible = ctx.policy.redactProperties(
+              principal,
+              o.objectTypeId,
+              o.properties,
+              o.ontologyId,
+            );
+            const blob = JSON.stringify(visible).toLowerCase();
             if (!o.primaryKey.toLowerCase().includes(needle) && !blob.includes(needle)) continue;
             data.push({
               urn: urnOf(o.ontologyId, o.objectTypeId, o.primaryKey),
               ontologyId: o.ontologyId,
               objectTypeId: o.objectTypeId,
               primaryKey: o.primaryKey,
-              properties: o.properties,
+              properties: visible,
             });
           }
         }
@@ -529,28 +531,18 @@ export async function registerV2Routes(
     },
   );
 
-  app.post<{ Params: { connectorId: string }; Body: unknown }>(
-    '/api/v2/ingest/:connectorId',
-    async (req, reply) => {
-      const secret = process.env.PLATFORM_INGEST_SECRET ?? '';
-      const signature = String(
-        (req.headers['x-neumann-signature'] as string | undefined) ?? '',
-      );
-      const raw = JSON.stringify(req.body ?? {});
-      if (!secret || !signature || !hmacHexEqual(raw, secret, signature)) {
-        return reply.code(401).send({ error: 'invalid webhook signature' });
-      }
-      return reply.code(202).send({ accepted: true, connectorId: req.params.connectorId });
-    },
-  );
-
-  app.get('/api/v2/catalog/types', async () => {
+  app.get(
+    '/api/v2/catalog/types',
+    declarePolicy('read', () => ResourceIds.admin('catalog.types'), 'empty-list'),
+    async (req) => {
+    const principal = principalOf(req);
     const ontologies = await ctx.ontology.listOntologies();
     const data = [];
     for (const o of ontologies) {
       const v = await ctx.ontology.getLatestVersion(o.id);
       const types = Object.values(v?.objectTypes ?? {});
       for (const t of types) {
+        if (!ctx.policy.canReadObjectType(principal, t.id, o.id)) continue;
         const objs = await ctx.objects.list(o.id, t.id);
         data.push({
           ontologyId: o.id,

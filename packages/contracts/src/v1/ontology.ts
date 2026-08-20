@@ -89,6 +89,7 @@ export interface ActionParameterDef {
   /** Tipo base (alinhado a PropertyBaseType) ou referência a objeto. */
   baseType: PropertyBaseType | 'object_reference';
   required?: boolean;
+  nullable?: boolean;
   /** Quando baseType = object_reference. */
   objectTypeId?: ObjectTypeId;
   /**
@@ -96,6 +97,23 @@ export interface ActionParameterDef {
    * `variableName` are updated together when the variable is set.
    */
   variableName?: string;
+  /**
+   * Allowed discrete values (enum semantics).
+   * Only enforced when baseType is string, number, or boolean.
+   * WHY: replaces opaque validator arrays; each validator is now typed and
+   * testable without runtime reflection on a contract field that did not exist.
+   */
+  allowedValues?: readonly (string | number | boolean)[];
+  /**
+   * Regex pattern the string value must match (ECMAScript syntax).
+   * Only enforced when baseType is string.
+   */
+  pattern?: string;
+  /**
+   * Numeric bounds (inclusive). Only enforced when baseType is number.
+   */
+  min?: number;
+  max?: number;
 }
 
 /** Critério de submissão (pré-condição declarativa). */
@@ -204,7 +222,7 @@ export interface ActionTypeDef {
   };
 }
 
-/** FunctionType — CINÉTICO (definição; implementação executável = Passo 23). */
+/** FunctionType — CINÉTICO (definição; artifact bytes vivem no FunctionArtifactStore). */
 export interface FunctionTypeDef {
   id: FunctionTypeId;
   displayName: string;
@@ -212,6 +230,12 @@ export interface FunctionTypeDef {
   description?: string;
   /** Nome de invoke na API (default = id). */
   apiName?: string;
+  /** SHA-256 of the immutable artifact bytes. Required to pin an execution. */
+  artifactHash?: string;
+  /** Monotonic Function version inside the ontology lineage. Default 1 at pin. */
+  functionVersion?: number;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 }
 
 /** Snapshot imutável de uma versão da ontologia. */

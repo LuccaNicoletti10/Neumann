@@ -204,30 +204,40 @@ export interface ObjectPlatform {
   getLatestMappingVersion(mappingId: MappingId): MappingVersion | undefined;
   listMappingVersions(mappingId: MappingId): MappingVersion[];
 
-  /** Projetor: dataset version → objects + history + provenance. */
-  project(input: ProjectInput): ProjectResult;
+  /**
+   * Projetor: dataset version → objects + history + provenance.
+   * WHY async (ADR-0014): the storage kernel is async in every adapter, so the
+   * facade awaits it instead of detecting a Promise after the write started.
+   */
+  project(input: ProjectInput): Promise<ProjectResult>;
 
   /** User edit (vence data_source em conflitos). */
   applyUserEdit(
     objectId: OntologyObjectId,
     properties: Record<PropertyTypeId, unknown>,
     principal: PrincipalId,
-  ): OntologyObject;
+  ): Promise<OntologyObject>;
 
   /** Object API — toda leitura via authorize. */
   getObject(
     principal: PrincipalId,
     objectId: OntologyObjectId,
     at?: number,
-  ): OntologyObject | null;
-  queryObjects(principal: PrincipalId, query: ObjectQuery): OntologyObject[];
+  ): Promise<OntologyObject | null>;
+  queryObjects(principal: PrincipalId, query: ObjectQuery): Promise<OntologyObject[]>;
   traverseLinks(
     principal: PrincipalId,
     objectId: OntologyObjectId,
     linkTypeId?: LinkTypeId,
-  ): OntologyObject[];
-  getHistory(principal: PrincipalId, objectId: OntologyObjectId): ObjectHistoryEntry[] | null;
-  getProvenance(principal: PrincipalId, objectId: OntologyObjectId): ObjectProvenance | null;
+  ): Promise<OntologyObject[]>;
+  getHistory(
+    principal: PrincipalId,
+    objectId: OntologyObjectId,
+  ): Promise<ObjectHistoryEntry[] | null>;
+  getProvenance(
+    principal: PrincipalId,
+    objectId: OntologyObjectId,
+  ): Promise<ObjectProvenance | null>;
 }
 
 export function buildGoldenPropertyMapping(): PropertyMapping {

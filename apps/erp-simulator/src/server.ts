@@ -144,7 +144,7 @@ export function createErpSimulator(opts: CreateErpSimulatorOptions = {}): {
     return row;
   });
 
-  app.patch<{ Params: { sku: string } }>('/inventory/:sku', async (req, reply) => {
+  app.patch<{ Params: { sku: string } }>('/inventory/:sku', async (req, _reply) => {
     const prev = state.inventory.get(req.params.sku) ?? {
       sku: req.params.sku,
       quantity: 0,

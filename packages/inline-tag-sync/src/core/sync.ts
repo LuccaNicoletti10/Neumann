@@ -21,7 +21,6 @@ import type { ObjectStore } from './objectStore.js';
 import { applyTag } from './tagging.js';
 import type { TaggingDeps } from './tagging.js';
 import type {
-  Clock,
   DataObject,
   DataObjectTagRef,
   Document,

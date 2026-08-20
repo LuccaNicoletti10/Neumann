@@ -7,12 +7,13 @@ import type { ActionTypeDef } from 'contracts';
 import {
   createHttpWritebackConnector,
   createOutboxWorker,
+  createPgOutboxRepository,
   createPgWritebackExecutionStore,
   createWritebackHandler,
 } from 'event-bus';
 import { tryOpenIsolatedPg } from 'object-platform';
 import { createPostgresPlatformContext } from 'platform-api';
-import { createAllowAllAuthorizer } from 'policy-engine';
+import { createAllowAllTestPolicy } from 'policy-engine';
 
 import { listenErpSimulator } from '../src/server.js';
 
@@ -58,10 +59,10 @@ describe.skipIf(!db)('closed-loop E2E', () => {
       };
       expect(observed.status).toBe('pending');
 
-      const ctx = createPostgresPlatformContext({
+      const ctx = await createPostgresPlatformContext({
         sql: db.sql,
         transaction: db.sql,
-        authorizer: createAllowAllAuthorizer(),
+        policy: createAllowAllTestPolicy(),
       });
       const onto = await ctx.ontology.createOntology({ name: 'loop' });
       await ctx.ontology.addPropertyType(onto.id, {
@@ -79,15 +80,17 @@ describe.skipIf(!db)('closed-loop E2E', () => {
         displayName: 'Order',
         propertyTypeIds: ['status', 'quantity'],
       });
+      await ctx.ontology.addActionType(onto.id, approve);
       await ctx.ontology.commit({ ontologyId: onto.id, createdBy: 'loop' });
-      ctx.actions.registerActionType(onto.id, approve);
 
-      await ctx.objects.create({
+      await ctx.projections.projectObject({
         ontologyId: onto.id,
         objectTypeId: 'ot.order',
         primaryKey: String(observed.id),
         properties: { status: observed.status, quantity: observed.quantity },
         source: 'erp-simulator',
+        sourceEventId: `observe-${observed.id}-pending`,
+        principal: 'svc-projector',
       });
 
       const applied = await ctx.actions.apply({
@@ -95,13 +98,15 @@ describe.skipIf(!db)('closed-loop E2E', () => {
         actionApiName: 'approve',
         parameters: { orderId: 'O1', status: 'ok' },
         principal: 'alice',
+        idempotencyKey: 'loop-approve',
+        expectedObjectVersions: { 'ot.order::O1': 1 },
       });
       expect(applied.status).toBe('SUCCEEDED');
       expect((await ctx.objects.get(onto.id, 'ot.order', 'O1'))?.properties.status).toBe('ok');
 
       const executions = createPgWritebackExecutionStore({ sql: db.sql });
       const worker = createOutboxWorker({
-        sql: db.sql,
+        dispatcher: createPgOutboxRepository({ sql: db.sql }),
         handlers: {
           'action.side_effect.writeback': createWritebackHandler({
             connector: createHttpWritebackConnector({ baseUrl: sim.url }),
@@ -123,8 +128,15 @@ describe.skipIf(!db)('closed-loop E2E', () => {
         status: string;
         quantity?: number;
       };
-      await ctx.objects.update(onto.id, 'ot.order', 'O1', {
+      await ctx.projections.projectObject({
+        ontologyId: onto.id,
+        objectTypeId: 'ot.order',
+        primaryKey: 'O1',
         properties: { status: reobserved.status, quantity: reobserved.quantity },
+        source: 'erp-simulator',
+        sourceEventId: `observe-O1-${reobserved.status}`,
+        principal: 'svc-projector',
+        expectedVersion: 2,
       });
       const converged = await ctx.objects.get(onto.id, 'ot.order', 'O1');
       expect(converged?.properties.status).toBe(erpAfter.status);

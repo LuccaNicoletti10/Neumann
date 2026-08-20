@@ -88,7 +88,13 @@ if (require.main === module) {
   const registryDir =
     process.env.CBS_REGISTRY_DIR ?? path.join(process.cwd(), ".cbs", "registry");
   const port = Number(process.env.PORT ?? 3000);
-  buildServer({ productsDir, registryDir, logger: true })
+  void buildServer({ productsDir, registryDir, logger: true })
     .listen({ port, host: "0.0.0.0" })
-    .then((addr) => pino().info({ addr }, "API do Common Build System no ar"));
+    .then(
+      (addr) => pino().info({ addr }, "API do Common Build System no ar"),
+      (err: unknown) => {
+        pino().error(err, "API do Common Build System falhou ao escutar");
+        process.exitCode = 1;
+      },
+    );
 }

@@ -1,1 +1,9 @@
-{ "extends": "./tsconfig.json", "compilerOptions": { "rootDir": "src", "noEmit": false }, "include": ["src"] }
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    // WHY: emit must not include tests
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

@@ -1,18 +1,18 @@
 /**
  * object-platform — src/core/platform.ts
- * Mapping versionado + projetor + Object API (Passo 18).
+ * Mapping versionado + projetor. Objects/links/history vivem nos repositories.
  *
- * US 8,930,897 / US 10,691,729 / EP3425537A1 / US 11,816,156 / US 12,561,339
+ * Ownership: mapping Maps are a mapping registry, not object storage.
+ * Identity: ontologyId + objectTypeId + primaryKey. `id` is a handle.
+ * CAS/atomicity: delegated to ObjectRepository / LinkRepository.
  */
 
 import {
   assertMappingVersion,
-  type AuthorizeFn,
   type CommitMappingInput,
   type CreateMappingInput,
   type DatasetObjectMapping,
   type DatasetRow,
-  type LinkInstance,
   type MappingDraft,
   type MappingId,
   type MappingVersion,
@@ -28,18 +28,21 @@ import {
   type ProjectResult,
   type PropertyMapping,
   type PropertyTypeId,
+  type ObjectRepository,
+  type LinkRepository,
+  type ObjectRecord,
 } from 'contracts';
+import { allowsMutation, allowsRead } from 'contracts';
 
 import { createDeterministicClock, createIdGenerator } from './determinism.js';
 import { hashCanonical } from './hash.js';
+import { createMemoryLinkRepository } from './link-repository.js';
+import { createMemoryObjectHistoryStore, type ObjectHistoryStore } from './object-history-store.js';
+import { createMemoryObjectRepository } from './object-repository.js';
 import type { CreateObjectPlatformOptions } from './types.js';
 
-const allowAll: AuthorizeFn = (req) => ({
-  decision: 'allow',
-  principalEpids: [],
-  resourceEpid: null,
-  reason: `default-allow ${req.operation}`,
-});
+/** Default ontology namespace when the facade owns its memory adapters. */
+export const OBJECT_PLATFORM_ONTOLOGY_ID = 'platform';
 
 function applyTransform(raw: unknown, mapping: PropertyMapping): unknown {
   const t = mapping.transform ?? 'identity';
@@ -60,7 +63,8 @@ function primaryKeyOf(row: DatasetRow, fields: string[]): string {
 }
 
 function objectResourceId(objectId: OntologyObjectId): string {
-  return `object:${objectId}`;
+  // WHY: must match ResourceIds.objectType(KERNEL_ONTOLOGY, objectId) without depending on policy-engine.
+  return `object:_/${encodeURIComponent(objectId)}`;
 }
 
 function freezeObject(o: OntologyObject): OntologyObject {
@@ -77,22 +81,108 @@ function freezeHistory(h: ObjectHistoryEntry): ObjectHistoryEntry {
   });
 }
 
-export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): ObjectPlatform {
+function str(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+async function userEditedFromHistory(
+  history: ObjectHistoryStore,
+  objectId: string,
+): Promise<boolean> {
+  const entries = await history.listByObject(objectId);
+  return entries.some((e) => e.source === 'user_edit');
+}
+
+function toOntologyObject(rec: ObjectRecord, userEdited: boolean): OntologyObject {
+  const p = rec.provenance ?? {};
+  return freezeObject({
+    id: rec.id,
+    objectTypeId: rec.objectTypeId,
+    primaryKey: rec.primaryKey,
+    properties: rec.properties as Record<PropertyTypeId, unknown>,
+    version: rec.version,
+    deleted: rec.deleted,
+    createdOrEditedByUser: userEdited,
+    updatedAt: rec.updatedAt,
+    mappingVersionId: str(p.mappingVersionId) ?? '',
+    datasetVersionId: str(p.datasetVersionId) ?? '',
+  });
+}
+
+function toPlatformHistory(
+  rec: ObjectRecord,
+  entry: { id: string; version: number; createdAt: string; source?: string; properties: Record<string, unknown>; deleted: boolean; principal?: string; provenance?: Record<string, unknown> },
+): ObjectHistoryEntry {
+  const p = entry.provenance ?? rec.provenance ?? {};
+  return freezeHistory({
+    id: entry.id,
+    objectId: rec.id,
+    version: entry.version,
+    at: entry.createdAt,
+    source: entry.source === 'user_edit' ? 'user_edit' : 'data_source',
+    properties: entry.properties as Record<PropertyTypeId, unknown>,
+    deleted: entry.deleted,
+    mappingVersionId: str(p.mappingVersionId) ?? str(rec.provenance?.mappingVersionId) ?? '',
+    datasetVersionId: str(p.datasetVersionId) ?? str(rec.provenance?.datasetVersionId),
+    principal: entry.principal,
+  });
+}
+
+function toProvenance(rec: ObjectRecord): ObjectProvenance | null {
+  const p = rec.provenance ?? {};
+  const datasetId = str(p.datasetId);
+  const datasetVersionId = str(p.datasetVersionId);
+  const mappingId = str(p.mappingId);
+  const mappingVersionId = str(p.mappingVersionId);
+  if (!datasetId || !datasetVersionId || !mappingId || !mappingVersionId) return null;
+  const sourceFields = Array.isArray(p.sourceFields)
+    ? p.sourceFields.filter((f): f is string => typeof f === 'string')
+    : [];
+  return {
+    objectId: rec.id,
+    datasetId,
+    datasetVersionId,
+    mappingId,
+    mappingVersionId,
+    primaryKey: rec.primaryKey,
+    objectTypeId: rec.objectTypeId,
+    sourceFields,
+  };
+}
+
+/**
+ * Mapping + project facade over canonical repositories.
+ *
+ * Does not own object/link/history Maps. Injected async (PG) stores fail closed;
+ * PostgreSQL ingestion uses ProjectionWriter + UnitOfWork.
+ */
+export function createObjectPlatform(opts: CreateObjectPlatformOptions): ObjectPlatform {
   const clock = opts.clock ?? createDeterministicClock();
   const nextId = opts.nextId ?? createIdGenerator();
-  const authorize: AuthorizeFn = opts.authorize ?? allowAll;
+  const authorize = opts.authorize;
+  if (!authorize) {
+    throw new Error(
+      'createObjectPlatform requires authorize (fail-closed; tests use createAllowAllTestPolicy)',
+    );
+  }
+  const ontologyId = opts.ontologyId ?? OBJECT_PLATFORM_ONTOLOGY_ID;
+  const objects: ObjectRepository =
+    opts.objects ?? createMemoryObjectRepository({ clock, nextId });
+  const history: ObjectHistoryStore =
+    opts.history ?? createMemoryObjectHistoryStore({ clock, nextId });
+  const links: LinkRepository =
+    opts.links ??
+    createMemoryLinkRepository({
+      clock,
+      nextId,
+      objectExists: async (oid, typeId, pk) => Boolean(await objects.get(oid, typeId, pk)),
+    });
 
   const mappings = new Map<MappingId, DatasetObjectMapping>();
   const mappingVersions = new Map<MappingVersionId, MappingVersion>();
   const versionsByMapping = new Map<MappingId, MappingVersionId[]>();
   const drafts = new Map<MappingId, MappingDraft>();
-
-  /** key = `${objectTypeId}::${primaryKey}` → objectId */
-  const indexByPk = new Map<string, OntologyObjectId>();
-  const objects = new Map<OntologyObjectId, OntologyObject>();
-  const history = new Map<OntologyObjectId, ObjectHistoryEntry[]>();
-  const provenance = new Map<OntologyObjectId, ObjectProvenance>();
-  const links = new Map<string, LinkInstance>(); // key = linkType|source|target
+  const knownObjectTypeIds = new Set<string>();
 
   function requireMapping(id: MappingId): DatasetObjectMapping {
     const m = mappings.get(id);
@@ -112,44 +202,45 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
       resource: objectResourceId(objectId),
       operation: 'read',
     });
-    return r.decision === 'allow' || r.decision === 'partial';
+    return allowsRead(r);
   }
 
-  function appendHistory(
-    obj: OntologyObject,
+  function getLiveById(objectId: OntologyObjectId): Promise<ObjectRecord | undefined> {
+    return objects.getById(objectId);
+  }
+
+  async function appendHistory(
+    rec: ObjectRecord,
     source: ObjectHistoryEntry['source'],
+    operation: 'create' | 'update',
     principal?: PrincipalId,
-    datasetVersionId?: string,
-  ): void {
-    const entry = freezeHistory({
-      id: nextId('ohist'),
-      objectId: obj.id,
-      version: obj.version,
-      at: obj.updatedAt,
+  ): Promise<void> {
+    await history.append({
+      objectId: rec.id,
+      ontologyId: rec.ontologyId,
+      ontologyVersionId: rec.ontologyVersionId,
+      objectTypeId: rec.objectTypeId,
+      primaryKey: rec.primaryKey,
+      version: rec.version,
+      properties: { ...rec.properties },
+      deleted: rec.deleted,
       source,
-      properties: { ...obj.properties },
-      deleted: obj.deleted,
-      mappingVersionId: obj.mappingVersionId,
-      datasetVersionId,
       principal,
+      operation,
+      provenance: rec.provenance,
     });
-    const list = history.get(obj.id) ?? [];
-    list.push(entry);
-    history.set(obj.id, list);
   }
 
-  function projectRow(
+  async function projectRow(
     mv: MappingVersion,
     datasetVersionId: string,
     row: DatasetRow,
-  ): { objectId: OntologyObjectId; upserted: boolean; skipped: boolean } {
+  ): Promise<{ objectId: OntologyObjectId; upserted: boolean; skipped: boolean }> {
     const pk = primaryKeyOf(row, mv.primaryKeyFields);
-    const idxKey = `${mv.objectTypeId}::${pk}`;
-    const existingId = indexByPk.get(idxKey);
-    const existing = existingId ? objects.get(existingId) : undefined;
+    knownObjectTypeIds.add(mv.objectTypeId);
+    const existing = await objects.get(ontologyId, mv.objectTypeId, pk);
 
-    // Regra patent: user edit vence data_source.
-    if (existing?.createdOrEditedByUser) {
+    if (existing && (await userEditedFromHistory(history, existing.id))) {
       return { objectId: existing.id, upserted: false, skipped: true };
     }
 
@@ -158,89 +249,69 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
       props[pm.propertyTypeId] = applyTransform(row.fields[pm.sourceField], pm);
     }
 
-    const now = clock();
-    if (existing) {
-      const next: OntologyObject = freezeObject({
-        ...existing,
-        properties: props,
-        version: existing.version + 1,
-        deleted: false,
-        updatedAt: now,
-        mappingVersionId: mv.id,
-        datasetVersionId,
-      });
-      objects.set(existing.id, next);
-      appendHistory(next, 'data_source', undefined, datasetVersionId);
-      provenance.set(existing.id, {
-        objectId: existing.id,
-        datasetId: mv.datasetId,
-        datasetVersionId,
-        mappingId: mv.mappingId,
-        mappingVersionId: mv.id,
-        primaryKey: pk,
-        objectTypeId: mv.objectTypeId,
-        sourceFields: [
-          ...mv.primaryKeyFields,
-          ...mv.propertyMappings.map((p) => p.sourceField),
-        ],
-      });
-      return { objectId: existing.id, upserted: true, skipped: false };
-    }
-
-    const id = nextId('obj');
-    const created = freezeObject({
-      id,
-      objectTypeId: mv.objectTypeId,
-      primaryKey: pk,
-      properties: props,
-      version: 1,
-      deleted: false,
-      createdOrEditedByUser: false,
-      updatedAt: now,
-      mappingVersionId: mv.id,
-      datasetVersionId,
-    });
-    objects.set(id, created);
-    indexByPk.set(idxKey, id);
-    appendHistory(created, 'data_source', undefined, datasetVersionId);
-    provenance.set(id, {
-      objectId: id,
+    const provenance = {
       datasetId: mv.datasetId,
       datasetVersionId,
       mappingId: mv.mappingId,
       mappingVersionId: mv.id,
       primaryKey: pk,
       objectTypeId: mv.objectTypeId,
-      sourceFields: [
-        ...mv.primaryKeyFields,
-        ...mv.propertyMappings.map((p) => p.sourceField),
-      ],
+      sourceFields: [...mv.primaryKeyFields, ...mv.propertyMappings.map((p) => p.sourceField)],
+    };
+
+    if (existing) {
+      const next = await objects.update(ontologyId, mv.objectTypeId, pk, {
+        properties: props,
+        mode: 'replace',
+        provenance,
+      });
+      await appendHistory(next, 'data_source', 'update');
+      return { objectId: existing.id, upserted: true, skipped: false };
+    }
+
+    const created = await objects.create({
+      ontologyId,
+      objectTypeId: mv.objectTypeId,
+      primaryKey: pk,
+      properties: props,
+      source: 'data_source',
+      provenance,
     });
-    return { objectId: id, upserted: true, skipped: false };
+    await appendHistory(created, 'data_source', 'create');
+    return { objectId: created.id, upserted: true, skipped: false };
   }
 
-  function projectLinks(
+  async function projectLinks(
     mv: MappingVersion,
     datasetVersionId: string,
     row: DatasetRow,
-    sourceObjectId: OntologyObjectId,
-  ): number {
+    source: ObjectRecord,
+  ): Promise<number> {
     let n = 0;
     for (const lm of mv.linkMappings) {
       const targetPk = String(row.fields[lm.sourceField] ?? '');
       if (!targetPk) continue;
-      const targetId = indexByPk.get(`${lm.targetObjectTypeId}::${targetPk}`);
-      if (!targetId) continue;
-      const key = `${lm.linkTypeId}|${sourceObjectId}|${targetId}`;
-      if (links.has(key)) continue;
-      links.set(key, Object.freeze({
-        id: nextId('link'),
+      const target = await objects.get(ontologyId, lm.targetObjectTypeId, targetPk);
+      if (!target) continue;
+      const existing = await links.listFrom(
+        ontologyId,
+        source.objectTypeId,
+        source.primaryKey,
+        lm.linkTypeId,
+      );
+      if (existing.some((l) => l.targetPrimaryKey === targetPk && !l.deleted)) continue;
+      await links.create({
+        ontologyId,
         linkTypeId: lm.linkTypeId,
-        sourceObjectId,
-        targetObjectId: targetId,
-        mappingVersionId: mv.id,
-        datasetVersionId,
-      }));
+        sourceObjectTypeId: source.objectTypeId,
+        sourcePrimaryKey: source.primaryKey,
+        targetObjectTypeId: target.objectTypeId,
+        targetPrimaryKey: target.primaryKey,
+        provenance: {
+          mappingVersionId: mv.id,
+          datasetVersionId,
+        },
+      });
       n += 1;
     }
     return n;
@@ -293,6 +364,16 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
     return version;
   }
 
+  async function listKnownRecords(includeDeleted: boolean): Promise<ObjectRecord[]> {
+    const types = new Set<string>(knownObjectTypeIds);
+    for (const m of mappings.values()) types.add(m.objectTypeId);
+    const out: ObjectRecord[] = [];
+    for (const typeId of types) {
+      out.push(...(await objects.list(ontologyId, typeId, { includeDeleted })));
+    }
+    return out;
+  }
+
   return {
     createMapping(input: CreateMappingInput): DatasetObjectMapping {
       if (!input.primaryKeyFields?.length) {
@@ -308,6 +389,7 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
         createdAt,
       };
       mappings.set(id, mapping);
+      knownObjectTypeIds.add(input.objectTypeId);
       drafts.set(id, {
         mappingId: id,
         ontologyVersionId: input.ontologyVersionId,
@@ -316,7 +398,6 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
         propertyMappings: structuredClone(input.propertyMappings),
         linkMappings: structuredClone(input.linkMappings ?? []),
       });
-      // Auto-commit v1; evolução via openMappingDraft → set → commit.
       commitMapping({ mappingId: id, createdBy: input.createdBy });
       return mapping;
     },
@@ -379,18 +460,17 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
       return ids.map((id) => requireMappingVersion(id));
     },
 
-    project(input: ProjectInput): ProjectResult {
+    async project(input: ProjectInput): Promise<ProjectResult> {
       const mv = requireMappingVersion(input.mappingVersionId);
       const runId = nextId('proj');
       const objectIds: OntologyObjectId[] = [];
       let upserted = 0;
       let linksUpserted = 0;
 
-      // Pass 1: objects (para PK targets existirem antes dos links).
       const rowResults: { objectId: OntologyObjectId; skipped: boolean; row: DatasetRow }[] =
         [];
       for (const row of input.rows) {
-        const r = projectRow(mv, input.datasetVersionId, row);
+        const r = await projectRow(mv, input.datasetVersionId, row);
         rowResults.push({ objectId: r.objectId, skipped: r.skipped, row });
         if (r.upserted) {
           upserted += 1;
@@ -400,10 +480,11 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
         }
       }
 
-      // Pass 2: links
       for (const { objectId, skipped, row } of rowResults) {
         if (skipped) continue;
-        linksUpserted += projectLinks(mv, input.datasetVersionId, row, objectId);
+        const source = await getLiveById(objectId);
+        if (!source) continue;
+        linksUpserted += await projectLinks(mv, input.datasetVersionId, row, source);
       }
 
       return {
@@ -415,92 +496,114 @@ export function createObjectPlatform(opts: CreateObjectPlatformOptions = {}): Ob
       };
     },
 
-    applyUserEdit(objectId, properties, principal) {
-      const obj = objects.get(objectId);
-      if (!obj) throw new Error(`objeto desconhecido: ${objectId}`);
+    async applyUserEdit(objectId, properties, principal) {
+      const rec = await getLiveById(objectId);
+      if (!rec) throw new Error(`objeto desconhecido: ${objectId}`);
       const write = authorize({
         principal,
         resource: objectResourceId(objectId),
         operation: 'modify',
       });
-      if (write.decision === 'deny') {
+      if (!allowsMutation(write)) {
         throw new Error(`authorize deny modify ${objectId}: ${write.reason}`);
       }
-      const next = freezeObject({
-        ...obj,
-        properties: { ...obj.properties, ...properties },
-        version: obj.version + 1,
-        createdOrEditedByUser: true,
-        updatedAt: clock(),
+      const next = await objects.update(rec.ontologyId, rec.objectTypeId, rec.primaryKey, {
+        properties: properties as Record<string, unknown>,
       });
-      objects.set(objectId, next);
-      appendHistory(next, 'user_edit', principal, obj.datasetVersionId);
-      return next;
+      await appendHistory(
+        { ...next, provenance: rec.provenance },
+        'user_edit',
+        'update',
+        principal,
+      );
+      return toOntologyObject(next, true);
     },
 
-    getObject(principal, objectId, at) {
+    async getObject(principal, objectId, at) {
       if (!canRead(principal, objectId)) return null;
-      const obj = objects.get(objectId);
-      if (!obj) return null;
-      if (at == null) return obj;
-      const hist = history.get(objectId) ?? [];
+      const rec = await getLiveById(objectId);
+      if (!rec) return null;
+      const edited = await userEditedFromHistory(history, rec.id);
+      if (at == null) return toOntologyObject(rec, edited);
+      const hist = await history.listByObject(objectId);
       const snap = hist.find((h) => h.version === at);
       if (!snap) return null;
       return freezeObject({
-        ...obj,
+        ...toOntologyObject(rec, edited),
         version: snap.version,
-        properties: { ...snap.properties },
+        properties: { ...snap.properties } as Record<PropertyTypeId, unknown>,
         deleted: snap.deleted,
-        updatedAt: snap.at,
-        mappingVersionId: snap.mappingVersionId,
-        datasetVersionId: snap.datasetVersionId ?? obj.datasetVersionId,
+        updatedAt: snap.createdAt,
+        mappingVersionId:
+          str(snap.provenance?.mappingVersionId) ?? str(rec.provenance?.mappingVersionId) ?? '',
+        datasetVersionId:
+          str(snap.provenance?.datasetVersionId) ?? str(rec.provenance?.datasetVersionId) ?? '',
       });
     },
 
-    queryObjects(principal, query: ObjectQuery) {
+    async queryObjects(principal, query: ObjectQuery) {
       const out: OntologyObject[] = [];
-      for (const obj of objects.values()) {
-        if (!query.includeDeleted && obj.deleted) continue;
-        if (query.objectTypeId && obj.objectTypeId !== query.objectTypeId) continue;
+      const records = query.objectTypeId
+        ? await objects.list(ontologyId, query.objectTypeId, {
+            includeDeleted: query.includeDeleted,
+          })
+        : await listKnownRecords(Boolean(query.includeDeleted));
+      for (const rec of records) {
+        if (!query.includeDeleted && rec.deleted) continue;
         if (query.where) {
           let ok = true;
           for (const [k, v] of Object.entries(query.where)) {
-            if (obj.properties[k] !== v) {
+            if (rec.properties[k] !== v) {
               ok = false;
               break;
             }
           }
           if (!ok) continue;
         }
-        if (!canRead(principal, obj.id)) continue;
-        out.push(obj);
+        if (!canRead(principal, rec.id)) continue;
+        out.push(toOntologyObject(rec, await userEditedFromHistory(history, rec.id)));
         if (query.limit != null && out.length >= query.limit) break;
       }
       return out;
     },
 
-    traverseLinks(principal, objectId, linkTypeId) {
+    async traverseLinks(principal, objectId, linkTypeId) {
       if (!canRead(principal, objectId)) return [];
+      const rec = await getLiveById(objectId);
+      if (!rec) return [];
+      const from = await links.listFrom(
+        rec.ontologyId,
+        rec.objectTypeId,
+        rec.primaryKey,
+        linkTypeId,
+      );
       const targets: OntologyObject[] = [];
-      for (const link of links.values()) {
-        if (link.sourceObjectId !== objectId) continue;
-        if (linkTypeId && link.linkTypeId !== linkTypeId) continue;
-        if (!canRead(principal, link.targetObjectId)) continue;
-        const t = objects.get(link.targetObjectId);
-        if (t && !t.deleted) targets.push(t);
+      for (const link of from) {
+        const t = await objects.get(
+          link.ontologyId,
+          link.targetObjectTypeId,
+          link.targetPrimaryKey,
+        );
+        if (!t || t.deleted) continue;
+        if (!canRead(principal, t.id)) continue;
+        targets.push(toOntologyObject(t, await userEditedFromHistory(history, t.id)));
       }
       return targets;
     },
 
-    getHistory(principal, objectId) {
+    async getHistory(principal, objectId) {
       if (!canRead(principal, objectId)) return null;
-      if (!objects.has(objectId)) return null;
-      return [...(history.get(objectId) ?? [])];
+      const rec = await getLiveById(objectId);
+      if (!rec) return null;
+      const entries = await history.listByObject(objectId);
+      return entries.map((e) => toPlatformHistory(rec, e));
     },
 
-    getProvenance(principal, objectId) {
+    async getProvenance(principal, objectId) {
       if (!canRead(principal, objectId)) return null;
-      return provenance.get(objectId) ?? null;
+      const rec = await getLiveById(objectId);
+      if (!rec) return null;
+      return toProvenance(rec);
     },
   };
 }
